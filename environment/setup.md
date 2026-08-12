@@ -42,7 +42,7 @@ ________________________________________________________________________________
 bash\
 **Switch to CUDA 13.2**\
 `sudo rm /usr/local/cuda`\
-`sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`\
+`sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`
 
 **Verify**\
 `nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  **should show 13.2**
