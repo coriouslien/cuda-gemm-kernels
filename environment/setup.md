@@ -364,7 +364,7 @@ GRUB_TIMEOUT=10
 Change 10 to 5 to reduce the wait time to 5 seconds.  
 Save and apply:  
 bash  
-# Press Ctrl+X → Y → Enter to save in nano #
+**Press Ctrl+X → Y → Enter to save in nano**
 `sudo update-grub`
 ____________________________________________________________________________________________________________________  
 Verify your partitions were created correctly  
