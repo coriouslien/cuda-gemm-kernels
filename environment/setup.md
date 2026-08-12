@@ -68,10 +68,11 @@ ________________________________________
 After deleting, go back to **Disk Management** and try shrinking C: again — you should be able to reclaim significantly more space.  
 Please see the list volume below. I select volume 0, but I still cannot shrink the disk of 1400000MB.  
 DISKPART> select disk 0  
-Disk 0 is now the selected disk.          
+Disk 0 is now the selected disk. 
 `DISKPART> list volume`   
+  
 Volume \###      Ltr  Label   Fs     Type        Size     Status     Info     
-----------       -----------  -----  ----------  -------  ---------  --------     
+      
 Volume 0         C   Windows  NTFS   Partition   1835 GB  Healthy    Boot      
 Volume 1         SYSTEM       FAT32  Partition    100 MB  Healthy    System     
 Volume 2         WinRE tools  NTFS   Partition    800 MB  Healthy    Hidden     
