@@ -13,13 +13,12 @@ On cmd type:\
 command on cmd:\
 `Disable-ComputerRestore -Drive "C:\"`
 _________________________________________________________________________________________________________
-Step 2: Defrag and clear unmovable files
-Run this in PowerShell as Administrator:
-powershell
-# Run the disk defragmenter to consolidate unmovable files to the front
-defrag C: /U /V
-Then open Event Viewer → Windows Logs → Application and search for "defrag" to see if any files are still unmovable.
-________________________________________
+### Step 2: Defrag and clear unmovable files ###
+Run this in cmd as Administrator:\
+**Run the disk defragmenter to consolidate unmovable files to the front**\
+`defrag C: /U /V`\
+Then open **Event Viewer** → **Windows Logs** → **Application** and search for "defrag" to see if any files are still unmovable.
+_________________________________________________________________________________________________________
 Step 3: Try shrinking again — but use diskpart for more control
 In PowerShell as Administrator:
 powershell
