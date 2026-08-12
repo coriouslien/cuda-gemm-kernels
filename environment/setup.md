@@ -23,9 +23,9 @@ ________________________________________________________________________________
 In cmd as Administrator:\
 
 `diskpart`  
-```  
+  
 Then inside diskpart:  
-```  
+  
 `list disk`  
 select disk 0  
 list volume  
