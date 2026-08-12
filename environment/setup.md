@@ -226,7 +226,7 @@ ________________________________________________________________________________
 |:--------- | :----------: | :----------: |
 |EFI	      |~512 MB	     |Boot|
 |swap       |	~16 GB      |	RAM overflow|
-| (root)	Remaining ~900 GB	Everything else
+| (root)	|Remaining ~900 GB|	Everything else|
 You don't need to manually set this up — the installer handles it.  
 You should disabl boot. There are two options in "Secure Boot Mode", Standard and Custom. You should select **"Standard"**    
 Why **"Standard":  
