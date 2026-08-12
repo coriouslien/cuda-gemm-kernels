@@ -290,6 +290,7 @@ Set it to:
 |Boot Option #1	|**UEFI USB Key: UEFI: USB disk 3.0** | 
 |Boot Option #2	|UEFI Hard Disk: Windows Boot Manager | 
 |Others	|leave as is | 
+
 **"UEFI USB Key: UEFI: USB disk 3.0"** is your Ubuntu USB drive.  
 ______________________________________________________________________________________________________________________  
 Then  
