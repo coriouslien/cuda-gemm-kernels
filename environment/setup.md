@@ -9,5 +9,13 @@ Record everything about your current installation\
 `cat ~/cuda_backup_list.txt`\
 `cat ~/nvidia_backup_list.txt`\
 Save these outputs somewhere safe. This is your rollback reference.\
+\
+###Important clarification on your CUDA version
+Verify first:\
+bash\
+`nvcc --version`\
+`ls /usr/local/ | grep cuda`\
+This matters for rollback — you need to know exactly what you have.\
+________________________________________\
 
 
