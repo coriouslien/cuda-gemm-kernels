@@ -129,6 +129,41 @@ Based on the **1,835 GB** Volume 0 (C: drive), here's a simple breakdown:
 
 For CUDA/AI development, **900,000 MB is the sweet spot** — enough for datasets, models, and Docker containers.  
 
+If you don't need Windows...  
+Just run this in diskpart to check the maximum possible:  
+select volume 0  
+shrink querymax  
+Then use whatever number it returns. But honestly — don't bother shrinking at all.  
+Since you're wiping Windows:  
+•	Boot from Ubuntu USB  
+•	Choose "Erase disk and install Ubuntu"  
+•	You get the full 1,835 GB with zero hassle  
+•	No diskpart gymnastics needed  
+________________________________________________________________________________________________________________  
+Recommendation: Skip the shrink entirely, boot Ubuntu USB, and erase the whole disk. It's 3 clicks in the installer and you're done.    
+run shrink querymax, will it erase Windows 11?  
+shrink querymax is completely safe — it is a read-only query that just tells you the maximum amount you can shrink.  
+It only **reports a number**, it does nothing to your disk.  
+
+_________________________________________________________________________________________________________________  
+**What each command actually does**  
+|Command	       |Does it change anything?|
+|:---------      | :----------: |
+|shrink querymax |No — just displays a number|
+|shrink desired=900000	| Yes — actually shrinks the partition|
+|format	       | Yes — erases data|
+| delete volume | Yes — deletes partition|
+  
+**Safe to run right now**  
+select volume 0  
+shrink querymax  
+It will just print something like:  
+The maximum number of reclaimable bytes is: XXXXXX MB  
+That number tells us exactly how much space we can work with. Go ahead and run it — nothing will change on your disk.
+Please see below: DISKPART> select volume 0  
+Volume 0 is the selected volume.  
+DISKPART> shrink querymax  
+The maximum number of reclaimable bytes is:  917 GB (939659 MB)    
 
 _____________________________________________________________________________________________________________  
 
