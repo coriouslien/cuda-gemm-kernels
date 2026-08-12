@@ -49,10 +49,10 @@ bash\
 ________________________________________
 ### Step 4 — Update PATH in your .bashrc ###
 bash\
-** Check what you currently have **
+** Check what you currently have **\
 `grep cuda ~/.bashrc`\
 </br>
-** It likely already has something like: ** 
+** It likely already has something like: **\
 `export PATH=/usr/local/cuda/bin:$PATH`\
 `export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH`\
 </br>
