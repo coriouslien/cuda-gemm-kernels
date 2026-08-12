@@ -20,7 +20,7 @@ Run this in cmd as Administrator:\
 Then open **Event Viewer** → **Windows Logs** → **Application** and search for "defrag" to see if any files are still unmovable.
 _________________________________________________________________________________________________________
 ### Step 3: Try shrinking again — but use diskpart for more control ###
-In cmd as Administrator:  
+At the CMD command line as Administrator:  
 
 `diskpart`  
   
@@ -57,7 +57,7 @@ ________________________________________________________________________________
 _______________________________________________________________________________________________________________  
 **Option 3: Via PowerShell (precise control)** 
 List all restore points first:
-At the CMD command line"      
+At the CMD command line:       
 Get-ComputerRestorePoint    
 Then delete all of them:    
 At the CMD command line:    
@@ -82,8 +82,28 @@ Disk 0 is now the selected disk.
 `select volume 0`  
 shrink desired=900000  
 This shrinks C: by ~900 GB, leaving ~935 GB for Windows which is plenty.  
-________________________________________________________________________________________________________________
+________________________________________________________________________________________________________________  
 
+**If it still fails — check what's blocking it**  
+Run this in a separate PowerShell window (not diskpart):    
+  
+defrag C: /U /V  
+
+Look for the line **"You cannot shrink a volume beyond..."** — it will tell you exactly how much you *can* shrink.  
+To find the exact maximum shrinkable amount in diskpart:  
+select volume 0  
+shrink querymax  
+This tells you the maximum MB you can actually shrink right now. Use that number (or slightly less) in your shrink command.  
+________________________________________________________________________________________________________________________  
+Most likely culprits if querymax is low  
+| Issue                             | Fix  |
+| :---------                        | :----------: |
+| Hibernation file	                |powercfg /h off in PowerShell|
+| Page file	                        |Disable it in Advanced System Settings → restart|
+| System restore points	            |Delete them (as we did earlier)|
+| MFT / unmovable NTFS files	      | Run defrag C: /U /V|
+
+  
 
 ### Before start - record current state
 bash\
