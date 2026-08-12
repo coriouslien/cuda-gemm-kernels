@@ -90,7 +90,18 @@ bash\
 `sudo apt-get remove cuda-toolkit-13-2`\
 `sudo apt-get autoremove`
 ______________________________________________________________________________________
-Sum
+**Summary of the safety guarantees**\
+Risk	Mitigation\
+| Risk                  | Mitigation   |
+| :---------            | :----------: |
+| Text                  | Text         |
+ 
+Breaks existing code	Both versions coexist, symlink switch is instant
+Driver incompatible	You already have 595 driver
+Can't roll back	Rollback is one ln -s command
+Loses current install	/usr/local/cuda-12.8 is untouched throughout
+The APT method with versioned package names is safe precisely because it never touches your existing installation.
+
 
 
 
