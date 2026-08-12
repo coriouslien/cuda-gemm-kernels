@@ -48,22 +48,22 @@ To undo/delete a restore point you created:
 4.	Click **Delete** — this removes **all** restore points for that drive  
 5.	Click Apply → OK  
 _______________________________________________________________________________________________________________  
-Option 2: Via Disk Cleanup
-1.	Search Disk Cleanup → Run it on C:
-2.	Click Clean up system files
-3.	Go to the More Options tab
-4.	Under System Restore and Shadow Copies, click Clean up
-5.	Confirm deletion
-________________________________________
-Option 3: Via PowerShell (precise control)
+**Option 2: Via Disk Cleanup**  
+1.	Search **Disk Cleanup** → Run it on C:  
+2.	Click **Clean up system** files  
+3.	Go to the **More Options** tab  
+4.	Under System Restore and Shadow Copies, click **Clean up**  
+5.	Confirm deletion  
+_______________________________________________________________________________________________________________  
+**Option 3: Via PowerShell (precise control)** 
 List all restore points first:
-powershell
-Get-ComputerRestorePoint
-Then delete all of them:
-powershell
-vssadmin delete shadows /for=C: /all /quiet
+At the CMD command line"      
+Get-ComputerRestorePoint    
+Then delete all of them:    
+At the CMD command line:    
+`vssadmin delete shadows /for=C: /all /quiet`  
 ________________________________________
-Note: You can't delete a single specific restore point through built-in Windows tools — it's all or nothing. If you only want to free up space, Option 1 or the vssadmin command is the quickest.
+**Note:** You can't delete a single specific restore point through built-in Windows tools — it's all or nothing. If you only want to free up space, Option 1 or the vssadmin command is the quickest.
 
 
 ### Before start - record current state
