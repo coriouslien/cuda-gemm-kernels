@@ -726,7 +726,7 @@ You should see your **RTX 5080** listed inside the container like this:
 +-----------------------------------------------------------------------------------------+  
 | NVIDIA-SMI 590.48.01&emsp;&emsp;&emsp;&emsp;Driver Version: 590.48.01&emsp;&emsp;&emsp;CUDA Version: 12.8|  
 |-------------------------------+----------------------+----------------------------------|  
-|   0  NVIDIA GeForce RTX 5080 |  ...&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;|&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |  
+|   0  NVIDIA GeForce RTX 5080 |  ...&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;|&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |  
 +-----------------------------------------------------------------------------------------+  
 
    
