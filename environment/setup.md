@@ -127,6 +127,7 @@ Based on the **1,835 GB** Volume 0 (C: drive), here's a simple breakdown:
 | Recommended|	900,000 MB	|~879 GB	|~956 GB|
 |Maximum	|1,400,000 MB	|~1,367 GB	|~468 GB|
 
+For CUDA/AI development, **900,000 MB is the sweet spot** — enough for datasets, models, and Docker containers.  
 
 
 _____________________________________________________________________________________________________________  
