@@ -12,7 +12,7 @@ On cmd type:\
 **Disable System Restore** (optional but helps):\
 </br>
 command on cmd:
-`Disable-ComputerRestore -Drive "C:\"`\
+`Disable-ComputerRestore -Drive "C:\"`
 _________________________________________________________________________________________________________
 Step 2: Defrag and clear unmovable files
 Run this in PowerShell as Administrator:
