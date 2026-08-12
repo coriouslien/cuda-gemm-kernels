@@ -79,11 +79,11 @@ ________________________________________________________________________________
 Rollback procedure — if anything goes wrong\
 Since CUDA versions coexist, rollback is just switching the symlink back:\
 bash\
-**Instant rollback — one command**
+**Instant rollback — one command**\
 `sudo rm /usr/local/cuda`\
 `sudo ln -s /usr/local/cuda-12.8 /usr/local/cuda\`
 
-**Verify rollback**
+**Verify rollback**\
 `nvcc --version  # back to 12.8`\
 If you want to fully remove 13.2:\
 bash\
