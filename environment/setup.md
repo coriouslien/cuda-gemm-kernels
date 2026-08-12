@@ -1,17 +1,7 @@
-### Install Ubuntu 24.04 on windows 11, dual boot ###
-**Step 1: Disable the blockers**\
-Open PowerShell as Administrator and run these commands one by one:\
-Disable hibernation (frees up several GB):
-powershell\
-`powercfg /h off`\
-Disable page file (temporarily):\
-1.	Search "Advanced System Settings" → click Settings under Performance
-2.	Go to Advanced tab → Change under Virtual Memory
-3.	Uncheck "Automatically manage" → select No paging file → click Set → OK
-4.	Restart your PC\
-Disable System Restore (optional but helps):\
-powershell\
-Disable-ComputerRestore -Drive "C:\"
+**Disable System Restore** (optional but helps):\
+</br>
+command on cmd:
+`Disable-ComputerRestore -Drive "C:\"`
 ________________________________________
 Step 2: Defrag and clear unmovable files
 Run this in PowerShell as Administrator:
