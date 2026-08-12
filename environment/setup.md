@@ -31,7 +31,7 @@ ________________________________________________________________________________
 ### Step 2 — Install CUDA 13.2 toolkit (versioned, not generic) ###
 A key reason to use versioned package names is version control. The generic cuda and cuda-toolkit packages track newer versions automatically, which is not what you want when pinning to a specific version.\
 bash\
-** Install specifically versioned 13-2 ** — does NOT remove your existing CUDA\
+**Install specifically versioned 13-2** — does NOT remove your existing CUDA\
 `sudo apt-get install cuda-toolkit-13-2`\
 This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in separate directories:\
 `/usr/local/cuda-12.8/`   ← your current installation, untouched\
@@ -45,8 +45,8 @@ bash\
 `sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`\
 
 **Verify**\
-`nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  ** should show 13.2 **
-________________________________________
+`nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  **should show 13.2**\
+_____________________________________________________________________________________
 ### Step 4 — Update PATH in your .bashrc ###
 bash\
 **Check what you currently have:**\
