@@ -45,7 +45,7 @@ bash\
 `sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`
 
 **Verify**\
-`nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  **should show 13.2**
+`nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  **#should show 13.2**
 _____________________________________________________________________________________
 ### Step 4 — Update PATH in your .bashrc ###
 bash\
