@@ -62,6 +62,36 @@ bash\
 `nvcc --version`\
 ___________________________________________________________________________________________
 ### Step 5 — Verify your driver compatibility ###
+bash\
+`nvidia-smi`\
+**Check that Driver Version is compatible with CUDA 13.2**\
+**CUDA 13.2 requires driver >= 595.xx**\
+CUDA 13.2.1 requires driver version 595.58.03. You already have nvidia-driver-595-open installed from your earlier system fix — so you should be compatible.
+_______________________________________________________________________________________
+### Step 6 — Test your existing code compiles ###
+bash\
+`cd ~/<XXX>/sgemm/sgemm_cublas`\
+`mkdir build_13 && cd build_13`\
+`cmake .. -DCMAKE_BUILD_TYPE=Release`\
+`make -j$(nproc)`\
+`./cublas_gemmex`
+____________________________________________________________________________________
+Rollback procedure — if anything goes wrong\
+Since CUDA versions coexist, rollback is just switching the symlink back:\
+bash\
+**Instant rollback — one command**
+`sudo rm /usr/local/cuda`\
+`sudo ln -s /usr/local/cuda-12.8 /usr/local/cuda\`
+
+**Verify rollback**
+`nvcc --version  # back to 12.8`\
+If you want to fully remove 13.2:\
+bash\
+`sudo apt-get remove cuda-toolkit-13-2`\
+`sudo apt-get autoremove\
+______________________________________________________________________________________
+Sum
+
 
 
 
