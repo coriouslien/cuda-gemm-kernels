@@ -94,8 +94,14 @@ ________________________________________________________________________________
 Risk	Mitigation\
 | Risk                              | Mitigation   |
 | :---------                        | :----------: |
-| Text                              | Text         |
- 
+| Breaks existing cod               | Both versions coexist, symlink switch is instant         |
+| :---------                        | :----------: |
+|Driver incompatible | You already have 595 driver|
+| :---------                        | :----------: |
+|Can't roll back                 |Rollback is one ln -s command
+| :---------                        | :----------: |
+|Loses current install  | 	/usr/local/cuda-12.8 is untouched throughout|
+
 Breaks existing code	Both versions coexist, symlink switch is instant
 Driver incompatible	You already have 595 driver
 Can't roll back	Rollback is one ln -s command
