@@ -70,7 +70,14 @@ Please see the list volume below. I select volume 0, but I still cannot shrink t
 DISKPART> select disk 0  
 Disk 0 is now the selected disk. 
 `DISKPART> list volume`   
-  
+
+| Volumn \###      | Ltr Label | Fs | Type | Size | Status | Info
+| :---------       | :----------: |:----------: |:----------: |:----------: |:----------: |:----------: |    
+| Volume 0         | C Windows    |NTFS         | Partition |1835 GB |  Healthy|    Boot |     
+| Volume 1         | SYSTEM       | FAT32       | Partition |   100 MB | Healthy  |  System |    
+| Volume 2         | WinRE tools  | NTFS        |Partition  |  800 MB | Healthy   | Hidden   |  
+| Volume 3         | BIOS_RVY     | NTFS        | Partition |    26 GB |  Healthy  |  Hidden|
+
 Volume \###&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;   Ltr  Label   Fs     Type        Size     Status     Info     
 Volume 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; C   Windows  NTFS   Partition   1835 GB  Healthy    Boot      
 Volume 1         SYSTEM       FAT32  Partition    100 MB  Healthy    System     
