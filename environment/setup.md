@@ -20,7 +20,7 @@ Run this in cmd as Administrator:\
 Then open **Event Viewer** → **Windows Logs** → **Application** and search for "defrag" to see if any files are still unmovable.
 _________________________________________________________________________________________________________
 ### Step 3: Try shrinking again — but use diskpart for more control ###
-In cmd as Administrator:\
+In cmd as Administrator:  
 
 `diskpart`  
   
