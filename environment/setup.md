@@ -15,7 +15,7 @@ Verify first:\
 bash\
 `nvcc --version`\
 `ls /usr/local/ | grep cuda`\
-This matters for rollback — you need to know exactly what you have.\
+This matters for rollback — you need to know exactly what you have.
 `____________________________________________________________________`
 ### Method choice — APT package manager (recommended)
 The cleanest approach is to use NVIDIA's official APT repository and NVIDIA-provided Debian packages for **Ubuntu 24.04** instead of the standalone .run installer. NVIDIA officially supports **Ubuntu 24.04** for CUDA, and its Linux installation guide recommends distribution-specific packages where possible because they integrate with the system package manager more cleanly.
@@ -59,7 +59,7 @@ bash\
 **These use the symlink /usr/local/cuda so they work automatically**\
 **after you update the symlink — no .bashrc change needed**\
 `source ~/.bashrc`\
-`nvcc --version`\
+`nvcc --version`
 ___________________________________________________________________________________________
 ### Step 5 — Verify your driver compatibility ###
 bash\
@@ -88,7 +88,7 @@ bash\
 If you want to fully remove 13.2:\
 bash\
 `sudo apt-get remove cuda-toolkit-13-2`\
-`sudo apt-get autoremove\
+`sudo apt-get autoremove
 ______________________________________________________________________________________
 Sum
 
