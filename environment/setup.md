@@ -671,17 +671,17 @@ curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-contai
   sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
 Step 4: Update and install  
 bash  
-sudo apt update  
-sudo apt install -y nvidia-container-toolkit  
+`sudo apt update`    
+`sudo apt install -y nvidia-container-toolkit`    
 ____________________________________________________________________________________________________________________  
 Verify the key was added correctly:
 bash
-gpg --show-keys /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg  
+`gpg --show-keys /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
 You should see an NVIDIA key fingerprint ending in F796ECB0.  
-Step 4: Update and install  
-bash  
-sudo apt update  
-sudo apt install -y nvidia-container-toolkit  
+**Step 4: Update and install**    
+bash    
+`sudo apt update`    
+`sudo apt install -y nvidia-container-toolkit`    
 ___________________________________________________________________________________________________________________  
 If you still get the GPG error on apt update  
 The key shows a expired subkey (2021) which may still cause issues. Fix with:  
@@ -689,12 +689,12 @@ bash
 Remove old repo file and recreate it properly  
 sudo rm /etc/apt/sources.list.d/nvidia-container-toolkit.list  
   
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \  
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \  
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
+`curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \    
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \    
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list`  
   
-sudo apt update  
-sudo apt install -y nvidia-container-toolkit  
+`sudo apt update`    
+`sudo apt install -y nvidia-container-toolkit`    
 ___________________________________________________________________________________________________________________  
 After successful install, run:  
 bash  
@@ -759,24 +759,24 @@ cuda-12.8
 You have CUDA 12.8 installed and that's what matters. 13.1 in nvidia-smi is nothing to worry about — it just means your driver is future-ready.   
 
 Please see the following output:  
-+-----------------------------------------------------------------------------------------+  
-| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |  
-+-----------------------------------------+------------------------+----------------------+  
-| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |  
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |  
-|                                         |                        |               MIG M. |  
-|=========================================+========================+======================|  
-|   0  NVIDIA GeForce RTX 5080        Off |   00000000:01:00.0  On |                  N/A |  
-|  0%   35C    P8             20W /  360W |     525MiB /  16303MiB |      6%      Default |  
-|                                         |                        |                  N/A |  
-+-----------------------------------------+------------------------+----------------------+  
-+-----------------------------------------------------------------------------------------+  
-| Processes:                                                                              |  
-|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |  
-|        ID   ID                                                               Usage      |  
-|=========================================================================================|  
-|  No running processes found                                                             |  
-+-----------------------------------------------------------------------------------------+ |    
++-----------------------------------------------------------------------------------------+    
+| NVIDIA-SMI 590.48.01&emsp;&emsp;&emsp;&emsp;&emsp;Driver Version: 590.48.01&emsp;&emsp;&emsp;&emsp;CUDA Version: 13.1|    
++-----------------------------------------+------------------------+----------------------+    
+| GPU  Name&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Persistence-M | Bus-Id&emsp;&emsp;&emsp;&emsp;Disp.A | Volatile Uncorr. ECC |    
+| Fan  Temp   Perf&emsp;&emsp;&emsp;&emsp;&emsp;Pwr:Usage/Cap |&emsp;&emsp;&emsp;&emsp;&emsp;Memory-Usage | GPU-Util  Compute M. |    
+|                                         |                        |               MIG M. |    
+|=========================================+========================+======================|    
+|   0  NVIDIA GeForce RTX 5080        Off |   00000000:01:00.0  On |                  N/A |    
+|  0%   35C    P8             20W /  360W |     525MiB /  16303MiB |      6%      Default |    
+|                                         |                        |                  N/A |    
++-----------------------------------------+------------------------+----------------------+    
++-----------------------------------------------------------------------------------------+      
+| Processes:                                                                              |    
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |    
+|        ID   ID                                                               Usage      |    
+|=========================================================================================|    
+|  No running processes found                                                             |    
++-----------------------------------------------------------------------------------------+ |      
 
 Docker can see your RTX 5080 perfectly! ✅
 Everything looks great:
