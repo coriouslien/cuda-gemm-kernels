@@ -19,19 +19,19 @@ Run this in cmd as Administrator:\
 `defrag C: /U /V`\
 Then open **Event Viewer** → **Windows Logs** → **Application** and search for "defrag" to see if any files are still unmovable.
 _________________________________________________________________________________________________________
-Step 3: Try shrinking again — but use diskpart for more control
-In PowerShell as Administrator:
-powershell
-diskpart
-```
-Then inside diskpart:
-```
-list disk
-select disk 0
-list volume
-select volume 2        # select your C: drive volume number
-shrink desired=900000  # ~900GB for Ubuntu, leaves ~800GB for Windows
-________________________________________
+### Step 3: Try shrinking again — but use diskpart for more control ###
+In cmd as Administrator:\
+
+`diskpart`  
+```  
+Then inside diskpart:  
+```  
+`list disk`  
+select disk 0  
+list volume  
+select volume 2        \# select your C: drive volume number  
+shrink desired=900000  \# ~900GB for Ubuntu, leaves ~800GB for Windows  
+______________________________________________________________________________________________________________  
 Step 4: What to leave for Windows
 With 1.7TB free, a reasonable split is:
 •	Windows C: drive: keep ~200–300 GB free (so shrink by ~1.4–1.5TB)
