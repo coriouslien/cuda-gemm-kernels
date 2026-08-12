@@ -29,7 +29,7 @@ Then inside diskpart:
 `list disk`  
 select disk 0  
 list volume  
-select volume 2        \# select your C: drive volume number  
+select volume 2   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;     \# select your C: drive volume number  
 shrink desired=900000 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; \# ~900GB for Ubuntu, leaves ~800GB for Windows  
 ______________________________________________________________________________________________________________    
 ### 1.7TB free, a reasonable split is:  
