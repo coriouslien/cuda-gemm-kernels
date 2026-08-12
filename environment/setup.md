@@ -28,6 +28,15 @@ bash\
 `sudo dpkg -i cuda-keyring_1.1-1_all.deb`\
 `sudo apt-get update`\
 ________________________________________________________________________________
-
+### Step 2 — Install CUDA 13.2 toolkit (versioned, not generic) ###
+A key reason to use versioned package names is version control. The generic cuda and cuda-toolkit packages track newer versions automatically, which is not what you want when pinning to a specific version.\
+bash\
+** Install specifically versioned 13-2 ** — does NOT remove your existing CUDA\
+`sudo apt-get install cuda-toolkit-13-2`\
+This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in separate directories:\
+`/usr/local/cuda-12.8/`   ← your current installation, untouched\
+`/usr/local/cuda-13.2/`   ← new installation\
+`/usr/local/cuda`          ← symlink, currently points to 12.8`\
+_______________________________________________________________________________________
 
 
