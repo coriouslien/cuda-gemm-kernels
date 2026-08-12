@@ -29,11 +29,10 @@ Then inside diskpart:
 `list disk`  
 select disk 0  
 list volume  
-select volume 2     &emsp&emsp&emsp   \# select your C: drive volume number  
-shrink desired=900000 &emsp&emsp&emsp \# ~900GB for Ubuntu, leaves ~800GB for Windows  
-______________________________________________________________________________________________________________  
-### Step 4: What to leave for Windows ###  
-With 1.7TB free, a reasonable split is:  
+select volume 2        \# select your C: drive volume number  
+shrink desired=900000 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; \# ~900GB for Ubuntu, leaves ~800GB for Windows  
+______________________________________________________________________________________________________________    
+### 1.7TB free, a reasonable split is:  
 •	**Windows C: drive:** keep ~200–300 GB free (so shrink by ~1.4–1.5TB)  
 •	**Ubuntu**: 300–700 GB is very generous — even 100 GB is plenty for most Linux use cases  
 ______________________________________________________________________________________________________________  
