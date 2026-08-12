@@ -22,8 +22,8 @@ The cleanest approach is to use NVIDIA's official APT repository and NVIDIA-prov
 
 _______________________________________________________________________________
 ### Step 1 — Add NVIDIA APT repository (if not already added) ###
-bash\
 **Download and install the CUDA keyring**\
+bash\
 `wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb`\
 `sudo dpkg -i cuda-keyring_1.1-1_all.deb`\
 `sudo apt-get update`\
