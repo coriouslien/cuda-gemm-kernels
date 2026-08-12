@@ -94,8 +94,8 @@ To find the exact maximum shrinkable amount in diskpart:
 select volume 0  
 shrink querymax  
 This tells you the maximum MB you can actually shrink right now. Use that number (or slightly less) in your shrink command.  
-________________________________________________________________________________________________________________________  
-Most likely culprits if querymax is low  
+________________________________________________________________________________________________________________________    
+Most likely culprits if querymax is low    
 | Issue                             | Fix  |
 | :---------                        | :----------: |
 | Hibernation file	                |powercfg /h off in PowerShell|
