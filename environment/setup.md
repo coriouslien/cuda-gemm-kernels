@@ -92,9 +92,9 @@ bash\
 ______________________________________________________________________________________
 **Summary of the safety guarantees**\
 Risk	Mitigation\
-| Risk                  | Mitigation   |
-| :---------            | :----------: |
-| Text                  | Text         |
+| Risk                              | Mitigation   |
+| :---------                        | :----------: |
+| Text                              | Text         |
  
 Breaks existing code	Both versions coexist, symlink switch is instant
 Driver incompatible	You already have 595 driver
