@@ -16,6 +16,6 @@ bash\
 `nvcc --version`\
 `ls /usr/local/ | grep cuda`\
 This matters for rollback — you need to know exactly what you have.\
-`____________________________________________________________________`\
+`____________________________________________________________________`
 
 
