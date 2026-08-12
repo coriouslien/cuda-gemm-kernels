@@ -36,7 +36,7 @@ bash\
 This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in separate directories:\
 `/usr/local/cuda-12.8/`   ← your current installation, untouched\
 `/usr/local/cuda-13.2/`   ← new installation\
-`/usr/local/cuda`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← symlink, currently points to 12
+`/usr/local/cuda`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← symlink, currently points to 12
 _______________________________________________________________________________________
 
 
