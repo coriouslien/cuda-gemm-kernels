@@ -1,7 +1,7 @@
 ### Install Ubuntu 24.04 on windows 11, dual boot ###
 **Step 1: Disable the blockers**\
 Open PowerShell as Administrator and run these commands one by one:\
-Disable hibernation (frees up several GB):\
+Disable hibernation (frees up several GB):
 powershell\
 `powercfg /h off`\
 Disable page file (temporarily):\
