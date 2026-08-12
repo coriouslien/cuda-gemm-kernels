@@ -118,6 +118,16 @@ Most likely culprits if querymax is low
 **One thing to do BEFORE wiping Windows**   
 Make sure **Secure Boot** and **Fast Boot** are disabled in your BIOS — these can cause issues with NVIDIA drivers on Ubuntu. You'll be in the BIOS anyway when selecting the USB boot device.  
 
+The desired shrink space.  
+Based on the **1,835 GB** Volume 0 (C: drive), here's a simple breakdown:  
+**If keeping dual boot**  
+| Ubuntu Use       | Shrink by | Ubuntu Gets  | Windows Keeps   |
+| :--------- | :----------: |:----------: |:----------: |
+| Minimal	   | 500,000 MB	  | ~488 GB	    |~1,347 GB
+| Recommended|	900,000 MB	|~879 GB	|~956 GB|
+|Maximum	|1,400,000 MB	|~1,367 GB	|~468 GB|
+
+
 
 _____________________________________________________________________________________________________________  
 
