@@ -8,7 +8,7 @@ On cmd type:\
 2.	Go to **Advanced** tab → **Change** under Virtual Memory
 3.	Uncheck "Automatically manage" → select **No paging file** → click Set → OK
 4.	**Restart your PC**\
-\
+</br>
 **Disable System Restore** (optional but helps):\
 command on cmd:\
 `Disable-ComputerRestore -Drive "C:\"`
