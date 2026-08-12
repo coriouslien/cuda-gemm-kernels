@@ -10,3 +10,4 @@ Record everything about your current installation\
 `cat ~/nvidia_backup_list.txt`
 Save these outputs somewhere safe. This is your rollback reference.
 
+
