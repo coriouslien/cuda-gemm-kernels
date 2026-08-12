@@ -40,7 +40,7 @@ This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in se
 _______________________________________________________________________________________
 ### Step 3 — Switch between versions via symlink ###
 bash\
-** Switch to CUDA 13.2 **
+** Switch to CUDA 13.2 **\
 `sudo rm /usr/local/cuda`\
 `sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`\
 
