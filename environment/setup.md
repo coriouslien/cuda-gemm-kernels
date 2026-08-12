@@ -724,9 +724,9 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 
 You should see your **RTX 5080** listed inside the container like this:    
 +-----------------------------------------------------------------------------------------+  
-| NVIDIA-SMI 590.48.01         Driver Version: 590.48.01      CUDA Version: 12.8         |  
+| NVIDIA-SMI 590.48.01&emsp;&emsp;&emsp;&emsp;Driver Version: 590.48.01&emsp;&emsp;&emsp;&emsp;CUDA Version: 12.8|  
 |-------------------------------+----------------------+----------------------------------|  
-|   0  NVIDIA GeForce RTX 5080 |  ...                 |                                  |  
+|   0  NVIDIA GeForce RTX 5080 |  ...&emsp;&emsp;&emsp;&emsp;|&emsp;&emsp;&emsp;&emsp;&emsp; |  
 +-----------------------------------------------------------------------------------------+  
 
    
