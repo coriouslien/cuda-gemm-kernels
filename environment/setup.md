@@ -40,24 +40,24 @@ This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in se
 _______________________________________________________________________________________
 ### Step 3 — Switch between versions via symlink ###
 bash\
-** Switch to CUDA 13.2 **\
+**Switch to CUDA 13.2**\
 `sudo rm /usr/local/cuda`\
 `sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`\
 
-** Verify **
+**Verify**\
 `nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  ** should show 13.2 **
 ________________________________________
 ### Step 4 — Update PATH in your .bashrc ###
 bash\
-** Check what you currently have: **\
+**Check what you currently have:**\
 `grep cuda ~/.bashrc`\
 </br>
-** It likely already has something like: **\
+**It likely already has something like:**\
 `export PATH=/usr/local/cuda/bin:$PATH`\
 `export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH`\
 </br>
-** These use the symlink /usr/local/cuda so they work automatically **
-** after you update the symlink — no .bashrc change needed **
+**These use the symlink /usr/local/cuda so they work automatically**\
+**after you update the symlink — no .bashrc change needed**\
 `source ~/.bashrc`\
 `nvcc --version`\
 ___________________________________________________________________________________________
