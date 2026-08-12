@@ -3,7 +3,7 @@ Open cmd as Administrator and run these commands one by one:\n
 **Disable hibernation** (frees up several GB):\
 On cmd type:\
 `powercfg /h off`\
-**Disable page file** (temporarily):\
+**Disable page file** (temporarily):
 1.	Search "Advanced System Settings" → click **Settings** under Performance
 2.	Go to **Advanced** tab → &&Change** under Virtual Memory
 3.	Uncheck "Automatically manage" → select **No paging file** → click Set → OK
@@ -12,8 +12,8 @@ On cmd type:\
 **Disable System Restore** (optional but helps):\
 </br>
 command on cmd:
-`Disable-ComputerRestore -Drive "C:\"`
-________________________________________
+`Disable-ComputerRestore -Drive "C:\"`\
+_________________________________________________________________________________________________________
 Step 2: Defrag and clear unmovable files
 Run this in PowerShell as Administrator:
 powershell
