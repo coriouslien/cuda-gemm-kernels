@@ -11,7 +11,7 @@ Disable page file (temporarily):\
 4.	Restart your PC\
 Disable System Restore (optional but helps):\
 powershell\
-Disable-ComputerRestore -Drive "C:\"\
+Disable-ComputerRestore -Drive "C:\"
 ________________________________________
 Step 2: Defrag and clear unmovable files
 Run this in PowerShell as Administrator:
