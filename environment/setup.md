@@ -165,6 +165,294 @@ Volume 0 is the selected volume.
 DISKPART> shrink querymax  
 The maximum number of reclaimable bytes is:  917 GB (939659 MB)    
 
+Windows will only let you reclaim 917 GB due to unmovable system files blocking the rest. Here are your options:  
+**Option 1: Shrink with diskpart right now (quick)**   
+shrink desired=939659  
+This gives Ubuntu **~917 GB** — perfectly fine for CUDA/AI work.   
+_____________________________________________________________________________________________________________________  
+**Option 2: Get the full 1.8TB (recommended if you don't need Windows)**
+If you don't need Windows, skip the shrink entirely:  
+1.	Make Ubuntu USB installer  
+2.	Boot from it  
+3.	Choose **"Erase disk and install Ubuntu"**  
+4.	Get the full **1,835** GB  
+917 GB vs 1,835 GB — that's **double the space** for your AI datasets and models, for zero extra effort.  
+________________________________________
+Recommendation:  
+Go with **Option 2**. For CUDA/AI development, storage fills up fast:  
+•	Large language models = 10–70 GB each  
+•	Training datasets = can be hundreds of GB  
+•	Docker images = 5–20 GB each  
+•	Virtual environments = stack up quickly  
+The full 1.8TB will serve you much better in the long run, and erasing via the Ubuntu installer is actually easier.  
+  
+Option 2 WILL erase Windows 11.  
+What each option does  
+|Option	                        |Erases Windows?	|Ubuntu Space|
+|:---------                     | :----------: | :----------: |
+|Option 1 (shrink desired=939659)|No — keeps Windows|	~917 GB|
+|Option 2 (Erase disk)	         |Yes — wipes everything|	~1,835 GB|
+
+Earlier, if you don't need Windows —  Option 2.  
+But if you want to keep Windows as a backup, go with Option 1:  
+shrink desired=939659  
+Then install Ubuntu on that freed space.  
+_____________________________________________________________________________________________________________________  
+•	**Keep Windows** (just in case) → use Option 1  
+•	**Wipe Windows completely** (full disk for Ubuntu) → use Option 2  
+917 GB is still very generous for CUDA/AI development, so Option 1 is not a bad choice even if you end up never using Windows again.  
+Don't format anything in diskpart! Leave the unallocated space as-is.    
+The Ubuntu installer will handle all the partitioning and formatting automatically.  
+____________________________________________________________________________________________________________________  
+What to do now 
+1.	Exit diskpart 
+   `exit`  
+2.	Create Ubuntu USB (if you haven't yet)  
+•	Download Ubuntu 24.04 LTS from ubuntu.com  
+•	Flash with Rufus → select GPT partition scheme  
+•	Use 8GB+ USB stick  
+3.	Before rebooting — note this down  
+•	Disable Secure Boot in BIOS  
+•	Disable Fast Boot in BIOS  
+•	These two cause the most NVIDIA/CUDA driver problems on Ubuntu  
+4.	Boot from USB → spam F2, F12, or Del at startup  
+5.	In Ubuntu installer  
+•	Choose "Install Ubuntu alongside Windows"  
+•	It will automatically detect the 917 GB unallocated space  
+•	Select that space for Ubuntu  
+____________________________________________________________________________________________________________________  
+**Partition layout Ubuntu will create automatically**  
+|Partition	|Size	|Purpose|
+|:--------- | :----------: | :----------: |
+|EFI	      |~512 MB	     |Boot|
+|swap       |	~16 GB      |	RAM overflow|
+| (root)	Remaining ~900 GB	Everything else
+You don't need to manually set this up — the installer handles it.  
+You should disabl boot. There are two options in "Secure Boot Mode", Standard and Custom. You should select **"Standard"**    
+Why **"Standard":  
+•	**Standard** = uses Microsoft's trusted certificates — works fine for Ubuntu  
+•	**Custom** = for manually importing your own certificates — not needed here  
+___________________________________________________________________________________________________________________
+**Full BIOS checklist for MSI before you boot Ubuntu USB** (I use MSI hardware)   
+While you're in BIOS, make sure:    
+|Setting	   |What to set|  
+|:--------- | :----------: |
+| Secure Boot Mode| **Standard**  |
+| Secure Boot |	**Disabled**  |
+| Fast Boot	| **Disabled**  |
+| Boot mode	| **UEFI** (not Legacy/CSM)|  
+**How to disable Secure Boot on MSI**   
+1.	Go to **Settings → Security → Secure Boot**    
+2.	Set Secure Boot to **Disabled**     
+3.	Press **F10** to save and exit    
+Then plug in your Ubuntu USB and boot from it — on MSI you can hit **F11** at startup for the one-time boot menu to select your USB drive directly without changing boot order permanently. (**Note**: MIS is F11)  
+  
+If you don't see "Fast Boot" option, but you have the following set up:  
+Full Screen Logo Display: Enable    
+Bootup NumLock State: On    
+POST Beep: Disable    
+FIXED BOOT ORDER Priorities:    
+Boot Option #1: UEFI Hard Disk: Windows Boot Manage    
+Boot Option #1: UEFI CD/DVE   
+Boot Option #3 UEFI USB Hard disk    
+    
+Change Boot Order to prioritize USB    
+Change your boot order to:    
+Priority	Set to    
+Boot Option #1	UEFI USB Hard Disk    
+Boot Option #2	UEFI Hard Disk: Windows Boot Manager    
+Boot Option #3	UEFI CD/DVD    
+This makes your PC boot from the Ubuntu USB first.    
+_____________________________________________________________________________________________________________________  
+Fast Boot on MSI — where to find it  
+Look in these locations:  
+•	Settings → Advanced → Power Management Setup → Fast Boot  
+•	OC → CPU Features → Fast Boot  
+•	It may also be called "Windows 10 WHQL Support" on some MSI boards  
+If you genuinely can't find it, don't worry — it's not critical. Ubuntu will likely install fine without disabling it.  
+_____________________________________________________________________________________________________________________  
+After changing boot order  
+1.	Press F10 to save and exit  
+2.	Make sure your Ubuntu USB is plugged in  
+3.	PC will reboot and boot from USB automatically  
+4.	Ubuntu installer will launch  
+  
+Boot Option #4 UEFI USB CD/DVD  
+Boot Option #5: UEFI USB Key: UEFI: USB disk 3.0  
+Boot Option #6: UEFI USB Floopy  
+  
+You already have your Ubuntu USB recognized!
+Change Boot Option #1 to your USB  
+Set it to:  
+|Priority	|Set to|
+|:--------- | :----------: |
+|Boot Option #1	|**UEFI USB Key: UEFI: USB disk 3.0** | 
+|Boot Option #2	|UEFI Hard Disk: Windows Boot Manager | 
+|Others	|leave as is | 
+**"UEFI USB Key: UEFI: USB disk 3.0"** is your Ubuntu USB drive.  
+______________________________________________________________________________________________________________________  
+Then  
+1.	Press **F10** to save and exit  
+2.	PC will reboot and boot directly into Ubuntu installer  
+3.	You're good to go!  
+______________________________________________________________________________________________________________________  
+**What you'll see in the Ubuntu installer**    
+•	**"Try or Install Ubuntu"** → press Enter  
+•	Wait for desktop to load  
+•	Click **"Install Ubuntu"**  
+•	Choose "Install Ubuntu alongside Windows Boot Manager"  
+•	It should detect your 917 GB unallocated space automatically  
+  
+If you have OC Explore Mode options Expert and Normal.
+That's not Fast Boot. OC Explore Mode is different:  
+|Option |	What it does  |
+|:--------- | :----------: |
+|**Normal**	|Shows basic overclocking options|  
+|**Expert** |	Shows advanced overclocking options  |
+This is only for CPU/RAM overclocking settings — nothing to do with boot speed or Ubuntu.  
+___________________________________________________________________________________________________________________  
+Leave it on Normal and don't worry about Fast Boot  
+On your MSI board, Fast Boot either:  
+•	Doesn't exist on your specific model  
+•	Is not enabled by default  
+Either way, it won't stop Ubuntu from installing. Many people install Ubuntu successfully without disabling Fast Boot.  
+____________________________________________________________________________________________________________________  
+You're good to proceed  
+Just focus on what matters:  
+•	Secure Boot → Disabled  
+•	Boot Option #1 → UEFI USB Key: USB disk 3.0  
+•	Press F10 to save and exit  
+That's all you need. Plug in your Ubuntu USB if you haven't already and save & exit BIOS.  
+  
+Follow these steps in the installer  
+1.	Language → Select English (or your preference) → Continue  
+2.	Keyboard layout → Continue  
+3.	Connect to internet → Skip for now (install offline, update later)  
+4.	What to install  
+•	Choose "Ubuntu" (full install, not minimal)  
+•	Check "Install third-party software for graphics" — this is important for NVIDIA drivers!  
+5.	Installation type  
+•	Choose "Install Ubuntu alongside Windows Boot Manager"  
+•	It should show your 917 GB unallocated space  
+6.	Username & password → set these up  
+7.	Click Install → wait ~15-20 minutes  
+____________________________________________________________________________________________________________________  
+The most important checkbox 
+"Install third-party software for graphics and Wi-Fi hardware"  
+This pre-installs NVIDIA drivers which saves you a lot of hassle for CUDA later.  
+____________________________________________________________________________________________________________________  
+On the "Installation type" screen, as that's the most critical step where you want to make sure it's not set to erase Windows,
+if you want to keep Windows.  
+Partitioning was handled automatically by the installer — you don't need to do anything there.
+______________________________________________________________________________________________________________________  
+Set Ubuntu as default boot (GRUB setup) 
+When you reboot, you'll see the GRUB menu with Ubuntu and Windows options. To make Ubuntu the default: 
+Open Terminal in Ubuntu and run: 
+bash 
+`sudo nano /etc/default/grub`
+  
+Find this line:  
+GRUB_DEFAULT=0  
+- `0` = Ubuntu (first option) — **already default**  
+- If Windows is booting first, change it to `0`  
+  
+Also check this line:  
+GRUB_TIMEOUT=10  
+Change 10 to 5 to reduce the wait time to 5 seconds.  
+Save and apply:  
+bash  
+# Press Ctrl+X → Y → Enter to save in nano #
+`sudo update-grub`
+____________________________________________________________________________________________________________________  
+Verify your partitions were created correctly  
+bash  
+`lsblk`
+You should see something like:   
+|Partition	| Size	| Mount|
+|:--------- | :----------: |:----------: |
+|sda1	      |100 MB	       |/boot/efi   | 
+|sda2       |	~900 GB      |	/    |
+|swap       |	~16 GB	     |swap   |
+**Next step — NVIDIA/CUDA setup**      
+Run this to check if NVIDIA drivers are working:   
+bash  
+nvidia-smi    
+  
+My Partition Layout  
+|Partition	|Size	|Purpose|
+|:--------- | :----------: |:----------: |
+|nvme0n1p1	|100MB	|EFI/Boot|
+|nvme0n1p2	|128MB	|Windows MSR|
+|nvme0n1p3	|917.8GB	|**Windows C: drive**|
+|nvme0n1p4	|800MB	|Windows Recovery|
+|nvme0n1p5	|26.5GB	|BIOS Recovery|
+|nvme0n1p6	|917.6GB	|**Ubuntu** / (your root)|
+Ubuntu is installed on **nvme0n1p6** with 917.6GB — perfect.
+___________________________________________________________________________________________________________________  
+**No Swap — Add a Swapfile instead**  
+No swap partition is fine. Create a swapfile (easier and flexible):  
+bash  
+**Create 16GB swapfile**   
+`sudo fallocate -l 16G /swapfile`  
+`sudo chmod 600 /swapfile`  
+`sudo mkswap /swapfile`  
+`sudo swapon /swapfile`  
+
+**Make it permanent**
+`echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab`
+
+**Verify**
+`free -h`  
+__________________________________________________________________________________________________________________    
+Next — Check NVIDIA drivers  
+bash  
+`nvidia-smi`  
+  
+Should I use Swap = 32 GB instead of 16GB?
+For CUDA/AI development, 32GB swap is better. Here's why:  
+Recommendation: 32GB Swap  
+Your Use Case	Recommended Swap  
+General desktop	8 GB  
+Software development	16 GB  
+CUDA/AI/ML development	32 GB  
+Large model training	64 GB  
+Why 32GB for AI/ML  
+•	Large models (LLMs) can overflow GPU VRAM into system RAM, then into swap  
+•	PyTorch/TensorFlow can use significant RAM during training  
+•	You have 917 GB of space — 32GB swap is only 3% of your disk, well worth it  
+___________________________________________________________________________________________________________________  
+Create 32GB Swapfile  
+bash  
+**Create 32GB swapfile**
+`sudo fallocate -l 32G /swapfile`  
+`sudo chmod 600 /swapfile`  
+`sudo mkswap /swapfile`  
+`sudo swapon /swapfile`  
+  
+**Make it permanent after reboot**
+`echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab`  
+  
+**Verify**
+`free -h`  
+You should see 32GB in the swap row.  
+__________________________________________________________________________________________________________________  
+RAM and swap:  
+•	16GB RAM → 32GB swap  
+•	32GB RAM → 32GB swap  
+•	64GB RAM → 32GB swap is still fine for AI work  
+
+My GPU Summary  
+	
+|GPU|	NVIDIA GeForce RTX 5080|
+|:--------- | :----------: |
+|VRAM|	16GB|
+|Driver	|590.48.01 |
+|CUDA	|13.1 |
+|Temp	|33°C  (very cool)|
+
+
+
+   
 _____________________________________________________________________________________________________________  
 
 
