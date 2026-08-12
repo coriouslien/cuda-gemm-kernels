@@ -88,7 +88,7 @@ bash\
 If you want to fully remove 13.2:\
 bash\
 `sudo apt-get remove cuda-toolkit-13-2`\
-`sudo apt-get autoremove
+`sudo apt-get autoremove`
 ______________________________________________________________________________________
 Sum
 
