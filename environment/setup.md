@@ -103,6 +103,14 @@ Most likely culprits if querymax is low
 | System restore points	            |Delete them (as we did earlier)|
 | MFT / unmovable NTFS files	      | Run defrag C: /U /V|
 
+### Install Ubuntu 24.04 - what to do ###  
+1.	Create Ubuntu USB installer  
+•	Download Ubuntu 24.04 LTS from ubuntu.com  
+•	Flash it with Rufus (Windows) → choose GPT partition scheme  
+•	Use a USB stick of 8GB+  
+2.	Boot from USB  
+•	Restart → spam F2, F12, or Del (depends on your motherboard) to enter boot menu  
+•	Select your USB drive  
   
 
 ### Before start - record current state
