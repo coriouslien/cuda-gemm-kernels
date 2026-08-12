@@ -95,7 +95,7 @@ Risk	Mitigation\
 | Risk                              | Mitigation   |
 | :---------                        | :----------: |
 | Breaks existing cod               | Both versions coexist, symlink switch is instant         |
-| ------- | ----------- |
+|           |   |
 |Driver incompatible | You already have 595 driver|
 | ------- | ----------- |
 |Can't roll back                 |Rollback is one ln -s command
