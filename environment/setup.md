@@ -10,8 +10,7 @@ On cmd type:\
 4.	**Restart your PC**
 </br>
 **Disable System Restore** (optional but helps):\
-</br>
-command on cmd:
+command on cmd:\
 `Disable-ComputerRestore -Drive "C:\"`
 _________________________________________________________________________________________________________
 Step 2: Defrag and clear unmovable files
