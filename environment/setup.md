@@ -311,6 +311,7 @@ That's not Fast Boot. OC Explore Mode is different:
 |:--------- | :----------: |
 |**Normal**	|Shows basic overclocking options|  
 |**Expert** |	Shows advanced overclocking options  |
+
 This is only for CPU/RAM overclocking settings — nothing to do with boot speed or Ubuntu.  
 ___________________________________________________________________________________________________________________  
 Leave it on Normal and don't worry about Fast Boot  
