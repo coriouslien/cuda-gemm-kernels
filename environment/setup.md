@@ -32,24 +32,23 @@ list volume
 select volume 2        \# select your C: drive volume number  
 shrink desired=900000  \# ~900GB for Ubuntu, leaves ~800GB for Windows  
 ______________________________________________________________________________________________________________  
-Step 4: What to leave for Windows
-With 1.7TB free, a reasonable split is:
-•	Windows C: drive: keep ~200–300 GB free (so shrink by ~1.4–1.5TB)
-•	Ubuntu: 300–700 GB is very generous — even 100 GB is plenty for most Linux use cases
-________________________________________
-If it still won't shrink far enough
-The nuclear option that always works: use GParted from the Ubuntu live USB itself to resize the partition before installing. Boot into the Ubuntu installer, open GParted (it's included), shrink C: from there, then proceed with installation. GParted bypasses Windows' restrictions entirely.
-Would you like a walkthrough of the full dual-boot installation steps once the partition is ready?
-How to undo "Create a restore point"?
-5:38 AM
-To undo/delete a restore point you created:
-Option 1: Via System Properties (GUI)
-1.	Press Win + R → type sysdm.cpl → Enter
-2.	Go to the System Protection tab
-3.	Click Configure next to your C: drive
-4.	Click Delete — this removes all restore points for that drive
-5.	Click Apply → OK
-________________________________________
+### Step 4: What to leave for Windows ###  
+With 1.7TB free, a reasonable split is:  
+•	**Windows C: drive:** keep ~200–300 GB free (so shrink by ~1.4–1.5TB)  
+•	**Ubuntu**: 300–700 GB is very generous — even 100 GB is plenty for most Linux use cases  
+______________________________________________________________________________________________________________  
+If it still won't shrink far enough  
+The nuclear option that always works: use **GParted** from the Ubuntu live USB itself to resize the partition before installing. Boot into the Ubuntu installer, open GParted (it's included), shrink C: from there, then proceed with installation. GParted bypasses Windows' restrictions entirely.  
+  
+To undo "Create a restore point"      
+To undo/delete a restore point you created:    
+**Option 1: Via System Properties (GUI)**  
+1.	Press **Win + R** → type sysdm.cpl → Enter  
+2.	Go to the **System Protection** tab  
+3.	Click **Configure** next to your C: drive  
+4.	Click **Delete** — this removes **all** restore points for that drive  
+5.	Click Apply → OK  
+_______________________________________________________________________________________________________________  
 Option 2: Via Disk Cleanup
 1.	Search Disk Cleanup → Run it on C:
 2.	Click Clean up system files
