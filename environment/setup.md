@@ -111,7 +111,16 @@ Most likely culprits if querymax is low
 2.	Boot from USB  
 •	Restart → spam F2, F12, or Del (depends on your motherboard) to enter boot menu  
 •	Select your USB drive  
-  
+3.	In the Ubuntu installer  
+•	When it asks about installation type, choose "Erase disk and install Ubuntu"  
+•	This wipes Windows and uses the full disk — done
+
+**One thing to do BEFORE wiping Windows** 
+Make sure **Secure Boot** and **Fast Boot** are disabled in your BIOS — these can cause issues with NVIDIA drivers on Ubuntu. You'll be in the BIOS anyway when selecting the USB boot device.  
+
+
+_____________________________________________________________________________________________________________  
+
 
 ### Before start - record current state
 bash\
