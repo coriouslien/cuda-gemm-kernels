@@ -5,9 +5,9 @@ Disable hibernation (frees up several GB):\
 powershell\
 `powercfg /h off`\
 Disable page file (temporarily):\
-1.	Search "Advanced System Settings" → click Settings under Performance\
-2.	Go to Advanced tab → Change under Virtual Memory\
-3.	Uncheck "Automatically manage" → select No paging file → click Set → OK\
+1.	Search "Advanced System Settings" → click Settings under Performance
+2.	Go to Advanced tab → Change under Virtual Memory
+3.	Uncheck "Automatically manage" → select No paging file → click Set → OK
 4.	Restart your PC\
 Disable System Restore (optional but helps):\
 powershell\
