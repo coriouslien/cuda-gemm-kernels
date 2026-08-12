@@ -78,11 +78,11 @@ Disk 0 is now the selected disk.
 | Volume 2         | WinRE tools  | NTFS        |Partition  |  800 MB | Healthy   | Hidden   |  
 | Volume 3         | BIOS_RVY     | NTFS        | Partition |    26 GB |  Healthy  |  Hidden|
 
-Volume \###&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;   Ltr  Label   Fs     Type        Size     Status     Info     
-Volume 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; C   Windows  NTFS   Partition   1835 GB  Healthy    Boot      
-Volume 1         SYSTEM       FAT32  Partition    100 MB  Healthy    System     
-Volume 2         WinRE tools  NTFS   Partition    800 MB  Healthy    Hidden     
-Volume 3         BIOS_RVY     NTFS   Partition     26 GB  Healthy    Hidden
+**The correct diskpart commands**  
+`select volume 0`  
+shrink desired=900000  
+This shrinks C: by ~900 GB, leaving ~935 GB for Windows which is plenty.  
+________________________________________________________________________________________________________________
 
 
 ### Before start - record current state
