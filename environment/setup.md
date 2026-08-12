@@ -115,7 +115,7 @@ Most likely culprits if querymax is low
 •	When it asks about installation type, choose "Erase disk and install Ubuntu"  
 •	This wipes Windows and uses the full disk — done
 
-**One thing to do BEFORE wiping Windows** 
+**One thing to do BEFORE wiping Windows**   
 Make sure **Secure Boot** and **Fast Boot** are disabled in your BIOS — these can cause issues with NVIDIA drivers on Ubuntu. You'll be in the BIOS anyway when selecting the USB boot device.  
 
 
