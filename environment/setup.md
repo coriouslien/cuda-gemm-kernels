@@ -376,6 +376,7 @@ You should see something like:
 |sda1	      |100 MB	       |/boot/efi   | 
 |sda2       |	~900 GB      |	/    |
 |swap       |	~16 GB	     |swap   |
+
 **Next step — NVIDIA/CUDA setup**      
 Run this to check if NVIDIA drivers are working:   
 bash  
@@ -390,6 +391,7 @@ My Partition Layout
 |nvme0n1p4	|800MB	|Windows Recovery|
 |nvme0n1p5	|26.5GB	|BIOS Recovery|
 |nvme0n1p6	|917.6GB	|**Ubuntu** / (your root)|
+
 Ubuntu is installed on **nvme0n1p6** with 917.6GB — perfect.
 ___________________________________________________________________________________________________________________  
 **No Swap — Add a Swapfile instead**  
