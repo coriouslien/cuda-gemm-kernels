@@ -825,12 +825,12 @@ GPU: NVIDIA GeForce RTX 5080
 PyTorch: 2.12.0.dev20260308+cu128 CUDA available: True GPU: NVIDIA GeForce RTX 5080
   
 **Setup Summary:**
-|Component	|Version	|Status|
-Component	Version	Status
-OS	Ubuntu 24.04 LTS	checked
-NVIDIA Driver	595.71.05	checked
-CUDA Toolkit	12.9	checked
-
+<pre>
+Component	          Version	              Status
+OS	                Ubuntu 24.04 LTS	    checked
+NVIDIA Driver	      595.71.05	            checked
+CUDA Toolkit	      12.9	                checked
+</pre>
   
 Recommended Next Installs  
 Essential AI/ML libraries  
@@ -1127,11 +1127,5 @@ If you want to fully remove 13.2:
 Enter the command into the terminal:  
 `sudo apt-get remove cuda-toolkit-13-2`  
 `sudo apt-get autoremove`  
-________________________________________________________________________________________________________________  
-**Setup Summary Table**  
-<pre>
-Component	            Version	             Status
-OS	                  Ubuntu 24.04 LTS	   checked
-NVIDIA Driver	        595.71.05	           checked
-CUDA Toolkit	        12.9	               checked
-</pre>
+___________________________________________________________________________________________________________   
+
