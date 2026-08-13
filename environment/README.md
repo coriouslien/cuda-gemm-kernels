@@ -1,6 +1,5 @@
-### CUDA Environment Setup & Configuration ###
+### Native CUDA C++ Development Environment Setup ###
 Install Ubuntu 24.04 on windows 11, dual boot. Total 1.7TB free space on windows 11.   
-# Native CUDA C++ Development Environment Setup
 
 This directory contains comprehensive documentation for provisioning a bare-metal, dual-boot Linux development environment tailored specifically for High-Performance Computing (HPC), low-level GPU programming, and AI/ML workloads. 
 
