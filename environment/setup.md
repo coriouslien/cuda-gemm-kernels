@@ -826,14 +826,12 @@ PyTorch: 2.12.0.dev20260308+cu128 CUDA available: True GPU: NVIDIA GeForce RTX 5
   
 **Setup Summary:**
 |Component	|Version	|Status|
-|:---------:|:---------:|:-----:|
-|OS	|Ubuntu 24.04 LTS|	  checked
-|NVIDIA Driver|	590.48.01|	checked|
-|CUDA Toolkit|	12.8	| checked|
-|Docker + GPU|	Latest|	checked|
-|PyTorch|	2.12.0 + cu128|	checked|
-|GPU	|RTX 5080 16GB|	| checked|
+Component	Version	Status
+OS	Ubuntu 24.04 LTS	checked
+NVIDIA Driver	595.71.05	checked
+CUDA Toolkit	12.9	checked
 
+  
 Recommended Next Installs  
 Essential AI/ML libraries  
 Enter the command into the terminal:    
@@ -1132,7 +1130,7 @@ Enter the command into the terminal:
 ________________________________________________________________________________________________________________  
 **Setup Summary Table**  
 <pre>
-**Component**	            Version	             Status
+Component	            Version	             Status
 OS	                  Ubuntu 24.04 LTS	   checked
 NVIDIA Driver	        595.71.05	           checked
 CUDA Toolkit	        12.9	               checked
