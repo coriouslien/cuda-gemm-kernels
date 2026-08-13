@@ -463,7 +463,7 @@ Run these commands one by one:
 **1. Install CUDA Toolkit**  
 Enter the command into the terminal:    
 `sudo apt update`  
-`sudo apt install -y cuda-toolkit-12-8`  
+`sudo apt install -y cuda-toolkit-12-9`  
 **2. Add CUDA to PATH**  
 Enter the command into the terminal:    
 `echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc`  
@@ -541,8 +541,8 @@ Should show something like:
 Cuda compilation tools, release 12.8  
 Then add to PATH:  
 Enter the command into the terminal:    
-`echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc`  
-`echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc`  
+`echo 'export PATH=/usr/local/cuda-12.9/bin:$PATH' >> ~/.bashrc`  
+`echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.9/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc`  
 `source ~/.bashrc`  
 `nvcc --version`  
   
@@ -983,8 +983,8 @@ Enter the command into the terminal:
   
 \# Or install via CUDA repo   
 Enter the command into the terminal:  
-`sudo apt install -y cuda-nsight-systems-12-8`  
-`sudo apt install -y cuda-nsight-compute-12-8`  
+`sudo apt install -y cuda-nsight-systems-12-9`  
+`sudo apt install -y cuda-nsight-compute-12-9`  
 _________________________________________________________________________________________________________________  
 \# Check what Nsight tools you already have installed  
 Enter the command into the terminal:  
@@ -1130,13 +1130,10 @@ Enter the command into the terminal:
 `sudo apt-get remove cuda-toolkit-13-2`  
 `sudo apt-get autoremove`  
 ________________________________________________________________________________________________________________  
-**Summary of the safety guarantees**  
-
-| Risk                              | Mitigation   |
-| :---------                        | :----------: |
-| Breaks existing cod               | Both versions coexist, symlink switch is instant         |
-|Driver incompatible                | You already have 595 driver|
-|Can't roll back                    |Rollback is one ln -s command
-|Loses current install              | /usr/local/cuda-12.8 is untouched throughout|
-
-
+**Setup Summary Table**  
+<pre><
+**Component	            Version	             Status**
+OS	                  Ubuntu 24.04 LTS	   checked
+NVIDIA Driver	        595.71.05	           checked
+CUDA Toolkit	        12.9	               checked
+</pre>
