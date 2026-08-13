@@ -1,4 +1,4 @@
-# Dual-Booting Ubuntu 24.04 and Windows 11 with NVIDIA CUDA Setup #
+## Dual-Booting Ubuntu 24.04 and Windows 11 with NVIDIA CUDA Setup ##
 ### This documents the development environment setup for CUDA C++ kernel development on Ubuntu 24.04 with an RTX 5080 ###
   
 ### Step 1: Disable the blockers ###
