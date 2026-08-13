@@ -350,9 +350,9 @@ Partitioning was handled automatically by the installer — you don't need to do
 ______________________________________________________________________________________________________________________  
 Set Ubuntu as default boot (GRUB setup) 
 When you reboot, you'll see the GRUB menu with Ubuntu and Windows options. To make Ubuntu the default: 
-Open Terminal in Ubuntu and run: 
-bash 
-`sudo nano /etc/default/grub`
+Open Terminal in Ubuntu and run:  
+Enter the command into the terminal:  
+`sudo nano /etc/default/grub`  
   
 Find this line:  
 GRUB_DEFAULT=0  
@@ -362,13 +362,13 @@ GRUB_DEFAULT=0
 Also check this line:  
 GRUB_TIMEOUT=10  
 Change 10 to 5 to reduce the wait time to 5 seconds.  
-Save and apply:  
-bash  
-**Press Ctrl+X → Y → Enter to save in nano**
+Save and apply:   
+**Press Ctrl+X → Y → Enter to save in nano**  
+Enter the command into the terminal:  
 `sudo update-grub`
 ____________________________________________________________________________________________________________________  
 Verify your partitions were created correctly  
-bash  
+Enter the command into the terminal:      
 `lsblk`
 You should see something like:   
 |Partition	| Size	| Mount|
@@ -379,7 +379,7 @@ You should see something like:
 
 **Next step — NVIDIA/CUDA setup**      
 Run this to check if NVIDIA drivers are working:   
-bash  
+Enter the command into the terminal:    
 nvidia-smi    
   
 My Partition Layout  
@@ -395,9 +395,9 @@ My Partition Layout
 Ubuntu is installed on **nvme0n1p6** with 917.6GB — perfect.
 ___________________________________________________________________________________________________________________  
 **No Swap — Add a Swapfile instead**  
-No swap partition is fine. Create a swapfile (easier and flexible):  
-bash  
-**Create 16GB swapfile**   
+No swap partition is fine. Create a swapfile (easier and flexible):   
+**Create 16GB swapfile**  
+Enter the command into the terminal:  
 `sudo fallocate -l 16G /swapfile`  
 `sudo chmod 600 /swapfile`  
 `sudo mkswap /swapfile`  
@@ -410,7 +410,7 @@ bash
 `free -h`  
 __________________________________________________________________________________________________________________    
 Next — Check NVIDIA drivers  
-bash  
+Enter the command into the terminal:    
 `nvidia-smi`  
   
 Should I use Swap = 32 GB instead of 16GB?
@@ -426,9 +426,9 @@ Why 32GB for AI/ML
 •	PyTorch/TensorFlow can use significant RAM during training  
 •	You have 917 GB of space — 32GB swap is only 3% of your disk, well worth it  
 ___________________________________________________________________________________________________________________  
-Create 32GB Swapfile  
-bash  
-**Create 32GB swapfile**
+Create 32GB Swapfile    
+**Create 32GB swapfile**  
+Enter the command into the terminal:  
 `sudo fallocate -l 32G /swapfile`  
 `sudo chmod 600 /swapfile`  
 `sudo mkswap /swapfile`  
@@ -458,22 +458,22 @@ My GPU Summary
 **Full CUDA/AI Development Setup**  
 Run these commands one by one:  
 **1. Install CUDA Toolkit**  
-bash  
+Enter the command into the terminal:    
 `sudo apt update`  
 `sudo apt install -y cuda-toolkit-12-8`  
 **2. Add CUDA to PATH**  
-bash  
+Enter the command into the terminal:    
 `echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc`  
 `echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc`  
 `source ~/.bashrc`  
 **3. Verify CUDA**
-bash  
+Enter the command into the terminal:    
 `nvcc --version`  
 **4. Install Python & pip**  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y python3 python3-pip python3-venv`  
 **5. Install PyTorch (RTX 5080 needs latest nightly)**  
-bash  
+Enter the command into the terminal:    
 `pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128`  
 **6. Verify PyTorch sees your GPU**  
 python  
@@ -482,7 +482,7 @@ Should print:
 True  
 NVIDIA GeForce RTX 5080  
 **7. Install common AI/ML libraries**  
-bash  
+Enter the command into the terminal:    
 `pip3 install numpy pandas matplotlib scikit-learn jupyter notebook transformers datasets accelerate`  
 _______________________________________________________________________________________________________________  
 **Important note on RTX 5080**    
@@ -499,7 +499,7 @@ ________________________________________________________________________________
 |Docker + NVIDIA	|Next step below|
     
 It's always recommended, especially on a fresh install.  
-bash  
+Enter the command into the terminal:    
 `sudo apt upgrade -y`  
 This will:  
 • Fix security vulnerabilities  
@@ -513,35 +513,35 @@ You may see a prompt like **"A new version of GRUB is available"** — select:
 This prevents accidentally overwriting your dual-boot GRUB settings.  
 __________________________________________________________________________________________________________________  
 **After upgrade is done, continue with:**    
-bash    
+Enter the command into the terminal:      
 `sudo apt install -y cuda-toolkit-12-8`    
 The upgrade should only take 1-2 minutes.    
 Run these commands:  
 **Step 1: Add NVIDIA CUDA Repository**  
-bash  
+Enter the command into the terminal:    
 `wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb`  
 `sudo dpkg -i cuda-keyring_1.1-1_all.deb`  
 `sudo apt update`  
 **Step 2: Install CUDA Toolkit**  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y cuda-toolkit-12-8`  
 ___________________________________________________________________________________________________________________  
 If that fails, try:  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y cuda-toolkit`  
 This installs the latest available version automatically.  
 ___________________________________________________________________________________________________________________  
 **Verify after install:**  
-bash  
+Enter the command into the terminal:    
 `nvcc --version`  
 Should show something like:  
 Cuda compilation tools, release 12.8  
 Then add to PATH:  
-bash  
+Enter the command into the terminal:    
 `echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc`  
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
-nvcc --version
+`echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc`  
+`source ~/.bashrc`  
+`nvcc --version`  
   
 Correct Installation Order
 1. CUDA toolkit 
@@ -552,13 +552,13 @@ Correct Installation Order
 6. AI/ML libraries   
 ____________________________________________________________________________________________________________________  
 **Step 2: Install Python**
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y python3 python3-pip python3-venv`  
 `python3 --version`  
 ____________________________________________________________________________________________________________________  
 **Step 3: Install Docker (I skipped this installation)**
-bash
 **Add Docker's official repository**
+Enter the command into the terminal:   
 `curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg`  
   
 `echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list`
@@ -567,127 +567,128 @@ bash
 `sudo apt install -y docker-ce docker-ce-cli containerd.io`  
 
 **Add your user to docker group (no sudo needed)**  
-sudo usermod -aG docker $USER  
+Enter the command into the terminal:  
+`sudo usermod -aG docker $USER`   
 ______________________________________________________________________________________________________________________  
-Step 4: NVIDIA Container Toolkit (GPU in Docker)  
-bash  
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg  
-  
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
-  
-sudo apt update  
-sudo apt install -y nvidia-container-toolkit  
-sudo nvidia-ctk runtime configure --runtime=docker  
-sudo systemctl restart docker  
+**Step 4: NVIDIA Container Toolkit (GPU in Docker)**  
+Enter the command into the terminal:    
+`curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
+   
+`curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list`    
+   
+`sudo apt update`    
+`sudo apt install -y nvidia-container-toolkit`    
+`sudo nvidia-ctk runtime configure --runtime=docker`    
+`sudo systemctl restart docker`    
 _______________________________________________________________________________________________________________________  
 **Step 5: Verify Docker + GPU works**  
-bash  
 **Reboot first to apply docker group changes**  
-sudo reboot  
+Enter the command into the terminal:  
+`sudo reboot`    
 After reboot:  
-bash  
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi  
+Enter the command into the terminal:    
+`docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi`    
 You should see your RTX 5080 listed inside Docker.  
 ______________________________________________________________________________________________________________________  
 Start with Step 2 (Python)   
 Install curl first, then handle the existing keyring file:  
 Step 1: Install curl  
-bash  
-sudo apt install -y curl  
+Enter the command into the terminal:    
+`sudo apt install -y curl`    
 Step 2: Re-run the Docker key command (overwrite the existing file)  
-bash  
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg  
+Enter the command into the terminal:    
+`curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg`    
 The --yes flag automatically overwrites the existing file.  
 Step 3: Continue with Docker repo and install  
-bash  
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list  
+Enter the command into the terminal:    
+`echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list`    
   
-sudo apt update  
-sudo apt install -y docker-ce docker-ce-cli containerd.io  
+`sudo apt update`    
+`sudo apt install -y docker-ce docker-ce-cli containerd.io`    
   
 Add your user to docker group  
-sudo usermod -aG docker $USER  
+`sudo usermod -aG docker $USER`  
 _____________________________________________________________________________________________________________________  
 **Verify Docker is running:**  
-bash  
-sudo systemctl status docker  
+Enter the command into the terminal:    
+`sudo systemctl status docker`    
 Should show active (running) in green.  
 You should see the following output: docker.service - Docker Application Container Engine Loaded: loaded (/usr/lib/systemd/system/docker.service; enabled; preset: enabled) Active: active (running) since Sun 2026-03-08 09:47:03 EDT; 35s ago TriggeredBy: ● docker.socket Docs: https://docs.docker.com Main PID: 14806 (dockerd) Tasks: 23 Memory: 28.8M (peak: 35.6M) CPU: 103ms CGroup: /system.slice/docker.service └─14806 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock  
   
 Now install NVIDIA Container Toolkit (GPU in Docker)  
-Step 1: Add NVIDIA repository  
-bash  
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg  
+**Step 1: Add NVIDIA repository**    
+Enter the command into the terminal:    
+`curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
   
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
+`curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list`    
 **Step 2: Install**    
-bash  
-sudo apt update  
-sudo apt install -y nvidia-container-toolkit  
+Enter the command into the terminal:    
+`sudo apt update`    
+`sudo apt install -y nvidia-container-toolkit`    
 **Step 3: Configure Docker to use NVIDIA GPU**  
-bash  
-sudo nvidia-ctk runtime configure --runtime=docker  
-sudo systemctl restart docker  
+Enter the command into the terminal:    
+`sudo nvidia-ctk runtime configure --runtime=docker`    
+`sudo systemctl restart docker`    
 **Step 4: Add yourself to docker group**  
-bash  
-sudo usermod -aG docker $USER  
+Enter the command into the terminal:    
+`sudo usermod -aG docker $USER`    
 **Step 5: Reboot**    
-bash  
-sudo reboot  
+Enter the command into the terminal:    
+`sudo reboot`    
 ______________________________________________________________________________________________________________________  
 After reboot, verify GPU works inside Docker:  
-bash  
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi  
+Enter the command into the terminal:    
+`docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi`    
   
 Common Issues & Fixes  
 Issue 1: GPG key error  
-bash  
+Enter the command into the terminal:    
 Fix with:  
-sudo gpg --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \  
-  <(curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey)  
+`sudo gpg --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \  
+  <(curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey)`    
 Issue 2: Repository not found (404 error)  
-bash  
+Enter the command into the terminal:    
 Fix with:  
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \  
+`curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \  
   | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \  
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
-sudo apt update  
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list`    
+`sudo apt update`    
 Issue 3: Network error  
-bash  
+Enter the command into the terminal:    
 Test connectivity  
-ping -c 3 google.com  
+`ping -c 3 google.com`    
 _____________________________________________________________________________________________________________________  
 If you have a GPG key issue. Fix it with these commands:  
 Step 1: Delete the old broken keyring  
-bash  
-sudo rm /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg  
+Enter the command into the terminal:    
+`sudo rm /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
 Step 2: Re-add the key correctly  
-bash  
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg  
+Enter the command into the terminal:    
+`curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
 Step 3: Re-add the repository with the key linked  
-bash  
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \  
+Enter the command into the terminal:    
+`curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \  
   sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \  
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list  
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list`  
 Step 4: Update and install  
-bash  
+Enter the command into the terminal:    
 `sudo apt update`    
 `sudo apt install -y nvidia-container-toolkit`    
 ____________________________________________________________________________________________________________________  
 Verify the key was added correctly:
-bash
+Enter the command into the terminal:  
 `gpg --show-keys /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`    
 You should see an NVIDIA key fingerprint ending in F796ECB0.  
 **Step 4: Update and install**    
-bash    
+Enter the command into the terminal:      
 `sudo apt update`    
 `sudo apt install -y nvidia-container-toolkit`    
 ___________________________________________________________________________________________________________________  
 If you still get the GPG error on apt update  
 The key shows a expired subkey (2021) which may still cause issues. Fix with:  
-bash  
 Remove old repo file and recreate it properly  
-sudo rm /etc/apt/sources.list.d/nvidia-container-toolkit.list  
+Enter the command into the terminal:  
+`sudo rm /etc/apt/sources.list.d/nvidia-container-toolkit.list`    
   
 `curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \    
   sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \    
@@ -697,29 +698,29 @@ sudo rm /etc/apt/sources.list.d/nvidia-container-toolkit.list
 `sudo apt install -y nvidia-container-toolkit`    
 ___________________________________________________________________________________________________________________  
 After successful install, run:  
-bash  
-sudo nvidia-ctk runtime configure --runtime=docker  
-sudo systemctl restart docker  
-sudo usermod -aG docker $USER  
-sudo reboot  
+Enter the command into the terminal:    
+`sudo nvidia-ctk runtime configure --runtime=docker`    
+`sudo systemctl restart docker`    
+`sudo usermod -aG docker $USER`    
+`sudo reboot`    
 Then after reboot verify GPU in Docker:  
-bash  
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi  
+Enter the command into the terminal:    
+`docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi`    
   
 Configure Docker to use NVIDIA GPU  
-bash  
-sudo nvidia-ctk runtime configure --runtime=docker  
-sudo systemctl restart docker  
+Enter the command into the terminal:    
+`sudo nvidia-ctk runtime configure --runtime=docker`    
+`sudo systemctl restart docker`    
 Add yourself to docker group  
-bash  
-sudo usermod -aG docker $USER  
-Reboot  
-bash  
-sudo reboot  
+Enter the command into the terminal:    
+`sudo usermod -aG docker $USER`   
+`reboot`  
+Enter the command into the terminal:    
+`sudo reboot`    
 _________________________________________________________________________________________________________________  
 After reboot, test GPU inside Docker:  
-bash  
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi  
+Enter the command into the terminal:    
+`docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi`    
   
 
 You should see your **RTX 5080** listed inside the container like this:    
@@ -740,8 +741,8 @@ Two Different CUDA Versions — Both Are Correct
 |nvcc (toolkit)	12.8	| Actual CUDA version installed and used  |
 
 Verify your actual CUDA toolkit version:  
-bash  
-nvcc --version  
+Enter the command into the terminal:    
+`nvcc --version`    
 It should show 12.8 — that is what PyTorch and your code will actually use.  
 _________________________________________________________________________________________________________________  
 Think of it this way  
@@ -750,8 +751,8 @@ Think of it this way
 •	PyTorch, TensorFlow, and your code use nvcc (12.8)  
 _________________________________________________________________________________________________________________  
 Confirm with:  
-bash  
-ls /usr/local/ | grep cuda  
+Enter the command into the terminal:    
+`ls /usr/local/ | grep cuda`    
   
 Should show:  
   
@@ -801,7 +802,7 @@ setup is now complete:
 •	RTX 5080 fully accessible  
 ___________________________________________________________________________________________________________  
 Next Step: Install PyTorch  
-bash  
+Enter the command into the terminal:    
 **Create a virtual environment first (best practice)**
 `python3 -m venv ~/ai-env`  
 `source ~/ai-env/bin/activate`  
@@ -809,7 +810,7 @@ bash
 **Install PyTorch with CUDA 12.8**
 `pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128`  
 **Verify PyTorch sees your GPU:**  
-bash
+Enter the command into the terminal:  
 `python3 -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0))"`  
   
 Should print:  
@@ -832,27 +833,27 @@ PyTorch: 2.12.0.dev20260308+cu128 CUDA available: True GPU: NVIDIA GeForce RTX 5
 
 Recommended Next Installs  
 Essential AI/ML libraries  
-bash  
+Enter the command into the terminal:    
 `pip install numpy pandas matplotlib scikit-learn jupyter jupyterlab`  
 Hugging Face (LLMs & diffusion models)  
-bash
+Enter the command into the terminal:  
 `pip install transformers datasets accelerate diffusers`  
 **Computer Vision**  
-bash  
+Enter the command into the terminal:    
 `pip install opencv-python ultralytics`  
 _________________________________________________________________________________________________________________    
 **Activate your environment every session**
-bash
+Enter the command into the terminal:  
 `source ~/ai-env/bin/activate`  
 Or add it to auto-activate on terminal open:  
-bash
+Enter the command into the terminal:  
 `echo 'source ~/ai-env/bin/activate' >> ~/.bashrc`  
 ___________________________________________________________________________________________________________________  
 **Install TensorFlow**
-bash
+Enter the command into the terminal:  
 `pip install tensorflow[and-cuda]`  
-**Verify TensorFlow sees your GPU:`**
-bash
+**Verify TensorFlow sees your GPU:**
+Enter the command into the terminal:  
 `python3 -c "import tensorflow as tf; print('TensorFlow:', tf.__version__); print('GPU:', tf.config.list_physical_devices('GPU'))"`  
   
 Should print:  
@@ -860,27 +861,29 @@ TensorFlow: 2.x.x
 GPU: [PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]  
 ______________________________________________________________________________________________________________  
 **Step 1: Install CUDA Development Tools**
-bash
 \# Install essential CUDA dev tools  
+Enter the command into the terminal:  
 `sudo apt install -y cuda-samples-12-8 cuda-demo-suite-12-8`  
   
 \# Install C/C++ compiler  
+Enter the command into the terminal:  
 `sudo apt install -y build-essential cmake`  
 _____________________________________________________________________________________________________________  
 **Step 2: Verify CUDA C Compiler**
-bash
+Enter the command into the terminal:  
 `nvcc --version`  
 _____________________________________________________________________________________________________________  
 **Step 3: Write Your First CUDA Program**
-bash  
+Enter the command into the terminal:    
 `mkdir ~/cuda`  
 `cd ~/cuda`  
 `nano hello_cuda.cu`  
 Paste this code:  
 cuda  
+<pre>
 #include <stdio.h>  
   
-\__global\__ void helloFromGPU() {  
+__global__ void helloFromGPU() {  
     printf("Hello from GPU! Thread %d, Block %d\n",   
            threadIdx.x, blockIdx.x);    
 }  
@@ -891,10 +894,11 @@ int main() {
     cudaDeviceSynchronize();  
     return 0;  
 }  
+</pre>
 Compile and run:  
-bash  
+Enter the command into the terminal:    
 `nvcc hello_cuda.cu -o hello_cuda`  
-./hello_cuda  
+`./hello_cuda`    
   
 Expected output:  
   
@@ -905,7 +909,7 @@ Hello from GPU! Thread 2, Block 0
 ...
 ________________________________________
 Step 4: Run Official CUDA Samples  
-bash  
+Enter the command into the terminal:    
 `cd /usr/local/cuda/samples/0_Introduction/vectorAdd`
 `sudo make`
 `./vectorAdd`
@@ -916,7 +920,7 @@ Test PASSED
 _________________________________________________________________________________________________________________  
   
 Install these essential CUDA dev libraries:  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y libcublas-dev-12-8 libcurand-dev-12-8 libcufft-dev-12-8`  
 ____________________________________________________________________________________________________________________  
 VS Code + Nsight  
@@ -924,12 +928,13 @@ Use both together:
 •	VS Code for writing code  
 •	NVIDIA Nsight for profiling and debugging GPU performance  
 ____________________________________________________________________________________________________________________  
-Install VS Code    
-bash  
+Install VS Code     
 \# Download and install  
+Enter the command into the terminal:  
 `sudo snap install code --classic`  
   
-\# Launch
+\# Launch  
+Enter the command into the terminal:  
 `code`
   
 \### Essential VS Code Extensions for CUDA:
@@ -940,25 +945,26 @@ bash
 4. GitLens — git integration  
 5. Python — for PyTorch/TensorFlow code  
 Install all at once from terminal:
-  
-code --install-extension ms-vscode.cpptools  
+Enter the command into the terminal:  
+`code --install-extension ms-vscode.cpptools  
 code --install-extension nvidia.nsight-vscode-edition  
 code --install-extension ms-vscode.cmake-tools  
 code --install-extension ms-python.python  
-code --install-extension eamodio.gitlens  
+code --install-extension eamodio.gitlens`    
 _____________________________________________________________________________________________________________  
 Install NVIDIA Nsight Systems (Profiler)  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y nsight-systems-2024.7`  
 Launch:  
-bash  
+Enter the command into the terminal:    
 `nsys-ui`  
 _____________________________________________________________________________________________________________  
 Install NVIDIA Nsight Compute (Kernel Profiler)  
-bash  
+Enter the command into the terminal:    
 `sudo apt install -y nsight-compute`  
 Launch:  
-ncu-ui  
+Enter the command into the terminal:  
+`ncu-ui`    
 ____________________________________________________________________________________________________________  
 Why Nsight is essential for CUDA/AI:    
 |Tool	|What it does|
@@ -968,14 +974,17 @@ Why Nsight is essential for CUDA/AI:
 |GPU Occupancy|	Shows how efficiently you use GPU cores|
 |Memory bandwidth|	Identifies memory bottlenecks|
   
-\# Nsight Systems
+\# Nsight Systems  
+Enter the command into the terminal:  
 `sudo apt install -y nsight-systems-cli`  
   
-\# Or install via CUDA repo  
+\# Or install via CUDA repo   
+Enter the command into the terminal:  
 `sudo apt install -y cuda-nsight-systems-12-8`  
 `sudo apt install -y cuda-nsight-compute-12-8`  
 _________________________________________________________________________________________________________________  
-\# Check what Nsight tools you already have installed
+\# Check what Nsight tools you already have installed  
+Enter the command into the terminal:  
 `find /usr/local/cuda-12.8 -name "nsight*" -type d`  
 `find /usr/local -name "nsys" 2>/dev/null`  
 `find /usr/local -name "ncu" 2>/dev/null`  
@@ -984,17 +993,21 @@ Since we have installed CUDA 12.8, install the matching versions:
 Install Nsight tools for CUDA 12.8  
   
 \# Nsight Systems (timeline profiler)  
+Enter the command into the terminal:  
 `sudo apt install -y cuda-nsight-systems-12-8`  
   
 `# Nsight Compute (kernel profiler)  
+Enter the command into the terminal:  
 `sudo apt install -y cuda-nsight-compute-12-8`  
 ________________________________________________________________________________________________________________  
 After install, launch them:  
   
-\# Nsight Systems (timeline profiler)\\
+\# Nsight Systems (timeline profiler)  
+Enter the command into the terminal:  
 `nsys-ui`  
   
-\# Nsight Compute (kernel profiler)  
+\# Nsight Compute (kernel profiler)   
+Enter the command into the terminal:  
 `ncu-ui`  
 ______________________________________________________________________________________________________________  
 
@@ -1006,20 +1019,22 @@ Your Nsight Commands:
 |Nsight Systems CLI|	nsys	Command line profiler|
 |Nsight Compute CLI|	ncu	Command line kernel analyzer|
 ______________________________________________________________________________________________________________  
-Make it permanent (survives reboot):  
+Make it permanent (survives reboot):   
+Enter the command into the terminal:  
 `sudo nano /etc/modprobe.d/nvidia.conf`  
   
 Add this line:  
 options nvidia NVreg_RestrictProfilingToAdminUsers=0  
 Save with Ctrl+X → Y → Enter, then:  
-  
+Enter the command into the terminal:    
 `sudo update-initramfs -u`  
 _______________________________________________________________________________________________________________  
 
 
 _____________________________________________________________________________________________________________  
 ### Before start - record current state
-Record everything about your current installation  
+Record everything about your current installation   
+Enter the command into the terminal:  
 `nvcc --version`  
 `nvidia-smi`  
 `dpkg -l | grep cuda > ~/cuda_backup_list.txt`  
@@ -1030,6 +1045,7 @@ Save these outputs somewhere safe. This is your rollback reference.
 
 ### Important clarification on your CUDA version  
 Verify first:  
+Enter the command into the terminal:  
 `nvcc --version`  
 `ls /usr/local/ | grep cuda`  
 This matters for rollback — you need to know exactly what you have.  
@@ -1038,75 +1054,80 @@ This matters for rollback — you need to know exactly what you have.
 The cleanest approach is to use NVIDIA's official APT repository and NVIDIA-provided Debian packages for **Ubuntu 24.04** instead of the standalone .run installer. NVIDIA officially supports **Ubuntu 24.04** for CUDA, and its Linux installation guide recommends distribution-specific packages where possible because they integrate with the system package manager more cleanly.  
 _______________________________________________________________________________
 ### Step 1 — Add NVIDIA APT repository (if not already added) ###
-**Download and install the CUDA keyring**\
-bash\
+**Download and install the CUDA keyring**  
+Enter the command into the terminal:  
 `wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb`\
 `sudo dpkg -i cuda-keyring_1.1-1_all.deb`\
 `sudo apt-get update`
 ________________________________________________________________________________
 ### Step 2 — Install CUDA 13.2 toolkit (versioned, not generic) ###
 A key reason to use versioned package names is version control. The generic cuda and cuda-toolkit packages track newer versions automatically, which is not what you want when pinning to a specific version.\
-bash\
-**Install specifically versioned 13-2** — does NOT remove your existing CUDA\
-`sudo apt-get install cuda-toolkit-13-2`\
-This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in separate directories:\
+**Install specifically versioned 13-2** — does NOT remove your existing CUDA  
+Enter the command into the terminal:  
+`sudo apt-get install cuda-toolkit-13-2`  
+
+This installs CUDA 13.2 alongside your existing CUDA 12.x — they coexist in separate directories:  
+Enter the command into the terminal:  
 `/usr/local/cuda-12.8/`   ← your current installation, untouched\
 `/usr/local/cuda-13.2/`   ← new installation\
 `/usr/local/cuda`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← symlink, currently points to 12
 _______________________________________________________________________________________
 ### Step 3 — Switch between versions via symlink ###
-bash\
-**Switch to CUDA 13.2**\
-`sudo rm /usr/local/cuda`\
-`sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`
+**Switch to CUDA 13.2**  
+Enter the command into the terminal:  
+`sudo rm /usr/local/cuda`  
+`sudo ln -s /usr/local/cuda-13.2 /usr/local/cuda`  
 
-**Verify**\
+**Verify**  
+Enter the command into the terminal:  
 `nvcc --version`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  \#should show 13.2
 _____________________________________________________________________________________
-### Step 4 — Update PATH in your .bashrc ###
-bash\
-**Check what you currently have:**\
-`grep cuda ~/.bashrc`\
+**Step 4 — Update PATH in your .bashrc**
+**Check what you currently have:**
+Enter the command into the terminal:  
+`grep cuda ~/.bashrc`  
 </br>
-**It likely already has something like:**\
-`export PATH=/usr/local/cuda/bin:$PATH`\
-`export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH`\
+**It likely already has something like:**  
+`export PATH=/usr/local/cuda/bin:$PATH`  
+`export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH`  
 </br>
-**These use the symlink /usr/local/cuda so they work automatically**\
-**after you update the symlink — no .bashrc change needed**\
-`source ~/.bashrc`\
-`nvcc --version`
+**These use the symlink /usr/local/cuda so they work automatically**  
+**after you update the symlink — no .bashrc change needed**  
+Enter the command into the terminal:  
+`source ~/.bashrc`  
+`nvcc --version`  
 ___________________________________________________________________________________________
-### Step 5 — Verify your driver compatibility ###
-bash\
-`nvidia-smi`\
-**Check that Driver Version is compatible with CUDA 13.2**\
-**CUDA 13.2 requires driver >= 595.xx**\
+**Step 5 — Verify your driver compatibility**
+Enter the command into the terminal:  
+`nvidia-smi`  
+**Check that Driver Version is compatible with CUDA 13.2**  
+**CUDA 13.2 requires driver >= 595.xx**  
 CUDA 13.2.1 requires driver version 595.58.03. You already have nvidia-driver-595-open installed from your earlier system fix — so you should be compatible.
 _______________________________________________________________________________________
-### Step 6 — Test your existing code compiles ###
-bash\
-`cd ~/<XXX>/sgemm/sgemm_cublas`\
-`mkdir build_13 && cd build_13`\
-`cmake .. -DCMAKE_BUILD_TYPE=Release`\
-`make -j$(nproc)`\
-`./cublas_gemmex`
-____________________________________________________________________________________
-Rollback procedure — if anything goes wrong\
-Since CUDA versions coexist, rollback is just switching the symlink back:\
-bash\
-**Instant rollback — one command**\
-`sudo rm /usr/local/cuda`\
-`sudo ln -s /usr/local/cuda-12.8 /usr/local/cuda\`
+**Step 6 — Test your existing code compiles**
+Enter the command into the terminal:  
+`cd ~/<XXX>/sgemm/sgemm_cublas`  
+`mkdir build_13 && cd build_13`  
+`cmake .. -DCMAKE_BUILD_TYPE=Release`  
+`make -j$(nproc)`  
+`./cublas_gemmex`  
+________________________________________________________________________________________________________________  
+Rollback procedure — if anything goes wrong  
+Since CUDA versions coexist, rollback is just switching the symlink back:  
+**Instant rollback — one command**  
+Enter the command into the terminal:  
+`sudo rm /usr/local/cuda`  
+`sudo ln -s /usr/local/cuda-12.8 /usr/local/cuda`  
 
-**Verify rollback**\
-`nvcc --version  # back to 12.8`\
-If you want to fully remove 13.2:\
-bash\
-`sudo apt-get remove cuda-toolkit-13-2`\
-`sudo apt-get autoremove`
-______________________________________________________________________________________
-**Summary of the safety guarantees**\
+**Verify rollback**  
+Enter the command into the terminal:  
+`nvcc --version  # back to 12.8`  
+If you want to fully remove 13.2:  
+Enter the command into the terminal:  
+`sudo apt-get remove cuda-toolkit-13-2`  
+`sudo apt-get autoremove`  
+________________________________________________________________________________________________________________  
+**Summary of the safety guarantees**  
 
 | Risk                              | Mitigation   |
 | :---------                        | :----------: |
@@ -1114,10 +1135,5 @@ ________________________________________________________________________________
 |Driver incompatible                | You already have 595 driver|
 |Can't roll back                    |Rollback is one ln -s command
 |Loses current install              | /usr/local/cuda-12.8 is untouched throughout|
-
-The APT method with versioned package names is safe precisely because it never touches your existing installation.
-
-
-
 
 
