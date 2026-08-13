@@ -449,14 +449,15 @@ RAM and swap:
 •	64GB RAM → 32GB swap is still fine for AI work  
 
 My GPU Summary  
-	
-|GPU|	NVIDIA GeForce RTX 5080|
-|:--------- | :----------: |
-|VRAM|	16GB|
-|Driver	|590.48.01 |
-|CUDA	|13.1 |
-|Temp	|33°C  (very cool)|
-  
+<pre>
+GPU	                NVIDIA GeForce RTX 5080
+VRAM	            16GB
+Driver	            595.71.05
+CUDA (nvidia-smi)	13.2
+CUDA (nvcc)	        12.9  
+</pre>
+
+
 **Full CUDA/AI Development Setup**  
 Run these commands one by one:  
 **1. Install CUDA Toolkit**  
