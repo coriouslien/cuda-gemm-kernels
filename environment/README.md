@@ -3,7 +3,7 @@ Install Ubuntu 24.04 on windows 11, dual boot. Total 1.7TB free space on windows
 
 This directory contains comprehensive documentation for provisioning a bare-metal, dual-boot Linux development environment tailored specifically for High-Performance Computing (HPC), low-level GPU programming, and AI/ML workloads. 
 
-The guide details the precise steps required to safely partition a Windows 11 host, install Ubuntu 24.04 LTS, and configure a complete NVIDIA software stack for native CUDA C++ kernel development.
+The guide details the precise steps required to safely partition a Windows 11 host, install Ubuntu 24.04 LTS, alongside Windows 11, targeting NVIDIA RTX 5080 (Blackwell SM120) with CUDA 12.9 and configure a complete NVIDIA software stack for native CUDA C++ kernel development.  
 
 ## Hardware Architecture
 
