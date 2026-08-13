@@ -1132,7 +1132,7 @@ Enter the command into the terminal:
 ________________________________________________________________________________________________________________  
 **Setup Summary Table**  
 <pre>
-**Component	            Version	             Status**
+**Component**	            Version	             Status
 OS	                  Ubuntu 24.04 LTS	   checked
 NVIDIA Driver	        595.71.05	           checked
 CUDA Toolkit	        12.9	               checked
