@@ -1,3 +1,5 @@
+# Dual-Booting Ubuntu 24.04 and Windows 11 with NVIDIA CUDA Setup#
+  
 ## Step 1: Disable the blockers ##
 Open cmd as Administrator and run these commands one by one:  
 **Disable hibernation** (frees up several GB):  
