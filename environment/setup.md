@@ -1,22 +1,22 @@
 ## Step 1: Disable the blockers ##
-Open cmd as Administrator and run these commands one by one:\n
-**Disable hibernation** (frees up several GB):\
-On cmd type:\
-`powercfg /h off`\
+Open cmd as Administrator and run these commands one by one:  
+**Disable hibernation** (frees up several GB):  
+On cmd type:  
+`powercfg /h off`  
 **Disable page file** (temporarily):
 1.	Search "Advanced System Settings" → click **Settings** under Performance
 2.	Go to **Advanced** tab → **Change** under Virtual Memory
 3.	Uncheck "Automatically manage" → select **No paging file** → click Set → OK
 4.	**Restart your PC**
   
-**Disable System Restore** (optional but helps):\
-command on cmd:\
-`Disable-ComputerRestore -Drive "C:\"`
+**Disable System Restore** (optional but helps):  
+command on cmd:  
+`Disable-ComputerRestore -Drive "C:\"`  
 _________________________________________________________________________________________________________
 ### Step 2: Defrag and clear unmovable files ###
-Run this in cmd as Administrator:\
-**Run the disk defragmenter to consolidate unmovable files to the front**\
-`defrag C: /U /V`\
+Run this in cmd as Administrator:  
+**Run the disk defragmenter to consolidate unmovable files to the front**  
+`defrag C: /U /V`  
 Then open **Event Viewer** → **Windows Logs** → **Application** and search for "defrag" to see if any files are still unmovable.
 _________________________________________________________________________________________________________
 ### Step 3: Try shrinking again — but use diskpart for more control ###
