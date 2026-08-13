@@ -760,24 +760,28 @@ cuda-12.8
 You have CUDA 12.8 installed and that's what matters. 13.1 in nvidia-smi is nothing to worry about — it just means your driver is future-ready.   
 
 Please see the following output:  
-+-----------------------------------------------------------------------------------------+    
-| NVIDIA-SMI 590.48.01&emsp;&emsp;&emsp;&emsp;&emsp;Driver Version: 590.48.01&emsp;&emsp;&emsp;CUDA Version: 13.1|    
-+-----------------------------------------+------------------------+----------------------+    
-| GPU  Name&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Persistence-M | Bus-Id&emsp;&emsp;&emsp;&emsp;Disp.A | Volatile Uncorr. ECC |    
-| Fan  Temp   Perf&emsp;&emsp;&emsp;&emsp;&emsp;Pwr:Usage/Cap |&emsp;&emsp;&emsp;&emsp;&emsp;Memory-Usage | GPU-Util  Compute M. |    
-|                                         |                        |               MIG M. |    
-|=========================================+========================+======================|    
-|&emsp;&emsp;&emsp;0&emsp;&emsp;NVIDIA GeForce RTX 5080&emsp;&emsp;&emsp;&emsp;Off |&emsp;&emsp;&emsp;00000000:01:00.0  On |                  N/A |    
-|  0%&emsp;&emsp;&emsp;35C&emsp;&emsp;&emsp;&emsp;P8&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;20W /  360W |     525MiB /  16303MiB |      6%      Default |    
-|                                         |                        |                  N/A |    
-+-----------------------------------------+------------------------+----------------------+    
-+-----------------------------------------------------------------------------------------+      
-| Processes:                                                                              |    
-|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |    
-|        ID   ID                                                               Usage      |    
-|=========================================================================================|    
-|  No running processes found                                                             |    
-+-----------------------------------------------------------------------------------------+ |      
+<pre>
+Please see the following output:
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5080        Off |   00000000:01:00.0  On |                  N/A |
+|  0%   35C    P8             20W /  360W |     525MiB /  16303MiB |      6%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+</pre>
+  
   
 |  |Status |
 |:-----:|:-------:|
