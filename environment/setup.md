@@ -1,6 +1,7 @@
 # Dual-Booting Ubuntu 24.04 and Windows 11 with NVIDIA CUDA Setup #
+### This documents the development environment setup for CUDA C++ kernel development on Ubuntu 24.04 with an RTX 5080 ###
   
-## Step 1: Disable the blockers ##
+### Step 1: Disable the blockers ###
 Open cmd as Administrator and run these commands one by one:  
 **Disable hibernation** (frees up several GB):  
 On cmd type:  
@@ -143,7 +144,7 @@ Since you're wiping Windows:
 •	No diskpart gymnastics needed  
 ________________________________________________________________________________________________________________  
 Recommendation: Skip the shrink entirely, boot Ubuntu USB, and erase the whole disk. It's 3 clicks in the installer and you're done.    
-run shrink querymax, will it erase Windows 11?  
+  
 shrink querymax is completely safe — it is a read-only query that just tells you the maximum amount you can shrink.  
 It only **reports a number**, it does nothing to your disk.  
 
@@ -248,7 +249,7 @@ While you're in BIOS, make sure:
 1.	Go to **Settings → Security → Secure Boot**    
 2.	Set Secure Boot to **Disabled**     
 3.	Press **F10** to save and exit    
-Then plug in your Ubuntu USB and boot from it — on MSI you can hit **F11** at startup for the one-time boot menu to select your USB drive directly without changing boot order permanently. (**Note**: MIS is F11)  
+Then plug in your Ubuntu USB and boot from it — on MSI you can hit **F11** at startup for the one-time boot menu to select your USB drive directly without changing boot order permanently. (**Note**: MSI is F11)  
   
 If you don't see "Fast Boot" option, but you have the following set up:  
 Full Screen Logo Display: Enable    
@@ -736,7 +737,7 @@ You should see your **RTX 5080** listed inside the container like this:
 </pre>
    
 That confirms Docker has full GPU access — you're then ready to run any AI container! Let me know what you see after reboot.  
-I got this version CUDA Version: 13.1 , and I don't like it.  
+    
 Two Different CUDA Versions — Both Are Correct  
 |Version	|What it means  |
 |:----------:|:------------:|
@@ -826,10 +827,13 @@ PyTorch: 2.12.0.dev20260308+cu128 CUDA available: True GPU: NVIDIA GeForce RTX 5
   
 **Setup Summary:**
 <pre>
-Component	          Version	              Status
-OS	                Ubuntu 24.04 LTS	    checked
-NVIDIA Driver	      595.71.05	            checked
-CUDA Toolkit	      12.9	                checked
+| Component      | Version       |
+|----------------|---------------|
+| OS             | Ubuntu 24.04  |
+| NVIDIA Driver  | 595.71.05     |
+| CUDA Toolkit   | 12.8          |
+| nvcc           | 12.8          |
+| GPU            | RTX 5080      |        
 </pre>
   
 Recommended Next Installs  
@@ -882,7 +886,7 @@ Enter the command into the terminal:
 Paste this code:  
 cuda  
 <pre>
-#include <stdio.h>  
+#include \<stdio.h\>  
   
 __global__ void helloFromGPU() {  
     printf("Hello from GPU! Thread %d, Block %d\n",   
