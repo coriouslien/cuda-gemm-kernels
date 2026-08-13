@@ -1131,7 +1131,7 @@ Enter the command into the terminal:
 `sudo apt-get autoremove`  
 ________________________________________________________________________________________________________________  
 **Setup Summary Table**  
-<pre><
+<pre>
 **Component	            Version	             Status**
 OS	                  Ubuntu 24.04 LTS	   checked
 NVIDIA Driver	        595.71.05	           checked
