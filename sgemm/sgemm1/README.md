@@ -1,8 +1,7 @@
 <pre>
 cmake -S . -B build
-
-
-    make --build build
+make --build build
+    
 [ 50%] Building CUDA object CMakeFiles/sgemm.dir/sgemm.cu.o
 ptxas info    : 47 bytes gmem
 ptxas info    : Compiling entry function '_ZN3cub18CUB_200802_SM_120011EmptyKernelIvEEvv' for 'sm_120'
