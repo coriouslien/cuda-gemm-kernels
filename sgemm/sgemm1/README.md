@@ -17,4 +17,29 @@ ptxas info    : Compile time = 128.287 ms
 [100%] Linking CUDA executable sgemm
 [100%] Built target sgemm
 
+
+output:
+output:
+Using device 0: NVIDIA GeForce RTX 5080 (SM120, 84)
+M = 5120
+N = 5120
+K = 4096
+C = A^T B^N
+CUTE_GEMM:     [187086.0]GFlop/s  (1.1479)ms
+cuBLAS C_ref[0..7]: 5.492 -5.145 17.859 28.641 38.312 43.688 -33.125 17.047 
+CUTE   C[0..7]:     5.496 -5.125 17.859 28.609 38.438 43.562 -33.156 17.062 
+cuBLAS C_ref as 2D (first 4 rows, 4 cols):
+5.492   18.688   -18.156   8.148   
+-5.145   -15.719   21.156   -4.793   
+17.859   6.801   -1.798   9.391   
+28.641   33.031   -24.547   22.281   
+
+CUTE C as 2D (first 4 rows, 4 cols):
+5.496   18.703   -18.172   8.094   
+-5.125   -15.773   21.109   -4.773   
+17.859   6.789   -1.810   9.430   
+28.609   33.094   -24.516   22.344   
+Max error vs cuBLAS: 0.875000 PASSED
+C pointer:          0x7e4438000000
+d_C.data() pointer: 0x7e4438000000
 </pre>
