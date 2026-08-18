@@ -2,11 +2,16 @@ launch config (40,40,1)×(128,1,1), duration 1.33ms.
 
 <img width="1826" height="1024" alt="GPU_Speed_Of_Light_Throughput" src="https://github.com/user-attachments/assets/bfaaba08-7462-411b-9214-cc057348f4d2" />
 <pre>
-NCU flags High Throughput — over 80% compute utilization. The bottleneck is clearly the SM compute pipe, not memory bandwidth. To go further you need to shift work away from the most saturated unit.
+NCU flags High Throughput — over 80% compute utilization. The bottleneck is clearly the SM compute pipe, 
+not memory bandwidth. To go further you need to shift work away from the most saturated unit.
 Compute (SM) Throughput: 82.19% — very high, the kernel is compute-bound
 Memory Throughput: 63.48%
-The compute units are "busy", but they are largely busy stalling (specifically, Wait Stalls averaging 4.5 cycles per instruction). Because the kernel requests too much shared memory per block, occupancy is crushed down to ~8%. The SM doesn't have enough active warps to swap between to hide the latency of its compute operations. Warp State Statistics and Occupancy charts reveal that the SMs are highly inefficient.
-The kernel is currently bound by compute latency, but the root cause preventing the GPU from hiding that latency is the severe shared memory occupancy limit.
+The compute units are "busy", but they are largely busy stalling (specifically, Wait Stalls averaging 4.5 
+cycles per instruction). Because the kernel requests too much shared memory per block, occupancy is crushed
+down to ~8%. The SM doesn't have enough active warps to swap between to hide the latency of its compute 
+operations. Warp State Statistics and Occupancy charts reveal that the SMs are highly inefficient.
+The kernel is currently bound by compute latency, but the root cause preventing the GPU from hiding that
+latency is the severe shared memory occupancy limit.
   
 L1/TEX: 43.55%, L2: 63.48% — moderate cache utilization
 DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
