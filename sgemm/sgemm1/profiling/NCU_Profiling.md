@@ -73,7 +73,7 @@ hide it with. Second, Thread Divergence at 23.61% estimated speedup is significa
 only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
 This is likely your boundary condition handling at tile edges.
 
-1. Stall Long Scoreboard
+1.Stall Long Scoreboard
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
 A Long Scoreboard stall occurs when a warp is waiting on a long-latency operation to resolve.
 The Cause: In almost all cases, this means the warp is waiting for data to be fetched from global memory 
