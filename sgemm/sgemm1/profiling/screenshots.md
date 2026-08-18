@@ -55,21 +55,38 @@ Stall MIO Throttle: present
 Stall Short Scoreboard: minor
 Thread Divergence Est. Speedup: 23.61% — notable, predication is killing ~9 threads per warp
 
-Two key findings here. First, Stall Wait dominates at 70.5% — this is a fixed-latency execution dependency stall, meaning instructions are waiting on prior instructions to complete before they can issue. In a highly optimized kernel this stall is expected and hard to eliminate — the only cure is more warps to hide it with. Second, Thread Divergence at 23.61% estimated speedup is significant — 32 active threads but only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. This is likely your boundary condition handling at tile edges.
+Two key findings here. First, Stall Wait dominates at 70.5% — this is a fixed-latency execution dependency
+stall, meaning instructions are waiting on prior instructions to complete before they can issue. 
+In a highly optimized kernel this stall is expected and hard to eliminate — the only cure is more warps to 
+hide it with. Second, Thread Divergence at 23.61% estimated speedup is significant — 32 active threads but 
+only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
+This is likely your boundary condition handling at tile edges.
 </pre>
 
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
 <pre>
-Shared memory is the hard occupancy ceiling — Block Limit Shared Mem: 1. Only 1 block can fit per SM due to shared memory usage. With (128,1,1) = 4 warps per block, you get exactly 4 active warps per SM, which at SM120's 48 warps/SM maximum gives 4/48 = 8.33% occupancy. This matches achieved exactly.
+Shared memory is the hard occupancy ceiling — Block Limit Shared Mem: 1. Only 1 block can fit per SM due to
+shared memory usage. With (128,1,1) = 4 warps per block, you get exactly 4 active warps per SM, which at
+SM120's 48 warps/SM maximum gives 4/48 = 8.33% occupancy. This matches achieved exactly.
 </pre>
 
 <img width="1826" height="1024" alt="Occupancy2" src="https://github.com/user-attachments/assets/36d7a927-858e-4546-a75b-bb9fa7a86f08" />
-
+<pre>
+completely flat at ~8% regardless of register count, registers are NOT the limiter here despite being
+168/thread
+</pre>
 <img width="1826" height="1024" alt="Occupancy3" src="https://github.com/user-attachments/assets/503f3a95-559f-429a-a9ab-afebf3647604" />
-
+<pre>
+occupancy rises with block size up to ~384 threads then hard-drops at 416, the shared memory wall hits
+</pre>
 <img width="1826" height="1024" alt="Occupancy4" src="https://github.com/user-attachments/assets/1c7762fd-df9e-479a-8537-b8f2ef961d43" />
-
+<pre>
+sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory partitioning at work.
+</pre>
 <img width="1826" height="1024" alt="Occupancy" src="https://github.com/user-attachments/assets/ec0116a6-0909-4650-9b7c-6668bfff7733" />
+<pre>
+flat until 24 barriers then drops — your barrier count is within limits
+</pre>
 
 
 
