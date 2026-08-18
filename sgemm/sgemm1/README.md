@@ -7,8 +7,8 @@ and LDSM. Adapted from the NVIDIA CUTLASS CuTe tutorial
 and validated on RTX 5080 (SM120, CC 12.0).
 
 ## Hardware & Environment
-| Item | Value |
-|---|---|
+| Item      | Value |
+|:---|:---    |
 | GPU | NVIDIA GeForce RTX 5080 (SM120, 84 SMs) |
 | CUDA | 12.8 |
 | OS | Ubuntu 24.04 |
