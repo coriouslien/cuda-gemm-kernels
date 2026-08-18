@@ -79,7 +79,7 @@ hide it with. Second, Thread Divergence at 23.61% estimated speedup is significa
 only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
 This is likely your boundary condition handling at tile edges.
 
-Stall Long Scoreboard:
+\* Stall Long Scoreboard:
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
 A Long Scoreboard stall occurs when a warp is waiting on a long-latency operation to resolve.
 The Cause: In almost all cases, this means the warp is waiting for data to be fetched from global memory 
@@ -94,7 +94,7 @@ c. Load frequently accessed global data into shared memory.
 d. Increase overall warp occupancy so the scheduler has other warps to execute while waiting for the long
 memory fetch to complete.
 
-Stall Short Scoreboard:
+\* Stall Short Scoreboard:
 Similar to the long scoreboard, a Short Scoreboard stall means the warp is waiting on a data dependency, 
 but for an operation with a much shorter, fixed latency.
 The Cause: This is predominantly caused by shared memory operations. The warp has issued a load or store to
@@ -145,15 +145,15 @@ compound over billions of iterations.
 <pre>
 Occupancy indicates how many warps are active on an SM compared to the hardware maximum. This kernel suffers
 from severe occupancy limitations.
-Theoretical Occupancy:	8.33%
-Achieved Occupancy:	8.34%. The Bottleneck (Shared Memory): The profiler explicitly states that the kernel's 
+\-Theoretical Occupancy:	8.33%
+\-Achieved Occupancy:	8.34%. The Bottleneck (Shared Memory): The profiler explicitly states that the kernel's 
 theoretical occupancy of 8.3% (1 theoretical warp per scheduler) is strictly "limited by the required amount
 of shared memory"
-Theoretical Active Warps/SM:	4
-Achieved Active Warps/SM:	4.00
-Block Limit Registers:	3 blocks
-Block Limit Shared Mem:	1 block
-Block Limit Warps:	12 blocks
+\-Theoretical Active Warps/SM: 4
+\-Achieved Active Warps/SM:	4.00
+\-Block Limit Registers:	3 blocks
+\-Block Limit Shared Mem:	1 block
+\-Block Limit Warps:	12 blocks
 Shared memory is the hard occupancy ceiling. Block Limit Shared Memory: 1. Only 1 block can fit per SM due to
 shared memory usage, the SM cannot physically schedule multiple blocks concurrently. With (128,1,1) = 4 warps
 per block, we get exactly 4 active warps per SM, which at
@@ -174,31 +174,31 @@ Occupancy rises with block size up to ~384 threads then hard-drops at 416, the s
 </pre>
 <img width="1826" height="1024" alt="Occupancy4" src="https://github.com/user-attachments/assets/1c7762fd-df9e-479a-8537-b8f2ef961d43" />
 <pre>
-sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory partitioning at work.
+Sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory partitioning at work.
 </pre>
 <img width="1826" height="1024" alt="Occupancy" src="https://github.com/user-attachments/assets/ec0116a6-0909-4650-9b7c-6668bfff7733" />
 <pre>
 1. Impact of Varying Block Barriers
 This chart visualizes how the number of synchronization barriers (such as __syncthreads()) allocated per block 
 impacts the GPU's ability to keep active warps resident on the Streaming Multiprocessors (SMs).
-Current State: The blue dot on the far left indicates that your kernel currently uses a minimal number of
+\-Current State: The blue dot on the far left indicates that your kernel currently uses a minimal number of
 block barriers. At this current value, occupancy sits flat at the ~8% mark that was established in the 
 previous screenshots.
-Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
+\-Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
 up to 24 without suffering any further loss in occupancy.
-
-The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a hard architectural limit for
+\-The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a hard architectural limit for
 current launch configuration on the RTX 5080. If the code were to demand more than 24 barriers per block, 
 the kernel would fail to launch or stall entirely because the SM wouldn't have the resources to schedule 
 even a single block.
+  
 Impact of Varying Cluster Size:
 The bottom chart is partially visible, showing the Y-axis for "Active Clusters".
 Based on your earlier screenshot showing a "Cluster Occupancy" of 0%, this indicates that your kernel is not
 leveraging Thread Block Clusters (a feature that allows multiple thread blocks to be co-scheduled and share 
 resources across SMs).
-block barriers are not your current bottleneck. The kernel is well within the 24-barrier limit.
+Block barriers are not the current bottleneck. The kernel is well within the 24-barrier limit.
 
-To improve the performance of this gemm_device kernel, your primary focus must remain on optimizing shared
+To improve the performance of this gemm_device kernel, the primary focus must remain on optimizing shared
 memory usage. Because each block is requesting nearly 100KB of shared memory, the GPU can only physically 
 fit one block per SM, crippling your occupancy to ~8% and preventing the scheduler from effectively hiding 
 math and memory latencies. Reducing the shared memory footprint per block or decreasing the block size to 
@@ -206,13 +206,14 @@ fit more blocks per SM will be the most effective way to optimize this workload.
 </pre>
 <pre>
 Summary Diagnosis:
-8.3% occupancy is	critical ,Shared memory usage limits to 1 block/SM. The kernel is heavily bottlenecked by
-shared memory usage, which cripples occupancy down to ~8%. Because there are so few active warps residing on 
-the SM, the scheduler cannot hide the natural latency of math instructions (Wait Stalls).
-84% no-eligible cycles is	critical, only 1 active warp/scheduler, no latency hiding
-Stall Wait dominates is high, fixed-latency dependency, no warps to hide behind
-L1 hit rate 2.83%	is not critical,	intentional bypass via cp.async
-Thread divergence 23.6%	is not critical, predication at tile boundaries
+\-8.3% occupancy is	critical ,Shared memory usage limits to 1 block/SM. The kernel is heavily bottlenecked by
+shared memory usage, which cripples occupancy down to ~8%, extremely low occupancy. Because there are so 
+few active warps residing on the SM, the scheduler cannot hide the natural latency of math instructions 
+(Wait Stalls).
+\-84% no-eligible cycles is	critical, only 1 active warp/scheduler, no latency hiding
+\-Stall Wait dominates is high, fixed-latency dependency, no warps to hide behind
+\-L1 hit rate 2.83%	is not critical,	intentional bypass via cp.async
+\-Thread divergence 23.6%	is not critical, predication at tile boundaries
 
 The issue is the shared memory consumption is so large it prevents more than 1 block from residing on an SM,
 leaving only 4 warps to hide all instruction latency — extremely low occupancy. Both Theoretical Occupancy
