@@ -82,8 +82,7 @@ switch to. You should clarify:the only cure is more warps to hide it with. Secon
 23.61% estimated speedup is significant —  32 active threads but only 22.81 not predicated off means r
 oughly 9 threads per warp are being masked out by predication. 
 This is likely the boundary condition handling at tile edges.
-
-* Stall Long Scoreboard:
+Stall Long Scoreboard:
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
 A Long Scoreboard stall occurs when a warp is waiting on a long-latency operation to resolve.
 The Cause: In almost all cases, this means the warp is waiting for data to be fetched from global memory 
@@ -98,7 +97,7 @@ c. Load frequently accessed global data into shared memory.
 d. Increase overall warp occupancy so the scheduler has other warps to execute while waiting for the long
 memory fetch to complete.
 
-* Stall Short Scoreboard:
+Stall Short Scoreboard:
 Similar to the long scoreboard, a Short Scoreboard stall means the warp is waiting on a data dependency, 
 but for an operation with a much shorter, fixed latency.
 The Cause: This is predominantly caused by shared memory operations. The warp has issued a load or store to
@@ -113,7 +112,7 @@ b. Optimize the shared memory access patterns.
 c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory 
 load) to keep the SM busy while the short load finishes.
 
-* Stall MIO Throttle:
+Stall MIO Throttle:
 MIO stands for Memory Input/Output. This stall does not necessarily mean the warp is waiting for data; rather,
 it means it is waiting for hardware resources to become available to simply issue the instruction.
 The Cause: A warp stalls with MIO Throttle when the MIO instruction queue is full. The MIO pipeline on the 
@@ -134,15 +133,15 @@ precision and standard compliance.
   
 When to Use It vs. When to Avoid It
 Use it when:
-- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
-- Rendering graphics or running physics in video games.
-- Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
+-Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
+-Rendering graphics or running physics in video games.
+-Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
 speedup.
   
 Avoid it when:
-- Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
+-Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
 compound over billions of iterations.
-- Building financial modeling software where exact precision is legally required.
+-Building financial modeling software where exact precision is legally required.
 </pre>
 **Ocupancy**
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
