@@ -1,3 +1,5 @@
+launch config (40,40,1)×(128,1,1), duration 1.33ms.
+
 <img width="1826" height="1024" alt="GPU_Speed_Of_Light_Throughput" src="https://github.com/user-attachments/assets/bfaaba08-7462-411b-9214-cc057348f4d2" />
 
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
