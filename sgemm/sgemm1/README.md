@@ -8,14 +8,14 @@ and validated on RTX 5080 (SM120, CC 12.0).
 
 ## Hardware & Environment
 | Item      | Value |
-|:---|:---    |
+|:---:|:---:    |
 | GPU | NVIDIA GeForce RTX 5080 (SM120, 84 SMs) |
 | CUDA | 12.8 |
 | OS | Ubuntu 24.04 |
 | Profiler | Nsight Compute (ncu) |
 
 ## Build
-```bash
+
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/sgemm 5120 5120 4096 T N
