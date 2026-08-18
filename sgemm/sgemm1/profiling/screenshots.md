@@ -59,6 +59,9 @@ Two key findings here. First, Stall Wait dominates at 70.5% — this is a fixed-
 </pre>
 
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
+<pre>
+Shared memory is the hard occupancy ceiling — Block Limit Shared Mem: 1. Only 1 block can fit per SM due to shared memory usage. With (128,1,1) = 4 warps per block, you get exactly 4 active warps per SM, which at SM120's 48 warps/SM maximum gives 4/48 = 8.33% occupancy. This matches achieved exactly.
+</pre>
 
 <img width="1826" height="1024" alt="Occupancy2" src="https://github.com/user-attachments/assets/36d7a927-858e-4546-a75b-bb9fa7a86f08" />
 
