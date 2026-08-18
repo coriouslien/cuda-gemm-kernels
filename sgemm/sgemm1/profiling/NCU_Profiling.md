@@ -179,6 +179,18 @@ The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a 
 current launch configuration on the RTX 5080. If the code were to demand more than 24 barriers per block, 
 the kernel would fail to launch or stall entirely because the SM wouldn't have the resources to schedule 
 even a single block.
+Impact of Varying Cluster Size:
+The bottom chart is partially visible, showing the Y-axis for "Active Clusters".
+Based on your earlier screenshot showing a "Cluster Occupancy" of 0%, this indicates that your kernel is not
+leveraging Thread Block Clusters (a feature that allows multiple thread blocks to be co-scheduled and share 
+resources across SMs).
+block barriers are not your current bottleneck. The kernel is well within the 24-barrier limit.
+
+To improve the performance of this gemm_device kernel, your primary focus must remain on optimizing shared
+memory usage. Because each block is requesting nearly 100KB of shared memory, the GPU can only physically 
+fit one block per SM, crippling your occupancy to ~8% and preventing the scheduler from effectively hiding 
+math and memory latencies. Reducing the shared memory footprint per block or decreasing the block size to 
+fit more blocks per SM will be the most effective way to optimize this workload.
 </pre>
 <pre>
 Summary Diagnosis:
