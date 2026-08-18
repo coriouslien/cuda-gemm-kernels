@@ -7,24 +7,23 @@ and LDSM. Adapted from the NVIDIA CUTLASS CuTe tutorial
 and validated on RTX 5080 (SM120, CC 12.0).
 
 ## Hardware & Environment
-| Item      | Value |
-|:---:|:---:    |
-| GPU | NVIDIA GeForce RTX 5080 (SM120, 84 SMs) |
-| CUDA | 12.8 |
-| OS | Ubuntu 24.04 |
-| Profiler | Nsight Compute (ncu) |
+| Item      | Value                                   |
+|-----------|-----------------------------------------|
+| GPU       | NVIDIA GeForce RTX 5080 (SM120, 84 SMs) |
+| CUDA      | 12.8                                    |
+| OS        | Ubuntu 24.04                            |
+| Profiler  | Nsight Compute (ncu)                    |
 
 ## Build
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/sgemm 5120 5120 4096 T N
-```
 
 ## Performance
-| Configuration | GFlop/s | Time (ms) |
-|---|---|---|
-| CUTE HGEMM (5120×5120×4096, TN) | 187,086 | 1.148 |
+| Configuration                   | GFlop/s  | Time (ms) |
+|---------------------------------|----------|-----------|
+| CUTE HGEMM (5120×5120×4096, TN) | 187,086  | 1.148     |
 
 Verified correct against cuBLAS: max element-wise error < 1.0 
 (FP16 accumulation, expected rounding).
@@ -41,18 +40,20 @@ Verified correct against cuBLAS: max element-wise error < 1.0
 ## NCU Profiling Results
 See [profiling/](profiling/) for full Nsight Compute screenshots.
 
-| Metric | Value |
-|---|---|
-| Compute (SM) throughput | 82.19% |
-| Achieved occupancy | 8.34% |
-| Active warps/scheduler | 1.00 (of 12 max) |
-| No-eligible cycles | 84.32% |
-| Dominant stall | Stall Wait (70.5%) |
-| Occupancy limiter | Shared memory (1 block/SM) |
+| Metric                  | Value                      |
+|-------------------------|----------------------------|
+| Compute (SM) throughput | 82.19%                     |
+| Achieved occupancy      | 8.34%                      |
+| Active warps/scheduler  | 1.00 (of 12 max)           |
+| No-eligible cycles      | 84.32%                     |
+| Dominant stall          | Stall Wait (70.5%)         |
+| Occupancy limiter       | Shared memory (1 block/SM) |
 
 **Primary bottleneck**: shared memory usage limits to 1 block/SM, 
 leaving only 4 active warps per SM and 84% scheduler idle cycles.
 Next step: reduce smem footprint to enable 2+ concurrent blocks.
+
+    
 cmake -S . -B build
 make --build build
     
@@ -72,7 +73,6 @@ ptxas info    : Compile time = 128.287 ms
 [100%] Built target sgemm
 
 
-output:
 output:
 Using device 0: NVIDIA GeForce RTX 5080 (SM120, 84)
 M = 5120
@@ -94,6 +94,8 @@ CUTE C as 2D (first 4 rows, 4 cols):
 17.859   6.789   -1.810   9.430   
 28.609   33.094   -24.516   22.344   
 Max error vs cuBLAS: 0.875000 PASSED
+
+    
 C pointer:          0x7e4438000000
 d_C.data() pointer: 0x7e4438000000
 </pre>
