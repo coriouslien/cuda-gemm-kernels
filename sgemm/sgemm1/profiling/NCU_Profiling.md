@@ -73,7 +73,7 @@ hide it with. Second, Thread Divergence at 23.61% estimated speedup is significa
 only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
 This is likely your boundary condition handling at tile edges.
 
-1. Stall Long Scoreboard
+Stall Long Scoreboard:
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
 A Long Scoreboard stall occurs when a warp is waiting on a long-latency operation to resolve.
 The Cause: In almost all cases, this means the warp is waiting for data to be fetched from global memory 
@@ -88,7 +88,7 @@ c. Load frequently accessed global data into shared memory.
 d. Increase overall warp occupancy so the scheduler has other warps to execute while waiting for the long
 memory fetch to complete.
 
-2. Stall Short Scoreboard
+Stall Short Scoreboard:
 Similar to the long scoreboard, a Short Scoreboard stall means the warp is waiting on a data dependency, 
 but for an operation with a much shorter, fixed latency.
 The Cause: This is predominantly caused by shared memory operations. The warp has issued a load or store to
@@ -102,7 +102,7 @@ increase shared memory latency.
 b. Optimize the shared memory access patterns.
 c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory load) to keep the SM busy while the short load finishes.
 
-3. Stall MIO Throttle
+Stall MIO Throttle:
 MIO stands for Memory Input/Output. This stall does not necessarily mean the warp is waiting for data; rather,
 it means it is waiting for hardware resources to become available to simply issue the instruction.
 The Cause: A warp stalls with MIO Throttle when the MIO instruction queue is full. The MIO pipeline on the 
@@ -120,7 +120,8 @@ c. Minimize divergent branching in your code.
 Note: --use_fast_math is a compiler flag passed to the NVIDIA CUDA Compiler (nvcc). It instructs the compiler
 to aggressively optimize floating-point math operations, prioritizing execution speed over strict mathematical 
 precision and standard compliance.
-  When to Use It vs. When to Avoid It
+  
+When to Use It vs. When to Avoid It
 Use it when:
 - Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
 - Rendering graphics or running physics in video games.
