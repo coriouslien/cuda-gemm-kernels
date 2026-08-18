@@ -1,5 +1,5 @@
-launch config (40,40,1)×(128,1,1), duration 1.33ms.
-
+**Launch config (40,40,1)×(128,1,1), duration 1.33ms**.
+**GPU Speed Of Light Throughput**
 <img width="1826" height="1024" alt="GPU_Speed_Of_Light_Throughput" src="https://github.com/user-attachments/assets/bfaaba08-7462-411b-9214-cc057348f4d2" />
 <pre>
 NCU flags High Throughput — over 80% compute utilization. The bottleneck is clearly the SM compute pipe, 
@@ -16,6 +16,7 @@ latency is the severe shared memory occupancy limit.
 L1/TEX: 43.55%, L2: 63.48% — moderate cache utilization
 DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 </pre>
+**Memory Workload Analysis**
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
 <pre>
 Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
@@ -26,7 +27,7 @@ The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is
 (consistent with LDGSTS.E.BYPASS — global-to-shared async copies that intentionally skip L1) and the working 
 set fits comfortably in L2. DRAM at 11% confirms L2 is absorbing almost everything.
 </pre>
-
+**Scheduler Statistics**
 <img width="1826" height="1024" alt="Scheduler_Statistics1" src="https://github.com/user-attachments/assets/05a3e3c5-68f8-498e-b31d-3c03fde9287c" />
 
 <img width="1826" height="1024" alt="Scheduler_statistics2" src="https://github.com/user-attachments/assets/a2772075-2cda-4776-862c-809396dbd3db" />
@@ -41,7 +42,7 @@ Issue Slot Utilization: Est. Speedup 17.81%
   
 This is severely under-occupied. The scheduler only has 1 active warp out of a possible 12, and of that 1, it can only issue 16% of the time. The other 84% of cycles the scheduler is completely idle — it has nothing to issue. This directly explains the 1.33ms duration. With only 1 active warp per scheduler there is virtually no latency hiding whatsoever.
 </pre>
-
+**Warp State Statistics**
 <img width="1826" height="1024" alt="Warp_State_Statistics1" src="https://github.com/user-attachments/assets/c88085f7-0734-40c2-908f-689e5072e0ab" />
 
 <img width="1826" height="1024" alt="Warp_State_Statistics" src="https://github.com/user-attachments/assets/406f4f77-5436-4f5c-b8d1-c16d788a6822" />
