@@ -124,14 +124,14 @@ precision and standard compliance.
 When to Use It vs. When to Avoid It
 Use it when:
 \- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
-- Rendering graphics or running physics in video games.
-- Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
+\- Rendering graphics or running physics in video games.
+\- Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
 speedup.
   
 Avoid it when:
-- Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
+\- Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
 compound over billions of iterations.
-- Building financial modeling software where exact precision is legally required.
+\- Building financial modeling software where exact precision is legally required.
 </pre>
 **Ocupancy**
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
