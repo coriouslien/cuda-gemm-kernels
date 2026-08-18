@@ -77,7 +77,7 @@ stall, meaning instructions are waiting on prior instructions to complete before
 In a highly optimized kernel this stall is expected and hard to eliminate — the only cure is more warps to 
 hide it with. Second, Thread Divergence at 23.61% estimated speedup is significant — 32 active threads but 
 only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
-This is likely your boundary condition handling at tile edges.
+This is likely the boundary condition handling at tile edges.
 
 \* Stall Long Scoreboard:
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
@@ -115,15 +115,15 @@ it means it is waiting for hardware resources to become available to simply issu
 The Cause: A warp stalls with MIO Throttle when the MIO instruction queue is full. The MIO pipeline on the 
 SM handles specific, specialized instructions: shared memory instructions, special math instructions 
 (like fast sine, cosine, square root, or MUFU instructions), and dynamic branches.
-The Impact: Your kernel is trying to execute too many of these specific instructions back-to-back. 
+The Impact: The kernel is trying to execute too many of these specific instructions back-to-back. 
 The hardware queue gets backed up, throttling the scheduler and preventing it from issuing any new 
 instructions to that warp.
 How to Fix It:
 a. Reduce the density of shared memory accesses (e.g., by loading data into registers and doing multiple math
 operations before writing back to shared memory).
 b. If using heavy trigonometric or transcendental math, check if you can use faster, less precise compiler 
-flags (like --use_fast_math) if your accuracy requirements allow for it.
-c. Minimize divergent branching in your code.
+flags (like --use_fast_math) if the accuracy requirements allow for it.
+c. Minimize divergent branching in the code.
 Note: --use_fast_math is a compiler flag passed to the NVIDIA CUDA Compiler (nvcc). It instructs the compiler
 to aggressively optimize floating-point math operations, prioritizing execution speed over strict mathematical 
 precision and standard compliance.
@@ -181,7 +181,7 @@ Sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory
 1. Impact of Varying Block Barriers
 This chart visualizes how the number of synchronization barriers (such as __syncthreads()) allocated per block 
 impacts the GPU's ability to keep active warps resident on the Streaming Multiprocessors (SMs).
-\-Current State: The blue dot on the far left indicates that your kernel currently uses a minimal number of
+\-Current State: The blue dot on the far left indicates that the kernel currently uses a minimal number of
 block barriers. At this current value, occupancy sits flat at the ~8% mark that was established in the 
 previous screenshots.
 \-Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
@@ -193,14 +193,14 @@ even a single block.
   
 Impact of Varying Cluster Size:
 The bottom chart is partially visible, showing the Y-axis for "Active Clusters".
-Based on your earlier screenshot showing a "Cluster Occupancy" of 0%, this indicates that your kernel is not
+Based on the earlier screenshot showing a "Cluster Occupancy" of 0%, this indicates that the kernel is not
 leveraging Thread Block Clusters (a feature that allows multiple thread blocks to be co-scheduled and share 
 resources across SMs).
 Block barriers are not the current bottleneck. The kernel is well within the 24-barrier limit.
 
 To improve the performance of this gemm_device kernel, the primary focus must remain on optimizing shared
 memory usage. Because each block is requesting nearly 100KB of shared memory, the GPU can only physically 
-fit one block per SM, crippling your occupancy to ~8% and preventing the scheduler from effectively hiding 
+fit one block per SM, crippling the occupancy to ~8% and preventing the scheduler from effectively hiding 
 math and memory latencies. Reducing the shared memory footprint per block or decreasing the block size to 
 fit more blocks per SM will be the most effective way to optimize this workload.
 </pre>
