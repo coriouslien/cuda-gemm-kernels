@@ -1,4 +1,4 @@
-<pre>
+
 cmake_minimum_required(VERSION 3.18)
 project(SgemmPortfolio LANGUAGES CXX CUDA)
 
@@ -42,4 +42,4 @@ target_link_libraries(sgemm PRIVATE
 )
 
 
-</pre>
+
