@@ -19,10 +19,10 @@ DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 **Memory Workload Analysis**
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
 <pre>
-\-Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
+-Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
 The kernel achieves a very high L2 Hit Rate of 97.20%, data is almost entirely served from L2, meaning most
 memory requests are served quickly without going to main memory.
-\-The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely 
+-The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely 
 (consistent with LDGSTS.E.BYPASS — global-to-shared async copies that intentionally skip L1) and the working 
 set fits comfortably in L2. DRAM at 11% confirms L2 is absorbing almost everything.
 </pre>
@@ -56,18 +56,18 @@ no latency hiding whatsoever.
 
 <img width="1826" height="1024" alt="Warp_State_Statistics" src="https://github.com/user-attachments/assets/406f4f77-5436-4f5c-b8d1-c16d788a6822" />
 <pre>
-\-Warp Stall: Warp Cycles Per Issued Instruction is 6.38. Warps are spending an average of 6.38 cycles per
+-Warp Stall: Warp Cycles Per Issued Instruction is 6.38. Warps are spending an average of 6.38 cycles per
 issued instruction. The dominant stall reason is "Wait Stalls," taking up about 4.5 cycles (or ~70.5%) on
 average waiting for fixed latency execution dependencies.
-\-Average Active Threads Per Warp is 32, full warp utilization, no divergence at the thread level. 
+-Average Active Threads Per Warp is 32, full warp utilization, no divergence at the thread level. 
 Avgerage Not Predicated Off Threads is 22.81, While there is an average of 32 active threads per warp, 
 the average number of non-predicated threads is reduced to 22.81. This indicates the compiler is using 
 predication to handle conditional branching, which lowers instruction throughput.
-\-Stall Wait: dominant (~4.5+ cycles per instruction, 70.5% of total stall cycles)
-\-Stall Long Scoreboard: significant
-\-Stall MIO Throttle: present (Note: MIO: Memory Input/Output)
-\-Stall Short Scoreboard: minor
-\-Thread Divergence Est. Speedup: 23.61% — notable, predication is killing ~9 threads per warp. While there 
+-Stall Wait: dominant (~4.5+ cycles per instruction, 70.5% of total stall cycles)
+-Stall Long Scoreboard: significant
+-Stall MIO Throttle: present (Note: MIO: Memory Input/Output)
+-Stall Short Scoreboard: minor
+-Thread Divergence Est. Speedup: 23.61% — notable, predication is killing ~9 threads per warp. While there 
 is an average of 32 active threads per warp, the average number of non-predicated threads is reduced to 22.81.
 This indicates the compiler is using predication to handle conditional branching, which lowers instruction
 throughput.
@@ -130,30 +130,30 @@ precision and standard compliance.
   
 When to Use It vs. When to Avoid It
 Use it when:
-\- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
-\- Rendering graphics or running physics in video games.
-\- Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
+- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
+- Rendering graphics or running physics in video games.
+- Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
 speedup.
   
 Avoid it when:
-\- Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
+- Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
 compound over billions of iterations.
-\- Building financial modeling software where exact precision is legally required.
+- Building financial modeling software where exact precision is legally required.
 </pre>
 **Ocupancy**
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
 <pre>
 Occupancy indicates how many warps are active on an SM compared to the hardware maximum. This kernel suffers
 from severe occupancy limitations.
-\-Theoretical Occupancy:	8.33%
-\-Achieved Occupancy:	8.34%. The Bottleneck (Shared Memory): The profiler explicitly states that the kernel's 
+-Theoretical Occupancy:	8.33%
+-Achieved Occupancy:	8.34%. The Bottleneck (Shared Memory): The profiler explicitly states that the kernel's 
 theoretical occupancy of 8.3% (1 theoretical warp per scheduler) is strictly "limited by the required amount
 of shared memory"
-\-Theoretical Active Warps/SM: 4
-\-Achieved Active Warps/SM:	4.00
-\-Block Limit Registers:	3 blocks
-\-Block Limit Shared Mem:	1 block
-\-Block Limit Warps:	12 blocks
+-Theoretical Active Warps/SM: 4
+-Achieved Active Warps/SM:	4.00
+-Block Limit Registers:	3 blocks
+-Block Limit Shared Mem:	1 block
+-Block Limit Warps:	12 blocks
 Shared memory is the hard occupancy ceiling. Block Limit Shared Memory: 1. Only 1 block can fit per SM due to
 shared memory usage, the SM cannot physically schedule multiple blocks concurrently. With (128,1,1) = 4 warps
 per block, we get exactly 4 active warps per SM, which at
@@ -181,12 +181,12 @@ Sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory
 1. Impact of Varying Block Barriers
 This chart visualizes how the number of synchronization barriers (such as __syncthreads()) allocated per block 
 impacts the GPU's ability to keep active warps resident on the Streaming Multiprocessors (SMs).
-\-Current State: The blue dot on the far left indicates that the kernel currently uses a minimal number of
+-Current State: The blue dot on the far left indicates that the kernel currently uses a minimal number of
 block barriers. At this current value, occupancy sits flat at the ~8% mark that was established in the 
 previous screenshots.
-\-Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
+-Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
 up to 24 without suffering any further loss in occupancy.
-\-The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a hard architectural limit for
+-The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a hard architectural limit for
 current launch configuration on the RTX 5080. If the code were to demand more than 24 barriers per block, 
 the kernel would fail to launch or stall entirely because the SM wouldn't have the resources to schedule 
 even a single block.
@@ -206,14 +206,14 @@ fit more blocks per SM will be the most effective way to optimize this workload.
 </pre>
 <pre>
 Summary Diagnosis:
-\-8.3% occupancy is	critical ,Shared memory usage limits to 1 block/SM. The kernel is heavily bottlenecked by
+-8.3% occupancy is	critical ,Shared memory usage limits to 1 block/SM. The kernel is heavily bottlenecked by
 shared memory usage, which cripples occupancy down to ~8%, extremely low occupancy. Because there are so 
 few active warps residing on the SM, the scheduler cannot hide the natural latency of math instructions 
 (Wait Stalls).
-\-84% no-eligible cycles is	critical, only 1 active warp/scheduler, no latency hiding
-\-Stall Wait dominates is high, fixed-latency dependency, no warps to hide behind
-\-L1 hit rate 2.83%	is not critical,	intentional bypass via cp.async
-\-Thread divergence 23.6%	is not critical, predication at tile boundaries
+-84% no-eligible cycles is	critical, only 1 active warp/scheduler, no latency hiding
+-Stall Wait dominates is high, fixed-latency dependency, no warps to hide behind
+-L1 hit rate 2.83%	is not critical,	intentional bypass via cp.async
+-Thread divergence 23.6%	is not critical, predication at tile boundaries
 
 The issue is the shared memory consumption is so large it prevents more than 1 block from residing on an SM,
 leaving only 4 warps to hide all instruction latency — extremely low occupancy. Both Theoretical Occupancy
