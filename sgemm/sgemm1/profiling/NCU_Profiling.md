@@ -36,11 +36,16 @@ This is a critical bottleneck:
 Active Warps Per Scheduler: 1.00 (hardware max: 12)
 Eligible Warps Per Scheduler: 0.16
 Issued Warp Per Scheduler: 0.16
-No Eligible: 84.32% — scheduler finds no eligible warp 84% of cycles, poor issue slot utilization. Each scheduler checks its pool of warps every cycle, but for this workload, 84.32% of cycles result in "No Eligible" warps to issue.
+No Eligible: 84.32% — scheduler finds no eligible warp 84% of cycles, poor issue slot utilization. 
+Each scheduler checks its pool of warps every cycle, but for this workload, 84.32% of cycles result in 
+"No Eligible" warps to issue.
 One or More Eligible: 15.68%
 Issue Slot Utilization: Est. Speedup 17.81%
   
-This is severely under-occupied. The scheduler only has 1 active warp out of a possible 12, and of that 1, it can only issue 16% of the time. The other 84% of cycles the scheduler is completely idle — it has nothing to issue. This directly explains the 1.33ms duration. With only 1 active warp per scheduler there is virtually no latency hiding whatsoever.
+This is severely under-occupied. The scheduler only has 1 active warp out of a possible 12, and of that 1, 
+it can only issue 16% of the time. The other 84% of cycles the scheduler is completely idle — it has nothing
+to issue. This directly explains the 1.33ms duration. With only 1 active warp per scheduler there is virtually
+no latency hiding whatsoever.
 </pre>
 **Warp State Statistics**
 <img width="1826" height="1024" alt="Warp_State_Statistics1" src="https://github.com/user-attachments/assets/c88085f7-0734-40c2-908f-689e5072e0ab" />
@@ -63,9 +68,16 @@ hide it with. Second, Thread Divergence at 23.61% estimated speedup is significa
 only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
 This is likely your boundary condition handling at tile edges.
 </pre>
-
+**Ocupancy**
 <img width="1826" height="1024" alt="Occupancy1" src="https://github.com/user-attachments/assets/885047bc-ee7d-48f5-9709-a7df38e05010" />
 <pre>
+Theoretical Occupancy:	8.33%
+Achieved Occupancy:	8.34%
+Theoretical Active Warps/SM:	4
+Achieved Active Warps/SM:	4.00
+Block Limit Registers:	3 blocks
+Block Limit Shared Mem:	1 block
+Block Limit Warps:	12 blocks
 Shared memory is the hard occupancy ceiling — Block Limit Shared Mem: 1. Only 1 block can fit per SM due to
 shared memory usage. With (128,1,1) = 4 warps per block, you get exactly 4 active warps per SM, which at
 SM120's 48 warps/SM maximum gives 4/48 = 8.33% occupancy. This matches achieved exactly.
@@ -87,6 +99,23 @@ sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory
 <img width="1826" height="1024" alt="Occupancy" src="https://github.com/user-attachments/assets/ec0116a6-0909-4650-9b7c-6668bfff7733" />
 <pre>
 flat until 240 barriers then drops — your barrier count is within limits
+</pre>
+<pre>
+Diagnosis Summary:
+8.3% occupancy is	critical ,Shared memory usage limits to 1 block/SM
+84% no-eligible cycles is	critical, only 1 active warp/scheduler, no latency hiding
+Stall Wait dominates is high, fixed-latency dependency, no warps to hide behind
+L1 hit rate 2.83%	is not critical,	intentional bypass via cp.async
+Thread divergence 23.6%	is not critical, predication at tile boundaries
+
+The issue is the shared memory consumption is so large it prevents more than 1 block from residing on an SM,
+leaving only 4 warps to hide all instruction latency — low occupancy. The compute Speed Of Light is 82%, the
+SM is busy when it does work, but it is idle 84% of cycles waiting for the single active warp to become
+eligible again.
+
+To achieve further optimization, minimizing shared memory per block to allow 2 or more blocks/SM, 
+which would double or quadruple the active warp count and give the scheduler enough warps to hide the Wait
+stalls that currently dominate.
 </pre>
 
 
