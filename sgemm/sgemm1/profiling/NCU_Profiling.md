@@ -123,10 +123,11 @@ precision and standard compliance.
   
 When to Use It vs. When to Avoid It
 Use it when:
-- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
+\- Doing Machine Learning / Deep Learning (where slight precision losses are absorbed by the network).
 - Rendering graphics or running physics in video games.
 - Writing algorithms where a 0.001% margin of error on a calculation is acceptable in exchange for a massive
 speedup.
+  
 Avoid it when:
 - Doing strict scientific computing (like fluid dynamics or orbital mechanics) where tiny rounding errors 
 compound over billions of iterations.
