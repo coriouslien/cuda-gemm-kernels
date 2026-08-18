@@ -18,9 +18,13 @@ DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 </pre>
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
 <pre>
-Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. The kernel achieves a very high L2 Hit Rate of 97.20%, data is almost entirely served from L2, meaning most memory requests are served quickly without going to main memory.
+Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
+The kernel achieves a very high L2 Hit Rate of 97.20%, data is almost entirely served from L2, meaning most
+memory requests are served quickly without going to main memory.
   
-The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely (consistent with LDGSTS.E.BYPASS — global-to-shared async copies that intentionally skip L1) and the working set fits comfortably in L2. DRAM at 11% confirms L2 is absorbing almost everything.
+The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely 
+(consistent with LDGSTS.E.BYPASS — global-to-shared async copies that intentionally skip L1) and the working 
+set fits comfortably in L2. DRAM at 11% confirms L2 is absorbing almost everything.
 </pre>
 
 <img width="1826" height="1024" alt="Scheduler_Statistics1" src="https://github.com/user-attachments/assets/05a3e3c5-68f8-498e-b31d-3c03fde9287c" />
