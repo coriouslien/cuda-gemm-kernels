@@ -3,33 +3,34 @@
 <img width="1826" height="1024" alt="GPU_Speed_Of_Light_Throughput" src="https://github.com/user-attachments/assets/bfaaba08-7462-411b-9214-cc057348f4d2" />
 <pre>
 NCU flags High Throughput — over 80% compute utilization. The bottleneck is clearly the SM compute pipe, 
-not memory bandwidth. To go further you need to shift work away from the most saturated unit.
-Compute (SM) Throughput: 82.19% — very high, the kernel is compute-bound
-Memory Throughput: 63.48%
+not memory bandwidth.
+\-Compute (SM) Throughput: 82.19% — very high, the kernel is compute-bound
+\-Memory Throughput: 63.48%
 The compute units are "busy", but they are largely busy stalling (specifically, Wait Stalls averaging 4.5 
 cycles per instruction). Because the kernel requests too much shared memory per block, occupancy is crushed
 down to ~8%. The SM doesn't have enough active warps to swap between to hide the latency of its compute 
 operations. Warp State Statistics and Occupancy charts reveal that the SMs are highly inefficient.
 The kernel is currently bound by compute latency, but the root cause preventing the GPU from hiding that
-latency is the severe shared memory occupancy limit.
-  
-L1/TEX: 43.55%, L2: 63.48% — moderate cache utilization
+latency is the severe shared memory occupancy limit. The profiler notes that because compute utilization is
+greater than 80.0%, work might need to be shifted from the SM to another unit to improve performance further.
+\-L1/TEX: 43.55%, L2: 63.48% — moderate cache utilization
 DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 </pre>
 **Memory Workload Analysis**
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
 <pre>
-Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
+\-Excellent L2 caching but poor L1 efficiency. L1/TEX Hit Rate is 2.83%, extremely low, almost no L1 reuse. 
 The kernel achieves a very high L2 Hit Rate of 97.20%, data is almost entirely served from L2, meaning most
 memory requests are served quickly without going to main memory.
-  
-The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely 
+\-The near-zero L1 hit rate combined with a 97% L2 hit rate, the access pattern is bypassing L1 entirely 
 (consistent with LDGSTS.E.BYPASS — global-to-shared async copies that intentionally skip L1) and the working 
 set fits comfortably in L2. DRAM at 11% confirms L2 is absorbing almost everything.
 </pre>
 **Scheduler Statistics**
 <img width="1826" height="1024" alt="Scheduler_Statistics1" src="https://github.com/user-attachments/assets/05a3e3c5-68f8-498e-b31d-3c03fde9287c" />
-
+<pre>
+The scheduler is struggling to hide latency due to a lack of eligible warps to execute.
+</pre>
 <img width="1826" height="1024" alt="Scheduler_statistics2" src="https://github.com/user-attachments/assets/a2772075-2cda-4776-862c-809396dbd3db" />
 <pre>
 This is a critical bottleneck:
@@ -38,6 +39,9 @@ Eligible Warps Per Scheduler: 0.16
 Issued Warp Per Scheduler: 0.16
 No Eligible: 84.32% — scheduler finds no eligible warp 84% of cycles, poor issue slot utilization. 
 Each scheduler checks its pool of warps every cycle, but for this workload, 84.32% of cycles result in 
+Low Warp Counts: The GPU supports a maximum of 12 warps per scheduler. However, this workload only 
+allocates an average of 1.00 active warp per scheduler, and only 0.16 warps are actually eligible to 
+issue instructions per cycle.
 "No Eligible" warps to issue.
 One or More Eligible: 15.68%
 Issue Slot Utilization: estimated Speedup 17.81%
@@ -52,19 +56,21 @@ no latency hiding whatsoever.
 
 <img width="1826" height="1024" alt="Warp_State_Statistics" src="https://github.com/user-attachments/assets/406f4f77-5436-4f5c-b8d1-c16d788a6822" />
 <pre>
-Warp Stall: Warp Cycles Per Issued Instruction is 6.38. Warps are spending an average of 6.38 cycles per
+\-Warp Stall: Warp Cycles Per Issued Instruction is 6.38. Warps are spending an average of 6.38 cycles per
 issued instruction. The dominant stall reason is "Wait Stalls," taking up about 4.5 cycles (or ~70.5%) on
 average waiting for fixed latency execution dependencies.
-Average Active Threads Per Warp is 32, full warp utilization, no divergence at the thread level. 
+\-Average Active Threads Per Warp is 32, full warp utilization, no divergence at the thread level. 
 Avgerage Not Predicated Off Threads is 22.81, While there is an average of 32 active threads per warp, 
 the average number of non-predicated threads is reduced to 22.81. This indicates the compiler is using 
 predication to handle conditional branching, which lowers instruction throughput.
-Stall Wait: dominant (~4.5+ cycles per instruction, 70.5% of total stall cycles)
-
-Stall Long Scoreboard: significant
-Stall MIO Throttle: present
-Stall Short Scoreboard: minor
-Thread Divergence Est. Speedup: 23.61% — notable, predication is killing ~9 threads per warp
+\-Stall Wait: dominant (~4.5+ cycles per instruction, 70.5% of total stall cycles)
+\-Stall Long Scoreboard: significant
+\-Stall MIO Throttle: present (Note: MIO: Memory Input/Output)
+\-Stall Short Scoreboard: minor
+\-Thread Divergence Est. Speedup: 23.61% — notable, predication is killing ~9 threads per warp. While there 
+is an average of 32 active threads per warp, the average number of non-predicated threads is reduced to 22.81.
+This indicates the compiler is using predication to handle conditional branching, which lowers instruction
+throughput.
 
 Two key findings here. First, Stall Wait dominates at 70.5% — this is a fixed-latency execution dependency
 stall, meaning instructions are waiting on prior instructions to complete before they can issue. 
@@ -103,7 +109,7 @@ b. Optimize the shared memory access patterns.
 c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory 
 load) to keep the SM busy while the short load finishes.
 
-Stall MIO Throttle:
+\* Stall MIO Throttle:
 MIO stands for Memory Input/Output. This stall does not necessarily mean the warp is waiting for data; rather,
 it means it is waiting for hardware resources to become available to simply issue the instruction.
 The Cause: A warp stalls with MIO Throttle when the MIO instruction queue is full. The MIO pipeline on the 
