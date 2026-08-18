@@ -85,7 +85,7 @@ sharp step-down at ~31KB then again at ~51KB — this is the SM120 shared memory
 </pre>
 <img width="1826" height="1024" alt="Occupancy" src="https://github.com/user-attachments/assets/ec0116a6-0909-4650-9b7c-6668bfff7733" />
 <pre>
-flat until 24 barriers then drops — your barrier count is within limits
+flat until 240 barriers then drops — your barrier count is within limits
 </pre>
 
 
