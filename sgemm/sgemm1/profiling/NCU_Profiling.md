@@ -100,7 +100,8 @@ How to Fix It:
 a. Check for and eliminate shared memory bank conflicts, which serialize memory accesses and artificially 
 increase shared memory latency.
 b. Optimize the shared memory access patterns.
-c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory load) to keep the SM busy while the short load finishes.
+c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory 
+load) to keep the SM busy while the short load finishes.
 
 Stall MIO Throttle:
 MIO stands for Memory Input/Output. This stall does not necessarily mean the warp is waiting for data; rather,
@@ -148,18 +149,21 @@ Block Limit Registers:	3 blocks
 Block Limit Shared Mem:	1 block
 Block Limit Warps:	12 blocks
 Shared memory is the hard occupancy ceiling. Block Limit Shared Memory: 1. Only 1 block can fit per SM due to
-shared memory usage, the SM cannot physically schedule multiple blocks concurrently. With (128,1,1) = 4 warps per block, we get exactly 4 active warps per SM, which at
+shared memory usage, the SM cannot physically schedule multiple blocks concurrently. With (128,1,1) = 4 warps
+per block, we get exactly 4 active warps per SM, which at
 SM120's 48 warps/SM maximum gives 4/48 = 8.33% occupancy. This matches achieved exactly. 
 </pre>
 
 <img width="1826" height="1024" alt="Occupancy2" src="https://github.com/user-attachments/assets/36d7a927-858e-4546-a75b-bb9fa7a86f08" />
 <pre>
-The Bottleneck (Shared Memory), completely flat at ~8% regardless of register count, registers are NOT the limiter here despite being
-168/thread
+The Bottleneck (Shared Memory), completely flat at ~8% regardless of register count, registers are NOT the
+limiter here despite being 168/thread
 </pre>
 <img width="1826" height="1024" alt="Occupancy3" src="https://github.com/user-attachments/assets/503f3a95-559f-429a-a9ab-afebf3647604" />
 <pre>
-Block Size Limitations, the kernel uses a block size of 128 threads. The occupancy graph suggests that theoretically, increasing the block size to around 384 could yield higher occupancy (up to ~25%), assuming shared memory constraints were mitigated.
+Block Size Limitations, the kernel uses a block size of 128 threads. The occupancy graph suggests that
+theoretically, increasing the block size to around 384 could yield higher occupancy (up to ~25%), assuming 
+shared memory constraints were mitigated.
 Occupancy rises with block size up to ~384 threads then hard-drops at 416, the shared memory wall hits
 </pre>
 <img width="1826" height="1024" alt="Occupancy4" src="https://github.com/user-attachments/assets/1c7762fd-df9e-479a-8537-b8f2ef961d43" />
