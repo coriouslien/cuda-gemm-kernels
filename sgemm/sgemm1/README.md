@@ -53,49 +53,4 @@ See [profiling/](profiling/) for full Nsight Compute screenshots.
 leaving only 4 active warps per SM and 84% scheduler idle cycles.
 Next step: reduce smem footprint to enable 2+ concurrent blocks.
 
-    
-cmake -S . -B build
-make --build build
-    
-[ 50%] Building CUDA object CMakeFiles/sgemm.dir/sgemm.cu.o
-ptxas info    : 47 bytes gmem
-ptxas info    : Compiling entry function '_ZN3cub18CUB_200802_SM_120011EmptyKernelIvEEvv' for 'sm_120'
-ptxas info    : Function properties for _ZN3cub18CUB_200802_SM_120011EmptyKernelIvEEvv
-    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
-ptxas info    : Used 4 registers, used 0 barriers
-ptxas info    : Compile time = 0.887 ms
-ptxas info    : Compiling entry function '_Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi3ELi3EEENS3_ILi0EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJNS1_IJSG_SG_EEES9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJSG_NS3_ILi512EEEEEENS1_IJNS1_IJS9_S5_EEESE_EEENS1_IJSE_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSF_INS1_IJSI_SG_EEENS1_IJNS1_IJS4_S9_EEESH_EEEEENS1_IJSH_S5_EEEEENSY_IJNS0_17SM75_U32x4_LDSM_NES8_EEES8_SA_SW_S18_S1A_S8_NS1_IJS9_iEEENSF_INS1_IJS4_S4_EEENS1_IJS9_S4_EEEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_28SM80_16x8x16_F16F16F16F16_TNEEEENSF_INS1_IJNS3_ILi2EEES1J_S9_EEENS1_IJS9_S1J_SE_EEEEENS1_IJNS3_ILi32EEES1N_SH_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_T5_PKT6_T7_T8_T9_T10_PT11_T12_T13_T14_T15_T16_' for 'sm_120'
-ptxas info    : Function properties for _Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi3ELi3EEENS3_ILi0EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJNS1_IJSG_SG_EEES9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJSG_NS3_ILi512EEEEEENS1_IJNS1_IJS9_S5_EEESE_EEENS1_IJSE_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSF_INS1_IJSI_SG_EEENS1_IJNS1_IJS4_S9_EEESH_EEEEENS1_IJSH_S5_EEEEENSY_IJNS0_17SM75_U32x4_LDSM_NES8_EEES8_SA_SW_S18_S1A_S8_NS1_IJS9_iEEENSF_INS1_IJS4_S4_EEENS1_IJS9_S4_EEEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_28SM80_16x8x16_F16F16F16F16_TNEEEENSF_INS1_IJNS3_ILi2EEES1J_S9_EEENS1_IJS9_S1J_SE_EEEEENS1_IJNS3_ILi32EEES1N_SH_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_T5_PKT6_T7_T8_T9_T10_PT11_T12_T13_T14_T15_T16_
-    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
-ptxas info    : Used 168 registers, used 1 barriers
-ptxas info    : Compile time = 128.287 ms
-[100%] Linking CUDA executable sgemm
-[100%] Built target sgemm
-
-
-output:
-Using device 0: NVIDIA GeForce RTX 5080 (SM120, 84)
-M = 5120
-N = 5120
-K = 4096
-C = A^T B^N
-CUTE_GEMM:     [187086.0]GFlop/s  (1.1479)ms
-cuBLAS C_ref[0..7]: 5.492 -5.145 17.859 28.641 38.312 43.688 -33.125 17.047 
-CUTE   C[0..7]:     5.496 -5.125 17.859 28.609 38.438 43.562 -33.156 17.062 
-cuBLAS C_ref as 2D (first 4 rows, 4 cols):
-5.492   18.688   -18.156   8.148   
--5.145   -15.719   21.156   -4.793   
-17.859   6.801   -1.798   9.391   
-28.641   33.031   -24.547   22.281   
-
-CUTE C as 2D (first 4 rows, 4 cols):
-5.496   18.703   -18.172   8.094   
--5.125   -15.773   21.109   -4.773   
-17.859   6.789   -1.810   9.430   
-28.609   33.094   -24.516   22.344   
-Max error vs cuBLAS: 0.875000 PASSED
-
-    
-C pointer:          0x7e4438000000
-d_C.data() pointer: 0x7e4438000000
 </pre>
