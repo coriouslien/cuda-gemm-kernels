@@ -72,14 +72,18 @@ is an average of 32 active threads per warp, the average number of non-predicate
 This indicates the compiler is using predication to handle conditional branching, which lowers instruction
 throughput.
 
-Two key findings here. First, Stall Wait dominates at 70.5% — this is a fixed-latency execution dependency
-stall, meaning instructions are waiting on prior instructions to complete before they can issue. 
-In a highly optimized kernel this stall is expected and hard to eliminate — the only cure is more warps to 
-hide it with. Second, Thread Divergence at 23.61% estimated speedup is significant — 32 active threads but 
-only 22.81 not predicated off means roughly 9 threads per warp are being masked out by predication. 
+Two key findings here. Wait Stall dominates at 70.5%. In a well-occupied kernel this is 
+expected and managed by warp switching. Here it dominates because 
+occupancy is only 8% — the single active warp has no peer warps 
+to hide behind, so every fixed-latency dependency stalls the 
+scheduler completely.
+Wait Stall dominates because occupancy is 8% — with only 1 warp/scheduler, there are no other warps to 
+switch to. You should clarify:the only cure is more warps to hide it with. Second, Thread Divergence at 
+23.61% estimated speedup is significant —  32 active threads but only 22.81 not predicated off means r
+oughly 9 threads per warp are being masked out by predication. 
 This is likely the boundary condition handling at tile edges.
 
-\* Stall Long Scoreboard:
+* Stall Long Scoreboard:
 A scoreboard is a hardware mechanism that tracks whether the data required for an instruction is ready. 
 A Long Scoreboard stall occurs when a warp is waiting on a long-latency operation to resolve.
 The Cause: In almost all cases, this means the warp is waiting for data to be fetched from global memory 
@@ -94,7 +98,7 @@ c. Load frequently accessed global data into shared memory.
 d. Increase overall warp occupancy so the scheduler has other warps to execute while waiting for the long
 memory fetch to complete.
 
-\* Stall Short Scoreboard:
+* Stall Short Scoreboard:
 Similar to the long scoreboard, a Short Scoreboard stall means the warp is waiting on a data dependency, 
 but for an operation with a much shorter, fixed latency.
 The Cause: This is predominantly caused by shared memory operations. The warp has issued a load or store to
@@ -109,7 +113,7 @@ b. Optimize the shared memory access patterns.
 c. Ensure the kernel has enough instruction-level parallelism (doing math independent of the shared memory 
 load) to keep the SM busy while the short load finishes.
 
-\* Stall MIO Throttle:
+* Stall MIO Throttle:
 MIO stands for Memory Input/Output. This stall does not necessarily mean the warp is waiting for data; rather,
 it means it is waiting for hardware resources to become available to simply issue the instruction.
 The Cause: A warp stalls with MIO Throttle when the MIO instruction queue is full. The MIO pipeline on the 
