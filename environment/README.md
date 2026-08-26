@@ -41,7 +41,7 @@ The master setup guide ([`setup.md`](setup.md)) provides reproducible, step-by-s
 
 ## How to Use This Documentation
 
-This documentation serves as a reference for replicating this exact build. If you are cloning this repository to compile the native CUDA kernels, please ensure your local `nvcc` compiler matches or exceeds version `12.9`, as older versions may struggle with the template metaprogramming required by modern CuTe layouts. 
+This documentation serves as a reference for replicating this exact build. If it is cloning this repository to compile the native CUDA kernels, please ensure the local `nvcc` compiler matches or exceeds version `12.9`, as older versions may struggle with the template metaprogramming required by modern CuTe layouts. 
 
 For full installation commands and troubleshooting steps, read the [Detailed Setup Guide](setup.md).
 
