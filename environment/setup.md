@@ -10,7 +10,7 @@ On cmd type:
 1.	Search "Advanced System Settings" → click **Settings** under Performance
 2.	Go to **Advanced** tab → **Change** under Virtual Memory
 3.	Uncheck "Automatically manage" → select **No paging file** → click Set → OK
-4.	**Restart your PC**
+4.	**Restart the PC**
   
 **Disable System Restore** (optional but helps):  
 command on cmd:  
@@ -32,7 +32,7 @@ Then inside diskpart:
 `list disk`  
 select disk 0  
 list volume  
-select volume 2   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;     \# select your C: drive volume number  
+select volume 2   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;     \# select the C: drive volume number  
 shrink desired=900000 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; \# ~900GB for Ubuntu, leaves ~800GB for Windows  
 ______________________________________________________________________________________________________________    
 ### 1.7TB free, a reasonable split is:  
@@ -43,11 +43,11 @@ If it still won't shrink far enough
 The nuclear option that always works: use **GParted** from the Ubuntu live USB itself to resize the partition before installing. Boot into the Ubuntu installer, open GParted (it's included), shrink C: from there, then proceed with installation. GParted bypasses Windows' restrictions entirely.  
   
 To undo "Create a restore point"      
-To undo/delete a restore point you created:    
+To undo/delete a restore point it created:    
 **Option 1: Via System Properties (GUI)**  
 1.	Press **Win + R** → type sysdm.cpl → Enter  
 2.	Go to the **System Protection** tab  
-3.	Click **Configure** next to your C: drive  
+3.	Click **Configure** next to the C: drive  
 4.	Click **Delete** — this removes **all** restore points for that drive  
 5.	Click Apply → OK  
 _______________________________________________________________________________________________________________  
@@ -66,9 +66,9 @@ Then delete all of them:
 At the CMD command line:    
 `vssadmin delete shadows /for=C: /all /quiet`  
 ________________________________________
-**Note:** You can't delete a single specific restore point through built-in Windows tools — it's all or nothing. If you only want to free up space, Option 1 or the vssadmin command is the quickest.  
+**Note:** It can't delete a single specific restore point through built-in Windows tools — it's all or nothing. If it only wants to free up space, Option 1 or the vssadmin command is the quickest.  
   
-After deleting, go back to **Disk Management** and try shrinking C: again — you should be able to reclaim significantly more space.  
+After deleting, go back to **Disk Management** and try shrinking C: again — it should be able to reclaim significantly more space.  
 Please see the list volume below. I select volume 0, but I still cannot shrink the disk of 1400000MB.  
 DISKPART> select disk 0  
 Disk 0 is now the selected disk. 
@@ -146,7 +146,7 @@ ________________________________________________________________________________
 Recommendation: Skip the shrink entirely, boot Ubuntu USB, and erase the whole disk. It's 3 clicks in the installer and you're done.    
   
 shrink querymax is completely safe — it is a read-only query that just tells you the maximum amount you can shrink.  
-It only **reports a number**, it does nothing to your disk.  
+It only **reports a number**, it does nothing to the disk.  
 
 _________________________________________________________________________________________________________________  
 **What each command actually does**  
@@ -162,7 +162,7 @@ select volume 0
 shrink querymax  
 It will just print something like:  
 The maximum number of reclaimable bytes is: XXXXXX MB  
-That number tells us exactly how much space we can work with. Go ahead and run it — nothing will change on your disk.
+That number tells us exactly how much space we can work with. Go ahead and run it — nothing will change on the disk.
 Please see below: DISKPART> select volume 0  
 Volume 0 is the selected volume.  
 DISKPART> shrink querymax  
@@ -416,7 +416,7 @@ Next — Check NVIDIA drivers
 Enter the command into the terminal:    
 `nvidia-smi`  
   
-Should I use Swap = 32 GB instead of 16GB?
+Swap = 32 GB or 16GB:
 For CUDA/AI development, 32GB swap is better. Here's why:  
 Recommendation: 32GB Swap  
 Your Use Case	Recommended Swap  
