@@ -78,7 +78,7 @@ occupancy is only 8% — the single active warp has no peer warps
 to hide behind, so every fixed-latency dependency stalls the 
 scheduler completely.
 Wait Stall dominates because occupancy is 8% — with only 1 warp/scheduler, there are no other warps to 
-switch to. You should clarify:the only cure is more warps to hide it with. Second, Thread Divergence at 
+switch to.  should clarify:the only cure is more warps to hide it with. Second, Thread Divergence at 
 23.61% estimated speedup is significant —  32 active threads but only 22.81 not predicated off means r
 oughly 9 threads per warp are being masked out by predication. 
 This is likely the boundary condition handling at tile edges.
@@ -124,7 +124,7 @@ instructions to that warp.
 How to Fix It:
 a. Reduce the density of shared memory accesses (e.g., by loading data into registers and doing multiple math
 operations before writing back to shared memory).
-b. If using heavy trigonometric or transcendental math, check if you can use faster, less precise compiler 
+b. If using heavy trigonometric or transcendental math, check if it can be faster, less precise compiler 
 flags (like --use_fast_math) if the accuracy requirements allow for it.
 c. Minimize divergent branching in the code.
 Note: --use_fast_math is a compiler flag passed to the NVIDIA CUDA Compiler (nvcc). It instructs the compiler
@@ -187,7 +187,7 @@ impacts the GPU's ability to keep active warps resident on the Streaming Multipr
 -Current State: The blue dot on the far left indicates that the kernel currently uses a minimal number of
 block barriers. At this current value, occupancy sits flat at the ~8% mark that was established in the 
 previous screenshots.
--Hardware Limits: The flat horizontal line shows that you could safely increase the number of block barriers 
+-Hardware Limits: The flat horizontal line shows that it could safely increase the number of block barriers 
 up to 24 without suffering any further loss in occupancy.
 -The Drop-off: Exactly at 24 barriers, the line plummets to 0%. This indicates a hard architectural limit for
 current launch configuration on the RTX 5080. If the code were to demand more than 24 barriers per block, 
