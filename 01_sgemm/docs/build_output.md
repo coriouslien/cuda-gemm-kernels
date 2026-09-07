@@ -1,4 +1,4 @@
-The following is sgemm_2.cu compile output
+**The following is sgemm_2.cu compile output
 
 [ 50%] Building CUDA object CMakeFiles/sgemm_2.dir/sgemm_2.cu.o
 
