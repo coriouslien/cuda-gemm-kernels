@@ -38,3 +38,21 @@ ptxas info : Compile time = 82.525 ms
 
 [100%] Built target sgemm_2 
 
+**This is execution out put shown below:**
+
+build/sgemm_2
+
+M = 5120
+
+N = 5120
+
+K = 4096
+
+C = A^N B^T
+
+Using device 0: NVIDIA GeForce RTX 5080 (SM120, 84 SMs)
+
+CUTE_GEMM: [25129.7]GFlop/s (8.5456)ms 
+
+
+
