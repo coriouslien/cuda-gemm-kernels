@@ -17,15 +17,30 @@ greater than 80.0%, work might need to be shifted from the SM to another unit to
 DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 </pre>
 ___________________________________________________________________________________________________________________________
-<img width="512" height="300" alt="image" src="https://github.com/user-attachments/assets/a32a7ec5-6a45-42e3-978d-11e37f7103fd" />
-
-
+Floating Point Operations Roofline
 <img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/2f68e9ac-7c71-4c15-95c3-447b7fd12e12" />
 
 
 ___________________________________________________________________________________________________________________________
+Floating Point Operations Roofline (Double Precision)
+<img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/abaa9065-06f4-44a2-8026-92ff0ec3e4ec" />
 
 ___________________________________________________________________________________________________________________________
+Floating Point Operations Roofline (Half Precision)
+<img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/58903e90-62b2-4e96-aea2-bf4f02e9bc21" />
+
+___________________________________________________________________________________________________________________________
+Floating Point Operations Roofline (Single Precision)
+<img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/205b27ae-f928-481b-ab64-cb6f9c8bea37" />
+<pre>
+The Empty Floating Point Charts
+The complete absence of data points (dots) on the standard Floating Point Operations rooflines (Single, Double, and Half Precision) gives you a definitive answer about where the math is happening on the silicon.
+
+Even though the kernel is named sgemm (which traditionally stands for Single-precision General Matrix Multiply), the empty single-precision chart means the kernel is not using the standard CUDA cores (the standard FMA floating-point pipelines) to do the heavy lifting. The operations are completely bypassing the traditional FP32/FP16 ALUs.
+</pre>
+___________________________________________________________________________________________________________________________
+Tensor Core Operations Roofline
+<img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/1fdd9963-40dd-4c7d-a286-0fd5ef1d09d4" />
 
 ___________________________________________________________________________________________________________________________
 **Memory Workload Analysis**
