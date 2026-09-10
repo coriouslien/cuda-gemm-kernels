@@ -44,7 +44,50 @@ heavy lifting. The operations are completely bypassing the traditional FP32/FP16
 ___________________________________________________________________________________________________________________________
 Tensor Core Operations Roofline
 <img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/1fdd9963-40dd-4c7d-a286-0fd5ef1d09d4" />
+<pre>
 
+The Tensor Core Operations Chart (The Action)
+The fact that the data points only appear on the Tensor Core Operations Roofline reveals that the matrix multiplication is being 
+executed entirely by the hardware Tensor Cores.
+
+If this is a standard single-precision matrix multiply, the NVIDIA driver or math library (like cuBLAS) has likely automatically 
+accelerated the workload using TF32 (TensorFloat-32). TF32 is a math mode that uses Tensor Cores to process single-precision inputs, 
+delivering massive speedups while maintaining FP32 dynamic range. Nsight Compute appropriately categorizes these TF32 instructions 
+as Tensor Core operations rather than standard single-precision floating-point operations.
+
+Understanding the "Two Dots"
+Nsight Compute utilizes a Hierarchical Roofline Model. The multiple dots represent the kernel's performance measured against different 
+levels of the GPU's memory hierarchy:
+
+The Left Dot (Lower Arithmetic Intensity): This usually represents the performance relative to the L1 Cache / Shared Memory. It has a 
+lower arithmetic intensity (FLOPs/byte) because the kernel reads a massive amount of bytes directly from this fast, local cache.
+
+The Right Dot (Higher Arithmetic Intensity): This usually represents performance relative to Device Memory (DRAM). Because the caches 
+are successfully keeping data close to the SMs (data reuse), the GPU doesn't have to fetch as many bytes all the way from main memory. 
+Less data fetched from DRAM means a higher ratio of FLOPs per byte, pushing the dot further to the right.
+
+Below the Lines: The Performance Gap
+The lines on the chart represent the physical hardware limits of the GPU:
+
+Sloped Lines: Maximum memory bandwidth limits (DRAM, L2, L1).
+
+Horizontal Lines: Maximum theoretical compute limits (the peak OP/s the Tensor Cores can output). Multiple horizontal lines usually 
+represent peak throughput with and without features like structural sparsity.
+
+Because both of the dots sit well below the "roof" (both the sloped and horizontal lines), the kernel is neither strictly compute-bound 
+nor memory-bandwidth-bound.
+
+This indicates that the kernel is leaving performance on the table and is likely latency-bound. The GPU has the theoretical power and 
+bandwidth to go faster, but the Streaming Multiprocessors (SMs) are likely stalling. Common culprits for this include:
+
+Unoptimized Grid/Block Sizing: The UI shows a block size of (128, 1, 1) and a grid of (40, 40, 1). Depending on the matrix dimensions, 
+this might not be saturating the massive number of SMs available.
+
+Un-hidden Memory Latency: The kernel might be waiting for data to arrive from memory before it can feed the Tensor Cores, without 
+enough active warps to swap to while waiting.
+
+Instruction Stalls: Dependencies between instructions or synchronization barriers preventing maximum throughput.
+</pre>
 ___________________________________________________________________________________________________________________________
 **Memory Workload Analysis**
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
