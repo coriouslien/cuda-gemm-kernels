@@ -34,12 +34,12 @@ Floating Point Operations Roofline (Single Precision)
 <img width="1805" height="1058" alt="image" src="https://github.com/user-attachments/assets/205b27ae-f928-481b-ab64-cb6f9c8bea37" />
 <pre>
 The Empty Floating Point Charts
-The complete absence of data points (dots) on the standard Floating Point Operations rooflines (Single, Double, and Half Precision) gives you a 
-definitive answer about where the math is happening on the silicon.
+The complete absence of data points (dots) on the standard Floating Point Operations rooflines (Single, Double, and Half Precision) 
+gives you a definitive answer about where the math is happening on the silicon.
 
-Even though the kernel is named sgemm (which traditionally stands for Single-precision General Matrix Multiply), the empty single-precision 
-chart means the kernel is not using the standard CUDA cores (the standard FMA floating-point pipelines) to do the heavy lifting. The operations 
-are completely bypassing the traditional FP32/FP16 ALUs.
+Even though the kernel is named sgemm (which traditionally stands for Single-precision General Matrix Multiply), the empty 
+single-precision chart means the kernel is not using the standard CUDA cores (the standard FMA floating-point pipelines) to do the 
+heavy lifting. The operations are completely bypassing the traditional FP32/FP16 ALUs.
 </pre>
 ___________________________________________________________________________________________________________________________
 Tensor Core Operations Roofline
