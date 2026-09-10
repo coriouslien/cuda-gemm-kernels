@@ -16,6 +16,14 @@ greater than 80.0%, work might need to be shifted from the SM to another unit to
 -L1/TEX: 43.55%, L2: 63.48% — moderate cache utilization
 DRAM: 11.11% — very low, meaning data is being served mostly from L2, not DRAM
 </pre>
+___________________________________________________________________________________________________________________________
+<img width="512" height="300" alt="image" src="https://github.com/user-attachments/assets/a32a7ec5-6a45-42e3-978d-11e37f7103fd" />
+
+___________________________________________________________________________________________________________________________
+
+___________________________________________________________________________________________________________________________
+
+___________________________________________________________________________________________________________________________
 **Memory Workload Analysis**
 <img width="1826" height="1024" alt="Memory_workload_Analysis" src="https://github.com/user-attachments/assets/cfdac2c1-37a3-47f7-9d5c-a261b5467b77" />
 <pre>
