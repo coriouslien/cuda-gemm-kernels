@@ -1,6 +1,6 @@
 ***This repository explores deep hardware-level profiling and optimization of the standard NVIDIA SGEMM tutorial kernels.***
 
-https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/sgemm_2.cu
+https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/sgemm_sm80.cu
 <pre>
 # sgemm1 — Pipelined HGEMM with CuTe (SM120, RTX 5080)
 
