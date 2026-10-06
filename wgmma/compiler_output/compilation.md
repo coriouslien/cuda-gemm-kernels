@@ -38,6 +38,32 @@ wgmma_sm90.cu
  └─ <thrust/device_vector.h>
      └─ thrust CUDA backend headers
          └─ <cub/util_device.cuh>   ← defines EmptyKernel
+
+CUTLASS's own utility headers can also pull CUB in. Either way, it comes in through headers, not through code you wrote.
+
+We can confirm this it by asking nvcc for the list of every header the file includes:
+
+nvcc -std=c++17 -arch=sm_90a \
+  -I../include \
+  -I../cutlass/include \
+  -I../cutlass/tools/util/include \
+  -M wgmma_sm90.cu | tr ' ' '\n' | grep -v -E '^\\?$' > deps.txt
+
+-M makes nvcc print the dependency list without compiling. You should see cub/util_device.cuh in the output.
+util_device.cub appear in deps.txt
+/usr/local/cuda/bin/../targets/x86_64-linux/include/cub/util_device.cuh
+
+What EmptyKernel is in the cub/util_device.cuh it is essentially:
+template <typename T>
+__global__ void EmptyKernel() {}
+It does nothing. CUB uses it as a probe: at runtime, CUB calls cudaFuncGetAttributes(&attrs, EmptyKernel<void>) and reads attrs.ptxVersion, which tells it which architecture the binary was compiled for. That is how cub::PtxVersion() works, and CUB algorithms use it to choose tuning parameters. Because the header refers to EmptyKernel<void>, the template is instantiated in every translation unit that includes the header. ptxas then compiles it and reports it like any other kernel.
+
+Decoding the namespace cub::CUB_200802_SM_900
+CUB doesn't put its symbols directly in namespace cub. Its CUB_NAMESPACE_BEGIN macro adds an inline namespace that encodes two things:
+
+
 </pre>
 
-==========================================================================================================
+
+
+=======================================================================================
