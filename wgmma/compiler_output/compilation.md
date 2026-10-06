@@ -25,4 +25,19 @@ ptxas info    : Compile time = 53.070 ms
 </pre>
 
 
+<pre>
+A tiny dummy kernel from CUB:
+cub::CUB_200802_SM_900::EmptyKernel<void>
+The program never calls CUB itself. It does include it indirectly, though. Any translation unit (one .cu file plus everything it includes) that pulls in CUB's headers gets this kernel compiled into it.
+
+Where CUB comes from
+
+wgmma_sm90.cu stores its matrices in Thrust containers. In main it creates the host data in thrust::host_vector<TA> h_A and so on, then copies it to the GPU with thrust::device_vector<TA> d_A = h_A. Thrust's GPU backend is built on CUB, so the include chain is roughly:
+
+wgmma_sm90.cu
+ └─ <thrust/device_vector.h>
+     └─ thrust CUDA backend headers
+         └─ <cub/util_device.cuh>   ← defines EmptyKernel
+</pre>
+
 ==========================================================================================================
