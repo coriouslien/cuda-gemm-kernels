@@ -61,6 +61,13 @@ It does nothing. CUB uses it as a probe: at runtime, CUB calls cudaFuncGetAttrib
 Decoding the namespace cub::CUB_200802_SM_900
 CUB doesn't put its symbols directly in namespace cub. Its CUB_NAMESPACE_BEGIN macro adds an inline namespace that encodes two things:
 
+
+## Performance
+| Configuration                   | GFlop/s  | Time (ms) |
+|---------------------------------|----------|-----------|
+| CUTE HGEMM (5120×5120×4096, TN) | 187,086  | 1.148     |
+
+    
 | Folder | Topic |
 |---|---|
 | Part | Meaning |
