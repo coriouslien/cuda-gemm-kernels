@@ -61,6 +61,8 @@ It does nothing. CUB uses it as a probe: at runtime, CUB calls cudaFuncGetAttrib
 Decoding the namespace cub::CUB_200802_SM_900
 CUB doesn't put its symbols directly in namespace cub. Its CUB_NAMESPACE_BEGIN macro adds an inline namespace that encodes two things:
 
+| Folder | Topic |
+|---|---|
 | Part | Meaning |
 | :--- | :--- |
 |200802|The CUB version, encoded as major·100000 + minor·100 + patch, so 2.8.2. This is the CCCL version bundled with your CUDA 12.8 toolkit. It also tells you this build used the toolkit's built-in CCCL, not a separate ~/cccl checkout.|
