@@ -1,3 +1,4 @@
+<pre>
 First build output gemm_nt:
 cmake --build build
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
@@ -21,7 +22,7 @@ ptxas info    : Used 116 registers, used 1 barriers
 ptxas info    : Compile time = 53.070 ms
 [100%] Linking CUDA executable wgmma_sm90
 [100%] Built target wgmma_sm90
-
+</pre>
 
 
 ==========================================================================================================
