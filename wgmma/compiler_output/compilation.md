@@ -67,7 +67,9 @@ CUB doesn't put its symbols directly in namespace cub. Its CUB_NAMESPACE_BEGIN m
 |200802|The CUB version, encoded as major·100000 + minor·100 + patch, so 2.8.2. This is the CCCL<br> version bundled with your CUDA 12.8 toolkit. It also tells you this build used the toolkit's built-in CCCL, not a<br> separate ~/cccl checkout.|
 |SM_900|The architectures this translation unit was compiled for. It comes from __CUDA_ARCH_LIST__, so here<br> it's 900 for sm_90a. If you compiled for sm_120, it would read SM_1200.|
     
-The purpose is to prevent ODR (One Definition Rule) violations. If two libraries in the same program were compiled with different CUB versions or for different architectures, their CUB symbols get different mangled names, so the linker never mixes one library's copy with the other's.
+The purpose is to prevent ODR (One Definition Rule) violations. If two libraries in the same program were
+compiled with different CUB versions or for different architectures, their CUB symbols get different mangled
+names, so the linker never mixes one library's copy with the other's.
 </pre>
 
 
