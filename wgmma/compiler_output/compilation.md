@@ -26,13 +26,33 @@ ptxas info    : Compile time = 53.070 ms
 
 
 <pre>
+The build succeeded, and the resource numbers look healthy: 116 registers, no spills, no stack. But the two
+C7510 warnings are important: ptxas is telling you the WGMMA instructions in both kernels will be serialized,
+meaning each one waits for the previous one to finish. That would make the kernel slower on the H100 for a
+reason unrelated to anything we studied. The good news is that you can diagnose and most likely fix it
+locally, before renting. The output also confirms several things from our discussions, and shows a few new
+ones.
+
+
+|Fragment in the name	                    |Meaning|
+|tuple<C<128>, C<128>, C<64>> (written<br> 
+NS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEE)	    | cta_tiler = (bM, bN, bK)
+tuple<int,int,int> (tupleIJiiiE)	prob_shape: M, N, K are run-time ints
+Swizzle<3,4,3> (SwizzleILi3ELi4ELi3EE)	the 128B swizzle
+SM80_CP_ASYNC_CACHEALWAYS<uint128_t>	the 16-byte cp.async copy atom
+MMA_64x64x16_F16F16F16_SS	the WGMMA atom
+C<8192> in the smem layout	the stage stride: 8192 halves = 16 KB
+    
 A tiny dummy kernel from CUB:
 cub::CUB_200802_SM_900::EmptyKernel<void>
-The program never calls CUB itself. It does include it indirectly, though. Any translation unit (one .cu file plus everything it includes) that pulls in CUB's headers gets this kernel compiled into it.
+The program never calls CUB itself. It does include it indirectly, though. Any translation unit (one .cu file
+plus everything it includes) that pulls in CUB's headers gets this kernel compiled into it.
 
 Where CUB comes from
 
-wgmma_sm90.cu stores its matrices in Thrust containers. In main it creates the host data in thrust::host_vector<TA> h_A and so on, then copies it to the GPU with thrust::device_vector<TA> d_A = h_A. Thrust's GPU backend is built on CUB, so the include chain is roughly:
+wgmma_sm90.cu stores its matrices in Thrust containers. In main it creates the host data in 
+thrust::host_vector<TA> h_A and so on, then copies it to the GPU with thrust::device_vector<TA> d_A = h_A.
+Thrust's GPU backend is built on CUB, so the include chain is roughly:
 
 wgmma_sm90.cu
  └─ <thrust/device_vector.h>
@@ -70,6 +90,7 @@ CUB doesn't put its symbols directly in namespace cub. Its CUB_NAMESPACE_BEGIN m
 The purpose is to prevent ODR (One Definition Rule) violations. If two libraries in the same program were
 compiled with different CUB versions or for different architectures, their CUB symbols get different mangled
 names, so the linker never mixes one library's copy with the other's.
+
 </pre>
 
 
