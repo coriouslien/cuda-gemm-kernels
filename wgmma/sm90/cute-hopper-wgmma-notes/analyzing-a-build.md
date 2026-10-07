@@ -248,11 +248,11 @@ There is no CUB code, so why is CUB here? The tutorial uses thrust::device_vecto
 CUDA backend includes CUB. As I understand it, EmptyKernel is a do-nothing kernel CUB uses to query
 which PTX version a program was compiled for.
 Two useful facts are in its name:
-&middot;CUB_200802 is CUB’s version-tagged namespace: CUB 2.8.2. So this build used the CCCL bundled
+&bull; CUB_200802 is CUB’s version-tagged namespace: CUB 2.8.2. So this build used the CCCL bundled
 with your CUDA toolkit, not a CCCL 3.x clone. This is the version check I mentioned for your CUB
 work. When you start CUB, compile with your CCCL clone’s -I paths and this number should
 change to 3.x.
-&middot; SM_900 records the target architecture in the namespace, so code compiled for different GPUs
+&bull; SM_900 records the target architecture in the namespace, so code compiled for different GPUs
 doesn’t clash.
 </pre>
 6. Your next steps, all local
