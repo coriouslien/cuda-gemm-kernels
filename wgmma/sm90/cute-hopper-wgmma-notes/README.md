@@ -218,16 +218,18 @@ Used 116 registers, used 1 barriers</pre>
 |Registers|116 per thread|matches the earlier prediction of “comfortably above 64”|
 |Barriers|1|one hardware barrier: the single __syncthreads() after the prologue.
 The warpgroup_* operations don’t use these barriers|
-Where 116 registers go, roughly:
-Use
-Registers
-C accumulators: 128 halves, two per register64
-A and B descriptors (one base each)4
-cp.async source and destination addresses, loop
+
+<small><small>Where 116 registers go, roughly:</small></small>
+|Use|Registers|
+|:--|:--------|
+|C accumulators: 128 halves, two per register|64|
+|A and B descriptors (one base each)|4|
+|cp.async source and destination addresses, loop
 counters, stage indices, M/N/K values, alpha/beta, epilogue
-pointersthe remaining ~48
+pointers|the remaining ~48|
+<pre>
 Both kernels use the same 116, which makes sense: they differ only in strides and layouts, not in the
-amount of state.
+amount of state.</pre>
 What this means for occupancy on the H100 (a prediction to confirm in NCU’s Occupancy section):
 Resource
 Per CTA
