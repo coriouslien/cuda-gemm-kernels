@@ -86,4 +86,26 @@ ptxas info
 : Compile time = 53.436 ms
 [100%] Linking CUDA executable wgmma_sm90
 [100%] Built target wgmma_sm90
+
+The build was successful, and the resource numbers look healthy: 116 registers, no spills, no
+stack. But the two C7510 warnings are important: ptxas indicates that the WGMMA instructions in both kernels
+will be serialized, meaning each instruction must wait for the previous one to finish. This would slow down
+the kernels on the H100 for reasons unrelated to what I have studied. The good news is that I am able to
+diagnose and likely resolve the issue locally on my RTX 5080 Blackwell SM120 system before renting a
+datacenter system.
+The compilation output also confirms several key details.
+All details below are based on the compilation output. Wherever I am interpreting the data rather than reading
+it directly, I will explicitly say so.
+
+1. What the build produced: three device functions
+|Line | Function |What it is|
+| :--- | :---: | ---: |
+|6–10 | cub::CUB_200802_SM_900::EmptyKer<br>
+nel<void>              |a tiny dummy kernel from CUB (section 5)|
+|11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
+16–20gemm_device<...> , second
+instantiationthe NT GEMM ( gemm_nt )
+There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
+from transA and transB . Both template instantiations are reachable, so both get compiled, even though
+a given run uses only one (NT by default).
 </pre>
