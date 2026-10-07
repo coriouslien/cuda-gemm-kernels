@@ -388,8 +388,7 @@ template arguments:
 </pre>
 |Clue|Line 11|Line 16|
 |:---|:------|:------|
-|A stride ( dA )|
-tuple<int, C<1>> = (ldA, 1): K is contiguous, so K-major (T)|tuple<C<1>, int> = (1, ldA):M is contiguous,<br> so M-major (N)|
+|A stride ( dA )| tuple<int, C<1>> = (ldA, 1): K is contiguous, so K-major (T)|tuple<C<1>, int> = (1, ldA):M is contiguous,<br> so M-major (N)|
 |MMA atom majors|MMA_64x64x16_F16F16F16_SS<Major 0, Major 0, ...>, where 0 = Major::K|<Major 1, Major 1, ...>,where 1 = Major::MN|
 |smem layout shape|((8,16),(64,1),(1,3))|((64,2),(8,8),(1,3))|
 
