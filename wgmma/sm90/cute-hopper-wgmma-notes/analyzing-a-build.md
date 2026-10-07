@@ -264,6 +264,6 @@ doesn’t clash.
 iteration, DEPBAR with count 0, and no instructions from warpgroup_fence_operand.
   
 Bring back the output of step 2 (the grep CALL result especially) and we’ll confirm the cause together.
-
-## Rebuild steps (from the CUTLASS root) ## 
 </pre>
+## Rebuild steps (from the CUTLASS root) ## 
+
