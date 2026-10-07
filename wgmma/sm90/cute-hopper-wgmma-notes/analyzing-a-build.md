@@ -423,43 +423,23 @@ left over from tile_to_shape .
 &bull; The atom is GMMA::Layout_MN_SW128_Atom<half_t> = 64×8. tile_to_shape lays atoms out column-
 major: first the 2 in M (stride 512), then the 8 in K (stride 1024).
 </pre>
+<pre>
 The NT copy, TV layout (128,8):(8,1) . Thread t’s first element is at index 8t in a 128×8 column-major
 tile, and each thread copies 8 contiguous halves, which is 16 B. That is exactly one cp.async.ca … 16 .
 Threads 0–15 cover one 128-element M column, threads 16–31 the next column, and so on, so the global
 loads are coalesced along M, the contiguous direction in NT. Per K-tile, A is 128×64 = 8192 halves ÷ (128
 threads × 8 halves) = 8 cp.async per thread for A, and 8 for B.
-3. The resource lines
-Line
-(C7510) … wgmma serialized … function call
-Meaning
-ptxas found a real call inside the kernel (not inlined)
-somewhere between WGMMA instructions. A WGMMA
-batch can’t stay in flight across a function boundary, so
-ptxas inserts waits around every wgmma. That eliminates
-the asynchronous overlap. On an H100 this would cost real
-performance. Here it is a compile-time warning only,
-because you can’t run this binary.
-1076 bytes gmem
-Global/constant data emitted by the compilation unit.
-Assert message strings ( __FILE__ , the expression text,
-the function name) are a typical source, which fits the
-assert hypothesis. That’s an inference, not proof: a
-printf would also produce strings and a call to
-vprintf . The CALL check below settles it.
-EmptyKernel in cub::CUB_200802_SM_900
-A dummy kernel CUB defines in every translation unit that
-includes it. It comes in through CUTLASS headers. 200802
-means CUB 2.8.2, the CCCL that ships with CUDA 12.8.
-SM_900 is the architecture tag in the inline namespace. It
-is harmless and costs 4 registers.
-Used 116 registers
-The accumulator is 128 halves per thread = 64 32-bit
-registers (2 halves packed per register). The other ~52
-hold global addresses, smem descriptors, loop counters
-and copy predicates. On an H100 that allows 4 CTAs per
-SM by registers, but the ~96 KB of shared memory limits it
-to 2.
-used 1 barriersBarrier 0, used by __syncthreads() .
-0 stack, 0 spillsGood: nothing went to local memory.
-Compile time ~54 ms per instantiationptxas time only. The template instantiation in the front end
-is what makes the overall build slow.
+</pre>
+The resource lines
+|Line|Meaning|
+|:---|:------|
+|(C7510) … wgmma serialized … function call|ptxas found a real call inside the kernel (not inlined)<br>somewhere between WGMMA instructions. A WGMMA<br>batch can’t stay in flight across a function boundary,<br> so ptxas inserts waits around every wgmma. That eliminates<br>the asynchronous overlap. On an H100 this would cost real<br>performance. Here it is a compile-time warning only,<br>because you can’t run this binary.|
+|1076 bytes gmem|Global/constant data emitted by the compilation unit.<br>Assert message strings ( __FILE__ , the expression text,<br>the function name) are a typical source, which fits the<br>assert hypothesis. That’s an inference, not proof: a<br>printf would also produce strings and a call to<br>vprintf . The CALL check below settles it.|
+|EmptyKernel in cub::CUB_200802_SM_900|A dummy kernel CUB defines in every translation unit that<br>includes it. It comes in through CUTLASS headers. 200802<br>means CUB 2.8.2, the CCCL that ships with CUDA 12.8.<br>SM_900 is the architecture tag in the inline namespace. It<br>is harmless and costs 4 registers.|
+|Used 116 registers|The accumulator is 128 halves per thread = 64 32-bit<br>registers (2 halves packed per register). The other ~52<br>hold global addresses, smem descriptors, loop counters<br>and copy predicates. On an H100 that allows 4 CTAs per<br>SM by registers, but the ~96 KB of shared memory limits it
+to 2.|
+|used 1 barriers|Barrier 0, used by __syncthreads() .|
+|0 stack, 0 spills|Good: nothing went to local memory.|
+|Compile time ~54 ms per instantiation|ptxas time only. The template instantiation in the front end<br>is what makes the overall build slow.|
+
+
