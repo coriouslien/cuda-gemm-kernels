@@ -216,7 +216,7 @@ Used 116 registers, used 1 barriers</pre>
 |Stack frame|0 bytes|no per-thread local-memory arrays|
 |Spills|0|every value fits in registers, no slow local-memory traffic
 |Registers|116 per thread|matches the earlier prediction of “comfortably above 64”|
-|Barriers|1|one hardware barrier: the single __syncthreads() after the prologue.
+|Barriers|1|one hardware barrier: the single __syncthreads() after the prologue.<br>
 The warpgroup_* operations don’t use these barriers|
 
 <small><small>Where 116 registers go, roughly:</small></small>
