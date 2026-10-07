@@ -100,8 +100,7 @@ it directly, I will explicitly say so.
 1. What the build produced: three device functions
 |Line | Function |What it is|
 | :--- | :--- | :--- |
-|6–10 | cub::CUB_200802_SM_900::EmptyKer<br>
-nel<void>              |a tiny dummy kernel from CUB (section 5)|
+|6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>              |a tiny dummy kernel from CUB (section 5)|
 |11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
 |16–20 | gemm_device<...> , second instantiationthe | NT GEMM ( gemm_nt ) |
   
