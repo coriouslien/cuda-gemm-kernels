@@ -191,9 +191,9 @@ cuobjdump -ptx build/wgmma_sm90 | grep -n -E "call|__assertfail" | head
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 </pre>
-
+<pre>
 <small><small><small>If the C7510 lines disappear, the hypothesis is confirmed. If they don’t, step 2 above shows what 
-the call is, and we can look at it together.</small></small></small>
+the call is, and we can look at it together.</small></small></small></pre>
 What to compare in SASS, before and after. In the serialized build, I’d expect a wait
 ( WARPGROUP.DEPBAR or similar) between individual HGMMA instructions. In the fixed build, the 16 HGMMA s
 should be issued back to back, with one wait after the batch:
