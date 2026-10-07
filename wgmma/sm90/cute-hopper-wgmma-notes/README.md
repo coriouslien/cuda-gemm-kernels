@@ -1,5 +1,6 @@
+
+<small>**Compiled examples/cute/tutorial/wgmma_sm90.cu**</small>
 <pre>
-Compiled examples/cute/tutorial/wgmma_sm90.cu
 cmake --build build
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
 ptxas info
