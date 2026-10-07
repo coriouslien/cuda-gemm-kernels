@@ -206,3 +206,41 @@ tensor-core utilization, and you could easily misattribute it to the pipeline de
 issue we discussed). Fixing the build first means the H100 numbers reflect the kernel itself.
 </pre>
 
+<small>**4. Resource usage: lines 13–14 and 18–19**</small>
+<pre>
+0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 116 registers, used 1 barriers</pre>
+
+|Item|Value|Meaning|
+|:---|:----|:------|
+|Stack frame|0 bytes|no per-thread local-memory arrays|
+|Spills|0|every value fits in registers, no slow local-memory traffic
+|Registers|116 per thread|matches the earlier prediction of “comfortably above 64”|
+|Barriers|1|one hardware barrier: the single __syncthreads() after the prologue.
+The warpgroup_* operations don’t use these barriers|
+Where 116 registers go, roughly:
+Use
+Registers
+C accumulators: 128 halves, two per register64
+A and B descriptors (one base each)4
+cp.async source and destination addresses, loop
+counters, stage indices, M/N/K values, alpha/beta, epilogue
+pointersthe remaining ~48
+Both kernels use the same 116, which makes sense: they differ only in strides and layouts, not in the
+amount of state.
+What this means for occupancy on the H100 (a prediction to confirm in NCU’s Occupancy section):
+Resource
+Per CTA
+Limit per SM
+CTAs that fit
+Registers116, allocated as 120 per
+thread (rounded to a
+multiple of 8, as I
+understand the allocation
+rule) × 128 threads =
+15,36065,5364
+Shared memory96 KB + ~1 KB reserved~228 KB2
+Threads1282,04816
+So shared memory is the limit: 2 CTAs per SM, 8 warps out of 64, which is 12.5% theoretical
+occupancy. That’s normal for a GEMM with large tiles; the tiles provide the parallelism, not warp count. In
+NCU, look for “Block Limit Shared Mem = 2” and “Block Limit Registers = 4.”
