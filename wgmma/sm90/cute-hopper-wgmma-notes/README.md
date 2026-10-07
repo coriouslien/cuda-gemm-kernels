@@ -157,3 +157,45 @@ The TN kernel’s layout decodes to shape ((8, 16), (64, 1), (1, 3)) with stride
 the K-major atom (8 rows × 64 contiguous K elements), 16 copies down M, one across K. That’s
 consistent with Layout_K_SW128_Atom .
 </pre>
+### 3. The C7510 warnings: the important part ###
+<pre>
+ptxas info : (C7510) Potential Performance Loss: wgmma.mma_async instructions are serialized
+due to wgmma pipeline crossing function boundary at a function call in the function 'gemm_device<...>'
+  
+What it means. ptxas (the PTX-to-SASS assembler) found a real function call inside the region where
+WGMMAs are in flight, between warpgroup_arrive() and warpgroup_wait<0>() . It can’t track asynchronous
+WGMMA state across a call, so it plays safe and serializes the WGMMAs: each of the 16 per stage
+effectively waits for the previous one to complete before the next is issued. The tensor core then can’t
+overlap them.
+  
+What the call probably is (a hypothesis to check). The kernel’s own code has no visible function
+calls; everything in CuTe is meant to be inlined. The most likely source is a device-side assert . In device
+code, an active assert compiles to a call to a CUDA runtime function ( __assertfail ), and its message
+strings are stored in global memory. Two clues in your output fit this:
+   - Line 5: 1076 bytes gmem . The module holds about 1 KB of global data. Assert message strings and
+     file names are a typical source.
+   - cmake --build build , with no sign of a Release configuration. If CMAKE_BUILD_TYPE isn’t set, NDEBUG
+     isn’t defined, so every assert in CuTe and CUTLASS stays active in device code.
+</pre>
+How to confirm, locally:
+# 1. Which build type did CMake use?
+grep CMAKE_BUILD_TYPE build/CMakeCache.txt
+# 2. Is there a real call in the SASS?
+cuobjdump -sass build/wgmma_sm90 | grep -n "CALL"
+# 3. If the call target is visible in the PTX:
+cuobjdump -ptx build/wgmma_sm90 | grep -n -E "call|__assertfail" | head
+How to fix it. Rebuild in Release, which defines NDEBUG and removes the asserts:
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+If the C7510 lines disappear, the hypothesis is confirmed. If they don’t, step 2 above shows what the call
+is, and we can look at it together.
+What to compare in SASS, before and after. In the serialized build, I’d expect a wait
+( WARPGROUP.DEPBAR or similar) between individual HGMMA instructions. In the fixed build, the 16 HGMMA s
+should be issued back to back, with one wait after the batch:
+cuobjdump -sass build/wgmma_sm90
+| grep -E "HGMMA|WARPGROUP" | head -40
+cuobjdump -sass build-release/wgmma_sm90 | grep -E "HGMMA|WARPGROUP" | head -40
+Why this matters before renting: if you profile the serialized build on the H100, NCU would show low
+tensor-core utilization, and you could easily misattribute it to the pipeline design (the cp_async_wait<0>()
+issue we discussed). Fixing the build first means the H100 numbers reflect the kernel itself.
+
