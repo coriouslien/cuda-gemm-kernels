@@ -207,7 +207,7 @@ tensor-core utilization, and you could easily misattribute it to the pipeline de
 issue we discussed). Fixing the build first means the H100 numbers reflect the kernel itself.
 </pre>
 
-<small>**4. Resource usage: lines 13–14 and 18–19**</small>
+### 4. Resource usage: lines 13–14 and 18–19 ###
 <pre>
 0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
 Used 116 registers, used 1 barriers</pre>
@@ -239,3 +239,26 @@ So shared memory is the limit: 2 CTAs per SM, 8 warps out of 64, which is 12.5% 
 occupancy. That’s normal for a GEMM with large tiles; the tiles provide the parallelism, not warp count. In
 NCU, look for “Block Limit Shared Mem = 2” and “Block Limit Registers = 4.”
 </pre>
+
+### 5. The CUB kernel: lines 6–10 ###
+<pre>
+Compiling entry function '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' for 'sm_90a'
+
+There is no CUB code, so why is CUB here? The tutorial uses thrust::device_vector, and Thrust’s
+CUDA backend includes CUB. As I understand it, EmptyKernel is a do-nothing kernel CUB uses to query
+which PTX version a program was compiled for.
+Two useful facts are in its name:
+&middot;CUB_200802 is CUB’s version-tagged namespace: CUB 2.8.2. So this build used the CCCL bundled
+with your CUDA toolkit, not a CCCL 3.x clone. This is the version check I mentioned for your CUB
+work. When you start CUB, compile with your CCCL clone’s -I paths and this number should
+change to 3.x.
+&middot; SM_900 records the target architecture in the namespace, so code compiled for different GPUs
+doesn’t clash.
+</pre>
+6. Your next steps, all local
+1. Demangle one kernel name with cu++filt and match it to the code.
+2. Check the build type, then rebuild in Release and see whether C7510 disappears.
+3. Compare the HGMMA sequences in SASS between the two builds.
+4. With the Release build, check the earlier predictions: 16 HGMMA and 16 LDGSTS per main-loop
+iteration, DEPBAR with count 0, and no instructions from warpgroup_fence_operand .
+Bring back the output of step 2 (the grep CALL result especially) and we’ll confirm the cause together.
