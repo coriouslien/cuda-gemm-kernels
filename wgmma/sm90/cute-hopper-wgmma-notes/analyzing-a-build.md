@@ -1,5 +1,5 @@
 
-<small>**Compiled examples/cute/tutorial/wgmma_sm90.cu**</small>
+## Compiled examples/cute/tutorial/wgmma_sm90.cu ##
 <pre>
 cmake --build build
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
@@ -255,10 +255,15 @@ change to 3.x.
 &bull; SM_900 records the target architecture in the namespace, so code compiled for different GPUs
 doesn’t clash.
 </pre>
-6. Your next steps, all local
-1. Demangle one kernel name with cu++filt and match it to the code.
-2. Check the build type, then rebuild in Release and see whether C7510 disappears.
-3. Compare the HGMMA sequences in SASS between the two builds.
-4. With the Release build, check the earlier predictions: 16 HGMMA and 16 LDGSTS per main-loop
-iteration, DEPBAR with count 0, and no instructions from warpgroup_fence_operand .
+### 6. Your next steps, all local ###
+<pre>
+  1. Demangle one kernel name with cu++filt and match it to the code.
+  2. Check the build type, then rebuild in Release and see whether C7510 disappears.
+  3. Compare the HGMMA sequences in SASS between the two builds.
+  4. With the Release build, check the earlier predictions: 16 HGMMA and 16 LDGSTS per main-loop
+iteration, DEPBAR with count 0, and no instructions from warpgroup_fence_operand.
+  
 Bring back the output of step 2 (the grep CALL result especially) and we’ll confirm the cause together.
+
+## Rebuild steps (from the CUTLASS root) ## 
+</pre>
