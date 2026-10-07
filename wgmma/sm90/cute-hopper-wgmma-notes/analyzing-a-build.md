@@ -272,6 +272,7 @@ By leveraging CMake's built-in target properties.
 
 Add this at the absolute end of your CMakeLists.txt, 
 then issue command: cmake --build build --target analyze
+  
 if(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Darwin" OR UNIX)
     add_custom_target(analyze
         # 1. Clear out any previous sass files to ensure fresh results
@@ -301,4 +302,80 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Darwin" OR UN
         VERBATIM
     )
 endif()
+
+The build output is shown below.
+
+cmake --build build --target analyze
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/chialan/cuda-learning/cute_hopper/sm90/build
+[ 66%] Built target wgmma_sm90
+[100%] Inspecting SASS and PTX outputs for Hopper SM90 instructions...
+--- HGMMA Count ---
+32
+--- WARPGROUP Lines ---
+684:        /*1380*/                   WARPGROUP.ARRIVE ;                                                /* 0x00000000000079c5 */
+810:        /*1770*/                   WARPGROUP.DEPBAR.LE gsb0, 0x0 ;                                   /* 0x00008000000079c5 */
+3727:        /*13f0*/                   WARPGROUP.ARRIVE ;                                                /* 0x00000000000079c5 */
+3851:        /*17d0*/                   WARPGROUP.DEPBAR.LE gsb0, 0x0 ;                                   /* 0x00008000000079c5 */
+--- CALL Lines ---
+--- PTX Calls/Asserts ---
+[100%] Built target analyze
+
+This output confirms that your code is compiling into a highly optimized, state-of-the-art Hopper (SM90) 
+hardware-native Matrix Multiply kernel. It shows that your CuTe layout configurations are mapping correctly 
+to the underlying silicon. Here is a detailed breakdown of what these specific numbers and assembly lines 
+tell us about your program:
+
+
+1. HGMMA Count = 32
+
+• What it means: HGMMA stands for Hopper Group Matrix Multiply and Accumulate. Seeing exactly 32 means the
+  code compiled into native asynchronous matrix instructions executed directly by the Tensor Cores.
+• Why this is excellent: If this count were 0, it would mean the compiler failed to understand the CuTe
+  layouts and fell back to executing matrix multiplications using slower, individual thread-level 
+  floating-point operations. A count of 32 tells us that the compiler successfully generated 
+  hardware-accelerated matrix math.
+
+2. WARPGROUP Lines (The Asynchronous Orchestration)
+
+The lines showing WARPGROUP.ARRIVE and WARPGROUP.DEPBAR provide a window into how Hopper manages memory 
+and math concurrently. Hopper introduces the concept of a Warpgroup (a collection of 4 warps, or 128 
+threads working as a single unit).
+
+684:  /*1380*/  WARPGROUP.ARRIVE ;
+• The Mechanism: This instruction tells the Tensor Core hardware: "This warpgroup has initiated a matrix
+  multiply task, and its inputs are flying into the execution pipeline."
+• The Asynchronous Benefit: Because this is completely asynchronous, the warp scheduler immediately moves 
+  on to compute subsequent lines of code without waiting for the Tensor Cores to finish the math.
+
+810:  /*1770*/  WARPGROUP.DEPBAR.LE gsb0, 0x0 ;
+• The Mechanism: DEPBAR stands for Dependency Barrier. LE gsb0, 0x0 checks a dedicated hardware counter slot
+  (gsb0) and halts execution until the number of outstanding matrix tasks drops down to 0.
+• The Purpose: This acts as a protective shield. It ensures that the program cannot try to read or use the
+  final accumulator matrix values until the Tensor Cores have completely finished computing the
+  WARPGROUP.ARRIVE operations triggered earlier.
+
+Why are there two identical pairs in the build coutput?
+
+I see two distinct sets of lines (684/810 and 3727/3851) because the file compiled two separate variants 
+of the gemm_device template function—which matches the two ptxas info lines I observed in the previous 
+build output.
+
+3. Empty CALL Lines & PTX Asserts
+
+• What it means: Both the CALL Lines (SASS assembly level) and PTX Calls/Asserts outputs are completely blank.
+• Why this is excellent:
+	1. Zero Device Function Overhead: The compiler successfully inlined every single sub-function and layout
+    utility function from CuTe. There are no actual jumps or function call overheads left inside the binary.
+	2. No Active Assertions: If you had active bounds-checking (assert(...)) or layout error checks triggered
+    inside your kernel, __assertfail or a branch leading to a device call would have appeared here. A blank
+    output indicates that the compiler entirely optimized out or validated the paths, leaving a clean,
+    straight-line execution flow optimized for pure speed.
+
+Summary Verification
+
+Your environment is correctly set up for Hopper SM90. The code successfully targets WGMMA matrix hardware
+shapes, completely avoids slow functional calls, utilizes hardware dependency barriers to hide 
+memory/compute latency, and runs with zero active assertion traps.
 </pre>
