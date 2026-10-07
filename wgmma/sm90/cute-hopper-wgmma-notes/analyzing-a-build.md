@@ -269,7 +269,7 @@ Bring back the output of step 2 (the grep CALL result especially) and we’ll co
 <pre>
 By leveraging CMake's built-in target properties.
   
-</pre>
+
 Add this at the absolute end of your CMakeLists.txt, 
 then issue command: cmake --build build --target analyze
 if(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Darwin" OR UNIX)
@@ -301,4 +301,4 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Darwin" OR UN
         VERBATIM
     )
 endif()
-
+</pre>
