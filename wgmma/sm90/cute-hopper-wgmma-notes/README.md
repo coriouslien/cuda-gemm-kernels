@@ -223,9 +223,7 @@ Used 116 registers, used 1 barriers</pre>
 |:--|:--------|
 |C accumulators: 128 halves, two per register|64|
 |A and B descriptors (one base each)|4|
-|cp.async source and destination addresses, loop
-counters, stage indices, M/N/K values, alpha/beta, epilogue
-pointers|the remaining ~48|
+|cp.async source and destination addresses, loop counters, stage indices, M/N/K values,<br>alpha/beta, epilogue pointers|the remaining ~48|
 <pre>
 Both kernels use the same 116, which makes sense: they differ only in strides and layouts, not in the
 amount of state.</pre>
