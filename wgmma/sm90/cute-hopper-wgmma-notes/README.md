@@ -125,30 +125,35 @@ Every static value is part of the type, which is exactly what “static” means
 |SM80_CP_ASYNC_CACHEALWAYS<uint128_t>|the 16-byte cp.async copy atom|
 |MMA_64x64x16_F16F16F16_SS|the WGMMA atom|
 |C<8192> in the smem layoutthe| stage stride: 8192 halves = 16 KB|
+<br><br>
+### Telling the two kernels apart. ### The A stride and the Major value differ:
 
+||First kernel (lines 11–15)|Second kernel (lines 16–20)|
+|:-|:--------------------------|:-----------------------|
+|A stride type|tuple<int, C<1>> : (ldA, 1)|tuple<C<1>, int> : (1, ldA)|
+|Contiguous along|K|M|
+|Major template value|0|1|
+|So it is| gemm_tn (K-major)|gemm_nt (MN-major)|
 
-###Telling the two kernels apart.### The A stride and the Major value differ:
-First kernel (lines 11–15)
-Second kernel (lines 16–20)
-A stride typetuple<int, C<1>> : (ldA, 1)tuple<C<1>, int> : (1, ldA)
-Contiguous alongKM
-Major template value01
-So it isgemm_tn (K-major)gemm_nt (MN-major)
+<pre>
 That also tells you how CuTe numbers the enum: GMMA::Major::K = 0 and GMMA::Major::MN = 1 .
 The shared-memory layout of the NT kernel, decoded from the second name (my reading of the
 mangling substitutions; cu++filt will show it in plain form):
+
 Shape: ((64, 2), (8, 8), (1, 3))
 Stride: ((1, 512), (64, 1024), (0, 8192))
-Mode
-Inside one atom
-Across atoms
-M64 elements, stride 1 (contiguous)2 atoms, stride 512 (one 1 KB atom)
-K8 elements, stride 648 atoms, stride 1024 (two atoms)
-stage
-3 stages, stride 8192 (16 KB)
+</pre>
+|Mode|Inside one atom|Across atoms|
+|:---|:--------------|:-----------|
+|M|64 elements, stride 1 (contiguous)|2 atoms, stride 512 (one 1 KB atom)|
+|K|8 elements, stride 64|8 atoms, stride 1024 (two atoms)|
+|stage||3 stages, stride 8192 (16 KB)|
+
+<pre>
 This confirms what I described as my understanding last time: tile_to_shape places the atom copies in
 column-major order, M copies first (stride 512), then K (stride 1024), then stages (stride 8192). Your
 compiler output is the verification.
 The TN kernel’s layout decodes to shape ((8, 16), (64, 1), (1, 3)) with stride ((64, 512), (1, 0), (0, 8192)):
 the K-major atom (8 rows × 64 contiguous K elements), 16 copies down M, one across K. That’s
 consistent with Layout_K_SW128_Atom .
+</pre>
