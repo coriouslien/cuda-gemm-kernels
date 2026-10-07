@@ -104,8 +104,52 @@ it directly, I will explicitly say so.
 |6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>|a tiny dummy kernel from CUB (section 5)|
 |11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
 |16–20 | gemm_device<...> , second instantiationthe | NT GEMM ( gemm_nt ) |
-  
+
+<pre>
 There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
 from transA and transB . Both template instantiations are reachable, so both get compiled, even though
 a given run uses only one (NT by default).
+</pre>
+### 2. Reading the mangled names: your configuration is inside them
+The long names are C++ mangled template names. CUDA ships a demangler:
+echo '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' | cu++filt
+void cub::CUB_200802_SM_900::EmptyKernel<void>()
 
+echo '<paste one long _Z11gemm_device... name>' | cu++filt
+Even without demangling, you can spot the configuration we discussed. Every static value is part of the
+type, which is exactly what “static” means in CuTe:
+Fragment in the name
+Meaning
+tuple<C<128>, C<128>, C<64>> (written
+cta_tiler = (bM, bN, bK)
+NS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEE )
+tuple<int,int,int> ( tupleIJiiiE )prob_shape : M, N, K are run-time int s
+Swizzle<3,4,3> ( SwizzleILi3ELi4ELi3EE )the 128B swizzle
+SM80_CP_ASYNC_CACHEALWAYS<uint128_t>the 16-byte cp.async copy atom
+MMA_64x64x16_F16F16F16_SSthe WGMMA atom
+C<8192> in the smem layoutthe stage stride: 8192 halves = 16 KB
+Telling the two kernels apart. The A stride and the Major value differ:
+First kernel (lines 11–15)
+Second kernel (lines 16–20)
+A stride typetuple<int, C<1>> : (ldA, 1)tuple<C<1>, int> : (1, ldA)
+Contiguous alongKM
+Major template value01
+So it isgemm_tn (K-major)gemm_nt (MN-major)
+That also tells you how CuTe numbers the enum: GMMA::Major::K = 0 and GMMA::Major::MN = 1 .
+The shared-memory layout of the NT kernel, decoded from the second name (my reading of the
+mangling substitutions; cu++filt will show it in plain form):
+Shape: ((64, 2), (8, 8), (1, 3))
+Stride: ((1, 512), (64, 1024), (0, 8192))
+Mode
+Inside one atom
+Across atoms
+M64 elements, stride 1 (contiguous)2 atoms, stride 512 (one 1 KB atom)
+K8 elements, stride 648 atoms, stride 1024 (two atoms)
+stage
+3 stages, stride 8192 (16 KB)
+This confirms what I described as my understanding last time: tile_to_shape places the atom copies in
+column-major order, M copies first (stride 512), then K (stride 1024), then stages (stride 8192). Your
+compiler output is the verification.
+The TN kernel’s layout decodes to shape ((8, 16), (64, 1), (1, 3)) with stride ((64, 512), (1, 0), (0, 8192)):
+the K-major atom (8 rows × 64 contiguous K elements), 16 copies down M, one across K. That’s
+consistent with Layout_K_SW128_Atom .
