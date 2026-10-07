@@ -178,12 +178,14 @@ strings are stored in global memory. Two clues in your output fit this:
      isn’t defined, so every assert in CuTe and CUTLASS stays active in device code.
 </pre>
 <small>**How to confirm, locally:**</small>
+<pre>
 1. Which build type did CMake use?
 grep CMAKE_BUILD_TYPE build/CMakeCache.txt
 2. Is there a real call in the SASS?
 cuobjdump -sass build/wgmma_sm90 | grep -n "CALL"
 3. If the call target is visible in the PTX:
 cuobjdump -ptx build/wgmma_sm90 | grep -n -E "call|__assertfail" | head
+</pre>
 How to fix it. Rebuild in Release, which defines NDEBUG and removes the asserts:
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
