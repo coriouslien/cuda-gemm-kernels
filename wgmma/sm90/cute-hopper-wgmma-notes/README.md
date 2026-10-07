@@ -121,12 +121,13 @@ Every static value is part of the type, which is exactly what “static” means
 |:-------------------|:------|
 |tuple<C<128>, C<128>, C<64>> (written NS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEE ) |cta_tiler = (bM, bN, bK)|
 |tuple<int,int,int> ( tupleIJiiiE )|prob_shape : M, N, K are run-time int s|
+|Swizzle<3,4,3> ( SwizzleILi3ELi4ELi3EE )|the 128B swizzle|
+|SM80_CP_ASYNC_CACHEALWAYS<uint128_t>|the 16-byte cp.async copy atom|
+|MMA_64x64x16_F16F16F16_SS|the WGMMA atom|
+|C<8192> in the smem layoutthe| stage stride: 8192 halves = 16 KB|
 
-Swizzle<3,4,3> ( SwizzleILi3ELi4ELi3EE )the 128B swizzle
-SM80_CP_ASYNC_CACHEALWAYS<uint128_t>the 16-byte cp.async copy atom
-MMA_64x64x16_F16F16F16_SSthe WGMMA atom
-C<8192> in the smem layoutthe stage stride: 8192 halves = 16 KB
-Telling the two kernels apart. The A stride and the Major value differ:
+
+###Telling the two kernels apart.### The A stride and the Major value differ:
 First kernel (lines 11–15)
 Second kernel (lines 16–20)
 A stride typetuple<int, C<1>> : (ldA, 1)tuple<C<1>, int> : (1, ldA)
