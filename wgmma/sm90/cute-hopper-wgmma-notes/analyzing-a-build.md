@@ -442,4 +442,20 @@ to 2.|
 |0 stack, 0 spills|Good: nothing went to local memory.|
 |Compile time ~54 ms per instantiation|ptxas time only. The template instantiation in the front end<br>is what makes the overall build slow.|
 
-
+Next step: apply the fix and confirm it
+<pre>
+# a) Confirm the current build type. Empty or Debug means asserts are compiled in.
+grep -E "CMAKE_BUILD_TYPE|CMAKE_CUDA_ARCHITECTURES|CMAKE_CUDA_FLAGS" build/CMakeCache.txt
+# b) Find the call that causes C7510 in the current binary
+cuobjdump -sass build/wgmma_sm90 | grep -n -B2 -A2 "CALL"
+cuobjdump -ptx build/wgmma_sm90 | grep -E "call|__assertfail|vprintf" | head
+# c) Configure a separate Release directory (adds -O3 -DNDEBUG) and build it
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release 2>&1 | tee release.log
+# d) Compare instruction counts between the two binaries
+for d in build build-release; do
+echo "== $d"
+cuobjdump -sass $d/wgmma_sm90 | grep -oE "HGMMA[.0-9A-Zx]*|WARPGROUP[.A-Z]*|CALL[.A-Z]*|LDGSTS[.0-9A-
+Z]*|LDGDEPBAR|DEPBAR[.A-Z]*" | sort | uniq -c
+done
+</pre>
