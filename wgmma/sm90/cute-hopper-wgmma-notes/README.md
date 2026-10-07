@@ -194,7 +194,7 @@ cmake --build build-release
 If the C7510 lines disappear, the hypothesis is confirmed. If they don’t, step 2 above shows what 
 the call is, and we can look at it together.</pre>
 <pre>
-<small>**What to compare in SASS, before and after.**</small>small> In the serialized build, I’d expect a wait
+<small>**What to compare in SASS, before and after.**</small> In the serialized build, I’d expect a wait
 ( WARPGROUP.DEPBAR or similar) between individual HGMMA instructions. In the fixed build, the 16 HGMMA s
 should be issued back to back, with one wait after the batch:
   cuobjdump -sass build/wgmma_sm90 | grep -E "HGMMA|WARPGROUP" | head -40
