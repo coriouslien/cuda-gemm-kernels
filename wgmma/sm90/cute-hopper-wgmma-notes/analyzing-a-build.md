@@ -391,57 +391,38 @@ template arguments:
 |A stride ( dA )| tuple<int, C<1>> = (ldA, 1): K is contiguous, so K-major (T)|tuple<C<1>, int> = (1, ldA):M is contiguous,<br> so M-major (N)|
 |MMA atom majors|MMA_64x64x16_F16F16F16_SS<Major 0, Major 0, ...>, where 0 = Major::K|<Major 1, Major 1, ...>,where 1 = Major::MN|
 |smem layout shape|((8,16),(64,1),(1,3))|((64,2),(8,8),(1,3))|
-
-Tip: run c++filt on these names yourself ( echo '_Z11gemm…' | c++filt ). It is faster and more reliable than
+<pre>
+Tip: run c++filt on these names ( echo '_Z11gemm…' | c++filt ). It is faster and more reliable than
 decoding by hand.
-2. The NT kernel’s template arguments, decoded
+	
+The NT kernel’s template arguments, decoded
 gemm_device<ProblemShape, CtaTiler, TA, AStride, ASmemLayout, TiledCopyA, TB, BStride, BSmemLayout,
 TiledCopyB, TC, CStride, TiledMma, Alpha, Beta>
-Parameter
-ProblemShape
-Value in the NT instantiation
-tuple<int,int,int>
-Meaning
-M, N, K are runtime values (5120,
-5120, 4096)
-CtaTilertuple<C<128>,C<128>,C<64>>
-TA / TB / TChalf_t
-dA, dBtuple<C<1>, int>
-bM, bN, bK are compile-time constants
-M-major A, N-major B. The 1 is static,
-so the compiler knows the inner stride
-is contiguous and can vectorize.
-dC
-sA / sB layout
-tuple<C<1>, int>C is M-major (column-major)
-ComposedLayout<Swizzle<3,4,3>,See the breakdown below
-smem_ptr_flag_bits<16>,
-Layout<((64,2),(8,8),(1,3)) :
-((1,512),(64,1024),(0,8192))>>
-TiledCopyA/B
-Copy_Atom<SM80_CP_ASYNC_CACHEALW
-AYS<uint128_t>, half_t> , TV layout
-See below
-(128,8):(8,1) , tiler (128,8)
-TiledMMA
-Alpha, Beta
-MMA_Atom<MMA_64x64x16_F16F16F16_A single warpgroup. There is no
-SS<MN,MN,One,One>> , atom layout
-(1,1,1):(0,0,0)2×2 warpgroup tiling, so the one
-warpgroup covers the 128×128 tile by
-iterating 2×2 in M and N and 4× in K:
-16 WGMMAs per K-tile.
-half_t
+</pre>
+|Parameter|Value in the NT instantiation|Meaning|
+|:--------|:----------------------------|:------|
+|ProblemShape |tuple<int,int,int>|M, N, K are runtime values (5120,5120, 4096)|
+|CtaTiler|tuple<C<128>,C<128>,C<64>>|bM, bN, bK are compile-time constants|
+|TA / TB / TC|half_t||
+|dA, dB|tuple<C<1>, int>|M-major A, N-major B. The 1 is static,so the compiler knows the inner stride<br>is contiguous and can vectorize.|
+|dC|tuple<C<1>, int>|C is M-major (column-major)|
+|sA / sB layout|ComposedLayout<Swizzle<3,4,3>,smem_ptr_flag_bits<16>,Layout<((64,2),(8,8),(1,3)) :<br>((1,512),(64,1024),(0,8192))>>|See the breakdown below| 
+|TiledCopyA/B|Copy_Atom<SM80_CP_ASYNC_CACHEALW AYS<uint128_t>, half_t> , TV layout (128,8):(8,1) , <br>tiler (128,8)| See below|
+|TiledMMA|MMA_Atom<MMA_64x64x16_F16F16F16_SS<MN,MN,One,One>>,<br> atom layout (1,1,1):(0,0,0)| A single warpgroup. There is no 2×2 warpgroup tiling, so the one warpgroup covers the 128×128 tile by<br>iterating 2×2 in M and N and 4× in K: 16 WGMMAs per K-tile.|
+|Alpha, Beta|half_t||
+<pre>
 The NT smem layout, ((64,2),(8,8),(1,3)) : ((1,512),(64,1024),(0,8192)) , in units of half
 elements:
-M mode (64,2):(1,512) . The inner 64 are contiguous: 64 halves = 128 B, one swizzle row. The
+&bull; M mode (64,2):(1,512) . The inner 64 are contiguous: 64 halves = 128 B, one swizzle row. The
 outer 2 jump 512 halves = 1 KB, which is the next atom in M. 64·2 = 128 = bM.
-K mode (8,8):(64,1024) . The inner 8 step 64 halves (128 B) to the next K column inside an atom,
+&bull; K mode (8,8):(64,1024) . The inner 8 step 64 halves (128 B) to the next K column inside an atom,
 so one atom is 64 (M) × 8 (K) = 512 halves = 1 KB = one full Swizzle<3,4,3> period. The outer 8
 step 1024 halves to the next atom group. 8·8 = 64 = bK.
-Stage mode (1,3):(0,8192) . 3 stages, 8192 halves = 16 KB apart. The 1:0 is a size-1 placeholder
-left over from tile_to_shape .The atom is GMMA::Layout_MN_SW128_Atom<half_t> = 64×8. tile_to_shape lays atoms out column-
+&bull; Stage mode (1,3):(0,8192) . 3 stages, 8192 halves = 16 KB apart. The 1:0 is a size-1 placeholder
+left over from tile_to_shape .
+&bull; The atom is GMMA::Layout_MN_SW128_Atom<half_t> = 64×8. tile_to_shape lays atoms out column-
 major: first the 2 in M (stride 512), then the 8 in K (stride 1024).
+</pre>
 The NT copy, TV layout (128,8):(8,1) . Thread t’s first element is at index 8t in a 128×8 column-major
 tile, and each thread copies 8 contiguous halves, which is 16 B. That is exactly one cp.async.ca … 16 .
 Threads 0–15 cover one 128-element M column, threads 16–31 the next column, and so on, so the global
