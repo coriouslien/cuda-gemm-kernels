@@ -97,7 +97,7 @@ The compilation output also confirms several key details.
 All details below are based on the compilation output. Wherever I am interpreting the data rather than reading
 it directly, I will explicitly say so.
 </pre>
-1. What the build produced: three device functions
+1. What the build produced: three device functions<br>
 |Line | Function |What it is|
 | :--- | :--- | :--- |
 |6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>              |a tiny dummy kernel from CUB (section 5)|
