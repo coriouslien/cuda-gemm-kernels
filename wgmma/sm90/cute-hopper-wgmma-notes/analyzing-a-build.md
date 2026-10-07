@@ -404,11 +404,11 @@ TiledCopyB, TC, CStride, TiledMma, Alpha, Beta>
 |ProblemShape |tuple<int,int,int>|M, N, K are runtime values (5120,5120, 4096)|
 |CtaTiler|tuple<C<128>,C<128>,C<64>>|bM, bN, bK are compile-time constants|
 |TA / TB / TC|half_t||
-|dA, dB|tuple<C<1>, int>|M-major A, N-major B. The 1 is static,so the compiler knows the inner stride<br>is contiguous and can vectorize.|
+|dA, dB|tuple<C<1>, int>|M-major A, N-major B. The 1 is static,<br>so the compiler knows the inner stride is contiguous and can vectorize.|
 |dC|tuple<C<1>, int>|C is M-major (column-major)|
-|sA / sB layout|ComposedLayout<Swizzle<3,4,3>,smem_ptr_flag_bits<16>,Layout<((64,2),(8,8),(1,3)) :<br>((1,512),(64,1024),(0,8192))>>|See the breakdown below| 
-|TiledCopyA/B|Copy_Atom<SM80_CP_ASYNC_CACHEALW AYS<uint128_t>, half_t> , TV layout (128,8):(8,1) , <br>tiler (128,8)| See below|
-|TiledMMA|MMA_Atom<MMA_64x64x16_F16F16F16_SS<MN,MN,One,One>>,<br> atom layout (1,1,1):(0,0,0)| A single warpgroup. There is no 2×2 warpgroup tiling, so the one warpgroup covers the 128×128 tile by<br>iterating 2×2 in M and N and 4× in K: 16 WGMMAs per K-tile.|
+|sA / sB layout|ComposedLayout<Swizzle<3,4,3>,smem_ptr_flag_bits<16>,<br>Layout<((64,2),(8,8),(1,3)) :((1,512),(64,1024),(0,8192))>>|See the breakdown below| 
+|TiledCopyA/B|Copy_Atom<SM80_CP_ASYNC_CACHEALW AYS<uint128_t>, half_t> ,<br> TV layout (128,8):(8,1) , tiler (128,8)| See below|
+|TiledMMA|MMA_Atom<MMA_64x64x16_F16F16F16_SS<MN,MN,One,One>>,<br> atom layout (1,1,1):(0,0,0)| A single warpgroup. There is no 2×2 warpgroup tiling,<br> so the one warpgroup covers the 128×128 tile by iterating 2×2 in M and N and 4× in K: 16 WGMMAs per K-tile.|
 |Alpha, Beta|half_t||
 <pre>
 The NT smem layout, ((64,2),(8,8),(1,3)) : ((1,512),(64,1024),(0,8192)) , in units of half
