@@ -99,12 +99,12 @@ it directly, I will explicitly say so.
 
 1. What the build produced: three device functions
 |Line | Function |What it is|
-| :--- | :---: | ---: |
+| :--- | :--- | :--- |
 |6–10 | cub::CUB_200802_SM_900::EmptyKer<br>
 nel<void>              |a tiny dummy kernel from CUB (section 5)|
 |11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
-16–20gemm_device<...> , second
-instantiationthe NT GEMM ( gemm_nt )
+|16–20 | gemm_device<...> , second instantiationthe | NT GEMM ( gemm_nt ) |
+  
 There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
 from transA and transB . Both template instantiations are reachable, so both get compiled, even though
 a given run uses only one (NT by default).
