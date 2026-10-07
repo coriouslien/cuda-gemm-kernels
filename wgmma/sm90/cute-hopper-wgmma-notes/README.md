@@ -228,18 +228,13 @@ Used 116 registers, used 1 barriers</pre>
 Both kernels use the same 116, which makes sense: they differ only in strides and layouts, not in the
 amount of state.</pre>
 What this means for occupancy on the H100 (a prediction to confirm in NCU’s Occupancy section):
-Resource
-Per CTA
-Limit per SM
-CTAs that fit
-Registers116, allocated as 120 per
-thread (rounded to a
-multiple of 8, as I
-understand the allocation
-rule) × 128 threads =
-15,36065,5364
-Shared memory96 KB + ~1 KB reserved~228 KB2
-Threads1282,04816
+|Resource|Per CTA|Limit per SM|CTAs that fit|
+|:-------|:------|:-----------|:------------|
+|Registers|116, allocated as 120 per thread (rounded to a multiple of 8, as I understand the allocation<br>rule) × 128 threads = 15,360|65,536|4|
+|Shared memory|96 KB + ~1 KB reserved|~228 KB|2|
+|Threads|128|2,048|16|
+<pre>
 So shared memory is the limit: 2 CTAs per SM, 8 warps out of 64, which is 12.5% theoretical
 occupancy. That’s normal for a GEMM with large tiles; the tiles provide the parallelism, not warp count. In
 NCU, look for “Block Limit Shared Mem = 2” and “Block Limit Registers = 4.”
+</pre>
