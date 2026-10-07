@@ -111,19 +111,17 @@ from transA and transB . Both template instantiations are reachable, so both get
 a given run uses only one (NT by default).
 </pre>
 ### 2. Reading the mangled names: your configuration is inside them
+<pre>
 The long names are C++ mangled template names. CUDA ships a demangler:
 echo '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' | cu++filt
-void cub::CUB_200802_SM_900::EmptyKernel<void>()
+output: void cub::CUB_200802_SM_900::EmptyKernel<void>()
+Every static value is part of the type, which is exactly what “static” means in CuTe:
+</pre>
+|Fragment in the name|Meaning|
+|:-------------------|:------|
+|tuple<C<128>, C<128>, C<64>> (written NS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEE ) |cta_tiler = (bM, bN, bK)|
+|tuple<int,int,int> ( tupleIJiiiE )|prob_shape : M, N, K are run-time int s|
 
-echo '<paste one long _Z11gemm_device... name>' | cu++filt
-Even without demangling, you can spot the configuration we discussed. Every static value is part of the
-type, which is exactly what “static” means in CuTe:
-Fragment in the name
-Meaning
-tuple<C<128>, C<128>, C<64>> (written
-cta_tiler = (bM, bN, bK)
-NS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEE )
-tuple<int,int,int> ( tupleIJiiiE )prob_shape : M, N, K are run-time int s
 Swizzle<3,4,3> ( SwizzleILi3ELi4ELi3EE )the 128B swizzle
 SM80_CP_ASYNC_CACHEALWAYS<uint128_t>the 16-byte cp.async copy atom
 MMA_64x64x16_F16F16F16_SSthe WGMMA atom
