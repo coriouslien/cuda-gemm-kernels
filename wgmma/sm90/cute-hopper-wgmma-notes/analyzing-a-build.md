@@ -379,25 +379,20 @@ The environment is correctly set up for Hopper SM90. The code successfully targe
 shapes, completely avoids slow functional calls, utilizes hardware dependency barriers to hide 
 memory/compute latency, and runs with zero active assertion traps.
 </pre>
-
-<small><small>Which kernel is gemm_nt? It’s the second one (line 16), not the
-first</small></small>
+<pre>
+Which kernel is gemm_nt? It’s the second one (line 16), not the
+first.
 I ran both mangled names through c++filt , which converts them back into readable C++ types. The
 order in the log is TN first (line 11), NT second (line 16). You can tell from three places in the
 template arguments:
-Clue
-A stride ( dA )
-Line 11
-Line 16
-tuple<int, C<1>> = (ldA, 1): K istuple<C<1>, int> = (1, ldA): M is
-contiguous, so K-major (T)contiguous, so M-major (N)Clue
-MMA atom majors
-smem layout shape
-Line 11Line 16
-MMA_64x64x16_F16F16F16_SS<Major<Major 1, Major 1, …> , where 1 =
-0, Major 0, …> , where 0 =
-Major::KMajor::MN
-((8,16),(64,1),(1,3))((64,2),(8,8),(1,3))
+</pre>
+|Clue|Line 11|Line 16|
+|:---|:------|:------|
+|A stride ( dA )|
+tuple<int, C<1>> = (ldA, 1): K is contiguous, so K-major (T)|tuple<C<1>, int> = (1, ldA):M is contiguous,<br> so M-major (N)|
+|MMA atom majors|MMA_64x64x16_F16F16F16_SS<Major 0, Major 0, ...>, where 0 = Major::K|<Major 1, Major 1, ...>,where 1 = Major::MN|
+|smem layout shape|((8,16),(64,1),(1,3))|((64,2),(8,8),(1,3))|
+
 Tip: run c++filt on these names yourself ( echo '_Z11gemm…' | c++filt ). It is faster and more reliable than
 decoding by hand.
 2. The NT kernel’s template arguments, decoded
