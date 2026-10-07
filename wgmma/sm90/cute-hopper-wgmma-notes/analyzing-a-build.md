@@ -368,14 +368,123 @@ build output.
 • Why this is excellent:
 	1. Zero Device Function Overhead: The compiler successfully inlined every single sub-function and layout
     utility function from CuTe. There are no actual jumps or function call overheads left inside the binary.
-	2. No Active Assertions: If you had active bounds-checking (assert(...)) or layout error checks triggered
-    inside your kernel, __assertfail or a branch leading to a device call would have appeared here. A blank
+	2. No Active Assertions: If I had active bounds-checking (assert(...)) or layout error checks triggered
+    inside the kernel, __assertfail or a branch leading to a device call would have appeared here. A blank
     output indicates that the compiler entirely optimized out or validated the paths, leaving a clean,
     straight-line execution flow optimized for pure speed.
 
 Summary Verification
 
-Your environment is correctly set up for Hopper SM90. The code successfully targets WGMMA matrix hardware
+The environment is correctly set up for Hopper SM90. The code successfully targets WGMMA matrix hardware
 shapes, completely avoids slow functional calls, utilizes hardware dependency barriers to hide 
 memory/compute latency, and runs with zero active assertion traps.
 </pre>
+
+<small><small>Which kernel is gemm_nt? It’s the second one (line 16), not the
+first</small></small>
+I ran both mangled names through c++filt , which converts them back into readable C++ types. The
+order in the log is TN first (line 11), NT second (line 16). You can tell from three places in the
+template arguments:
+Clue
+A stride ( dA )
+Line 11
+Line 16
+tuple<int, C<1>> = (ldA, 1): K istuple<C<1>, int> = (1, ldA): M is
+contiguous, so K-major (T)contiguous, so M-major (N)Clue
+MMA atom majors
+smem layout shape
+Line 11Line 16
+MMA_64x64x16_F16F16F16_SS<Major<Major 1, Major 1, …> , where 1 =
+0, Major 0, …> , where 0 =
+Major::KMajor::MN
+((8,16),(64,1),(1,3))((64,2),(8,8),(1,3))
+Tip: run c++filt on these names yourself ( echo '_Z11gemm…' | c++filt ). It is faster and more reliable than
+decoding by hand.
+2. The NT kernel’s template arguments, decoded
+gemm_device<ProblemShape, CtaTiler, TA, AStride, ASmemLayout, TiledCopyA, TB, BStride, BSmemLayout,
+TiledCopyB, TC, CStride, TiledMma, Alpha, Beta>
+Parameter
+ProblemShape
+Value in the NT instantiation
+tuple<int,int,int>
+Meaning
+M, N, K are runtime values (5120,
+5120, 4096)
+CtaTilertuple<C<128>,C<128>,C<64>>
+TA / TB / TChalf_t
+dA, dBtuple<C<1>, int>
+bM, bN, bK are compile-time constants
+M-major A, N-major B. The 1 is static,
+so the compiler knows the inner stride
+is contiguous and can vectorize.
+dC
+sA / sB layout
+tuple<C<1>, int>C is M-major (column-major)
+ComposedLayout<Swizzle<3,4,3>,See the breakdown below
+smem_ptr_flag_bits<16>,
+Layout<((64,2),(8,8),(1,3)) :
+((1,512),(64,1024),(0,8192))>>
+TiledCopyA/B
+Copy_Atom<SM80_CP_ASYNC_CACHEALW
+AYS<uint128_t>, half_t> , TV layout
+See below
+(128,8):(8,1) , tiler (128,8)
+TiledMMA
+Alpha, Beta
+MMA_Atom<MMA_64x64x16_F16F16F16_A single warpgroup. There is no
+SS<MN,MN,One,One>> , atom layout
+(1,1,1):(0,0,0)2×2 warpgroup tiling, so the one
+warpgroup covers the 128×128 tile by
+iterating 2×2 in M and N and 4× in K:
+16 WGMMAs per K-tile.
+half_t
+The NT smem layout, ((64,2),(8,8),(1,3)) : ((1,512),(64,1024),(0,8192)) , in units of half
+elements:
+M mode (64,2):(1,512) . The inner 64 are contiguous: 64 halves = 128 B, one swizzle row. The
+outer 2 jump 512 halves = 1 KB, which is the next atom in M. 64·2 = 128 = bM.
+K mode (8,8):(64,1024) . The inner 8 step 64 halves (128 B) to the next K column inside an atom,
+so one atom is 64 (M) × 8 (K) = 512 halves = 1 KB = one full Swizzle<3,4,3> period. The outer 8
+step 1024 halves to the next atom group. 8·8 = 64 = bK.
+Stage mode (1,3):(0,8192) . 3 stages, 8192 halves = 16 KB apart. The 1:0 is a size-1 placeholder
+left over from tile_to_shape .The atom is GMMA::Layout_MN_SW128_Atom<half_t> = 64×8. tile_to_shape lays atoms out column-
+major: first the 2 in M (stride 512), then the 8 in K (stride 1024).
+The NT copy, TV layout (128,8):(8,1) . Thread t’s first element is at index 8t in a 128×8 column-major
+tile, and each thread copies 8 contiguous halves, which is 16 B. That is exactly one cp.async.ca … 16 .
+Threads 0–15 cover one 128-element M column, threads 16–31 the next column, and so on, so the global
+loads are coalesced along M, the contiguous direction in NT. Per K-tile, A is 128×64 = 8192 halves ÷ (128
+threads × 8 halves) = 8 cp.async per thread for A, and 8 for B.
+3. The resource lines
+Line
+(C7510) … wgmma serialized … function call
+Meaning
+ptxas found a real call inside the kernel (not inlined)
+somewhere between WGMMA instructions. A WGMMA
+batch can’t stay in flight across a function boundary, so
+ptxas inserts waits around every wgmma. That eliminates
+the asynchronous overlap. On an H100 this would cost real
+performance. Here it is a compile-time warning only,
+because you can’t run this binary.
+1076 bytes gmem
+Global/constant data emitted by the compilation unit.
+Assert message strings ( __FILE__ , the expression text,
+the function name) are a typical source, which fits the
+assert hypothesis. That’s an inference, not proof: a
+printf would also produce strings and a call to
+vprintf . The CALL check below settles it.
+EmptyKernel in cub::CUB_200802_SM_900
+A dummy kernel CUB defines in every translation unit that
+includes it. It comes in through CUTLASS headers. 200802
+means CUB 2.8.2, the CCCL that ships with CUDA 12.8.
+SM_900 is the architecture tag in the inline namespace. It
+is harmless and costs 4 registers.
+Used 116 registers
+The accumulator is 128 halves per thread = 64 32-bit
+registers (2 halves packed per register). The other ~52
+hold global addresses, smem descriptors, loop counters
+and copy predicates. On an H100 that allows 4 CTAs per
+SM by registers, but the ~96 KB of shared memory limits it
+to 2.
+used 1 barriersBarrier 0, used by __syncthreads() .
+0 stack, 0 spillsGood: nothing went to local memory.
+Compile time ~54 ms per instantiationptxas time only. The template instantiation in the front end
+is what makes the overall build slow.
