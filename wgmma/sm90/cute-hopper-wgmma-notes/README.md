@@ -97,10 +97,11 @@ The compilation output also confirms several key details.
 All details below are based on the compilation output. Wherever I am interpreting the data rather than reading
 it directly, I will explicitly say so.
 </pre>
-1. What the build produced: three device functions<br>
+
+### 1. What the build produced: three device functions<br>
 |Line | Function |What it is|
 | :--- | :--- | :--- |
-|6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>              |a tiny dummy kernel from CUB (section 5)|
+|6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>|a tiny dummy kernel from CUB (section 5)|
 |11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
 |16–20 | gemm_device<...> , second instantiationthe | NT GEMM ( gemm_nt ) |
   
