@@ -265,5 +265,40 @@ iteration, DEPBAR with count 0, and no instructions from warpgroup_fence_operand
   
 Bring back the output of step 2 (the grep CALL result especially) and we’ll confirm the cause together.
 </pre>
-## Rebuild steps (from the CUTLASS root) ## 
+## Rebuild steps ## 
+<pre>
+By leveraging CMake's built-in target properties.
+  
+</pre>
+Add this at the absolute end of your CMakeLists.txt, 
+then issue command: cmake --build build --target analyze
+if(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Darwin" OR UNIX)
+    add_custom_target(analyze
+        # 1. Clear out any previous sass files to ensure fresh results
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${CMAKE_CURRENT_BINARY_DIR}/wgmma_release.sass"
+        
+        # 2. Extract assembly using the exact location of the target binary
+        COMMAND cuobjdump -sass $<TARGET_FILE:wgmma_sm90> > "${CMAKE_CURRENT_BINARY_DIR}/wgmma_release.sass"
+        
+        # 3. Print analysis metrics safely
+        COMMAND echo "--- HGMMA Count ---"
+        COMMAND grep -c "HGMMA" "${CMAKE_CURRENT_BINARY_DIR}/wgmma_release.sass" || true
+        
+        # 4. Print Warpgroup context
+        COMMAND echo "--- WARPGROUP Lines ---"
+        COMMAND grep -n "WARPGROUP" "${CMAKE_CURRENT_BINARY_DIR}/wgmma_release.sass" | head -n 10 || true
+        
+        # 5. Print Calls
+        COMMAND echo "--- CALL Lines ---"
+        COMMAND grep -n "CALL" "${CMAKE_CURRENT_BINARY_DIR}/wgmma_release.sass" | head -n 10 || true
+        
+        # 6. Extract PTX calls and checks
+        COMMAND echo "--- PTX Calls/Asserts ---"
+        COMMAND cuobjdump -ptx $<TARGET_FILE:wgmma_sm90> | grep -E "call|__assertfail" | head -n 10 || true
+        
+        DEPENDS wgmma_sm90
+        COMMENT "Inspecting SASS and PTX outputs for Hopper SM90 instructions..."
+        VERBATIM
+    )
+endif()
 
