@@ -186,9 +186,12 @@ cuobjdump -sass build/wgmma_sm90 | grep -n "CALL"
 3. If the call target is visible in the PTX:
 cuobjdump -ptx build/wgmma_sm90 | grep -n -E "call|__assertfail" | head
 </pre>
-How to fix it. Rebuild in Release, which defines NDEBUG and removes the asserts:
+<small>**How to fix it. Rebuild in Release, which defines NDEBUG and removes the asserts:**</small>
+<pre>
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
+</pre>
+
 If the C7510 lines disappear, the hypothesis is confirmed. If they don’t, step 2 above shows what the call
 is, and we can look at it together.
 What to compare in SASS, before and after. In the serialized build, I’d expect a wait
