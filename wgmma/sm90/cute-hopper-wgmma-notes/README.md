@@ -96,7 +96,7 @@ datacenter system.
 The compilation output also confirms several key details.
 All details below are based on the compilation output. Wherever I am interpreting the data rather than reading
 it directly, I will explicitly say so.
-
+</pre>
 1. What the build produced: three device functions
 |Line | Function |What it is|
 | :--- | :--- | :--- |
@@ -107,4 +107,4 @@ it directly, I will explicitly say so.
 There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
 from transA and transB . Both template instantiations are reachable, so both get compiled, even though
 a given run uses only one (NT by default).
-</pre>
+
