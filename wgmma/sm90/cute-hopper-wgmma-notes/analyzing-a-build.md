@@ -132,7 +132,32 @@ EmptyKernel<void>) and reads attrs.ptxVersion , which tells it which architectur
 for. That is how cub::PtxVersion() works, and CUB algorithms use it to choose tuning parameters.
 Because the header refers to EmptyKernel<void> , the template is instantiated in every translation unit
 that includes the header. ptxas then compiles it and reports it like any other kernel.
-	
+
+Decoding the namespace cub::CUB_200802_SM_900
+CUB doesn’t put its symbols directly in namespace cub . Its CUB_NAMESPACE_BEGIN macro adds an inline
+namespace that encodes two things:
+</pre>
+|Part|Meaning|
+|:---|-------|
+|200802|The CUB version, encoded as major·100000 + minor·100 +<br>patch, so 2.8.2. This is the CCCL version bundled with<br>your CUDA 12.8 toolkit. It also tells you this build used the<br>toolkit’s built-in CCCL, not a separate ~/cccl checkout.|
+|SM_900|The architectures this translation unit was compiled for. It<br>comes from __CUDA_ARCH_LIST__ , so here it’s 900 for<br>sm_90a . If you compiled for sm_120 , it would read<br>SM_1200.|
+<pre>
+The purpose is to prevent ODR (One Definition Rule) violations. If two libraries in the same program were
+compiled with different CUB versions or for different architectures, their CUB symbols get different
+mangled names, so the linker never mixes one library’s copy with the other’s.
+
+Does it matter for the GEMM?
+No:
+It uses 4 registers, 0 bytes of stack and has no body.
+Nothing launches it unless CUB code runs PtxVersion() . The tutorial’s device_vector copies are
+plain cudaMemcpy calls.
+It has no effect on gemm_device ’s registers, the C7510 warning, or the SASS you’re about to
+compare.
+We can ignore lines 6–10 when analyzing the GEMM. We’ll see the same lines in almost any build that
+includes Thrust or CUB, including the CUB programs I write next.
+One study note: EmptyKernel and the versioned namespace are internal implementation details, not an
+API to learn. When you start CUB, focus on the public interfaces: cub::BlockReduce , cub::BlockScan ,
+cub::DeviceReduce , and so on.
 </pre>
 <pre>
 There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
