@@ -2,7 +2,7 @@
 ## Compiled examples/cute/tutorial/wgmma_sm90.cu ##
 <pre>
 The following was built on an RTX 5080 Blackwell SM120 system, not a datacenter system.
-Building gemm_nt.
+
 	
 cmake --build build
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
