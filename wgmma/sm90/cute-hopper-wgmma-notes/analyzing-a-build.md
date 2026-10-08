@@ -860,13 +860,71 @@ in the instruction stream.
 The low word holds start_address >> 4 . The compiler builds each descriptor by adding a constant to a
 base descriptor (UR8 or UR6: one is A’s base and the other B’s; this snippet doesn’t show which). Each
 unit of 1 in the constant is 16 bytes.
-TN constants: +0x2, +0x4, +0x6, +0x202, +0x204, +0x206
-		
+TN constants: +0x2, +0x4, +0x6, +0x202, +0x204, +0x206	
 </pre>
 
 |Constant|Bytes|Meaning|
+|:-------|:----|:------|
+|0x2/0x4/0x6| 32/64/96 B|k-block 1 / 2 / 3. In K-major, one k-<br>block is 16 halves = 32 B along the<br>row.|
+|0x200|8192 B|Second 64-row atom tile: 64 rows ×<br>128 B. In the layout, m = 64 is 8 outer<br>groups × 512 halves = 4096 halves =<br>8192 B. ✓|
+|0x202 … 0x206|8192 + 32k|Second tile, k-blocks 1–3|
+
+<pre>
+NT constants: +0x40, +0x100, +0x140, +0x200, +0x240, +0x300, +0x340	
+</pre>
+|Constant|Bytes|Meaning|
+|:-------|:----|:------|
+|0x40 |1024 B| Second 64-element tile in M (or N).<br>Layout M stride 512 halves = 1024 B.✓|
+|0x100/0x200/0x300| 4096/8192/12288 B|k-block 1 / 2 / 3. k = 16 means 2 outer<br>K groups × 1024 halves = 2048<br>halves = 4096 B. ✓|
+|0x140/0x240/0x340| k-block offset + 1024| Second tile combined with k-blocks 1–3|
+
+<pre>
+So every stride we read off the mangled template types, (64,512) and (1,0) for TN, (1,512) and
+(64,1024) for NT, shows up as an immediate constant in the machine code. The layout algebra you’ve
+been learning is computed entirely at compile time, and what remains in SASS is just additions of
+constants. CuTe is designed around exactly this.
+In the TN kernel, A and B use the same constants because their smem layouts are identical. Both are
+128×64 K-major tiles.
+6. .tnspA.tnspB shows the operand major-ness
+The NT kernel’s HGMMAs carry .tnspA.tnspB (“transpose A / transpose B”). These are the PTX wgmma imm-
+trans-a / imm-trans-b operands, which CuTe sets from GMMA::Major::MN . The TN kernel ( Major::K ) has
+neither flag. You can even see it in the encoding: the NT HGMMA’s first word starts with 0x60e0… and the
+TN one with 0x00e0… , so the 0x60 is the two transpose bits. This matches the Major 1, Major 1 vs Major
+0, Major 0 we decoded from the kernel names.
+
+	7. Same accumulators, same serpentine cycle
+The NT window uses the same four accumulator blocks, R24, R40, R56 and R72. It starts at a different
+point in the cycle (R72 → R40 → R24 → R56 → …) because the window opened partway through a K-tile,
+but it’s the same 4-step cycle as TN. Both kernels have the identical 2×2 accumulator tiling and
+serpentine order. Only the operand layouts differ.
+8. The last line: UISETP.NE.AND UP0, UPT, UR4, 0x3, UPT
+This sets uniform predicate UP0 to true when UR4 != 3 . At the end of the HGMMA block, that pattern
+usually feeds a loop branch, such as @UP0 BRA (a pipeline index or counter compared to a bound). I can’t
+confirm what UR4 is from this window alone. Note that UP0 is reused here: inside the HGMMAs it served
+as the scale-d operand, and from this point it holds a new value. To see what consumes it:
+	
+cuobjdump -sass build/wgmma_sm90 | grep -n -A8 "UISETP.NE.AND UP0, UPT, UR4, 0x3"
+Summary
+</pre>
+|Finding|Confirms|
+|:------|:-------|
+|ARRIVE + DEPBAR around every HGMMA, in both kernels|C7510 serialization, caused by the assert calls|
+|High word 0x4000004x : B128, base_offset 0| Swizzle<3,4,3> , the hard-coded base_offset_ |
+|SBO 1024 B (TN)/2048 B (NT) | The smem layout strides decoded from the mangled names|
+|Low-word constants 0x2/0x4/0x6/0x200 (TN),<br>0x40/0x100/0x200/0x300 (NT)|k-block and atom-tile offsets, matching byte for byte|
+|.tnspA.tnspB only in NT| GMMA::Major::MN vs Major::K |
+|4 accumulator blocks of 16 registers, serpentine order |make_fragment_C (32,2,2), cute::gemm traversal|
+
+<pre>
+Next, build Release. The descriptor arithmetic should look the same, but the per-HGMMA ARRIVE / DEPBAR
+pairs should disappear:
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release 2>&1 | tee release.log
+cuobjdump -sass build-release/wgmma_sm90 | grep -E "HGMMA|WARPGROUP" | head -40
+</pre>
 <pre>
   cuobjdump -sass build-release/wgmma_sm90 | grep -E "HGMMA|WARPGROUP" | head -40
+
 
 Why this matters before renting: if you profile the serialized build on the H100, NCU would show low
 tensor-core utilization, and you could easily misattribute it to the pipeline design (the cp_async_wait<0>()
