@@ -115,7 +115,7 @@ h_A . Thrust’s GPU backend is built on CUB, so the include chain is roughly:
 wgmma_sm90.cu
 └─ <thrust/device_vector.h>
   └─ thrust CUDA backend headers
-    └─ \<cub/util_device.cuh\>  ← defines EmptyKernel
+    └─ &lt;cub/util_device.cuh&gt;  ← defines EmptyKernel
 CUTLASS’s own utility headers can also pull CUB in. Either way, it comes in through headers, not through
 code you wrote.	
 
