@@ -42,11 +42,6 @@ target_compile_options(wgmma_sm90 PRIVATE
     >
 )
 
-target_compile_definitions(wgmma_sm90 PRIVATE
-    CUTLASS_ARCH_MMA_SM90_SUPPORTED
-)
-
-
 set_source_files_properties(wgmma_sm90.cu
     PROPERTIES COMPILE_OPTIONS
     "-Xptxas=-v;-Xptxas=-warn-spills"
