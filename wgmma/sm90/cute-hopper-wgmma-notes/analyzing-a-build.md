@@ -105,7 +105,35 @@ it directly, I will explicitly say so.
 |6–10 | cub::CUB_200802_SM_900::EmptyKernel<void>|a tiny dummy kernel from CUB (section 5)|
 |11–15 | gemm_device<...> , first instantiation | the TN GEMM ( gemm_tn ) |
 |16–20 | gemm_device<...> , second instantiationthe | NT GEMM ( gemm_nt ) |
+<pre>
+Where CUB comes from:
+wgmma_sm90.cu stores its matrices in Thrust containers. In main it creates the host data in
+thrust::host_vector<TA> h_A and so on, then copies it to the GPU with thrust::device_vector<TA> d_A =
+h_A . Thrust’s GPU backend is built on CUB, so the include chain is roughly:
+wgmma_sm90.cu
+└─ <thrust/device_vector.h>
+  └─ thrust CUDA backend headers
+    └─ <cub/util_device.cuh>  ← defines EmptyKernel
+CUTLASS’s own utility headers can also pull CUB in. Either way, it comes in through headers, not through
+code you wrote.	
 
+We can confirm this yourself by asking nvcc for the list of every header the file includes:
+nvcc -std=c++17 -arch=sm_90a <your same -I flags> -M wgmma_sm90.cu | tr ' ' '\n' | grep -E 
+"cub/|thrust/" | head -20
+-M makes nvcc print the dependency list without compiling. We can see cub/util_device.cuh in the
+output.
+
+What EmptyKernel is
+In cub/util_device.cuh it is essentially:
+	template <typename T>
+	__global__ void EmptyKernel() {}	
+It does nothing. CUB uses it as a probe: at runtime, CUB calls cudaFuncGetAttributes(&attrs,
+EmptyKernel<void>) and reads attrs.ptxVersion , which tells it which architecture the binary was compiled
+for. That is how cub::PtxVersion() works, and CUB algorithms use it to choose tuning parameters.
+Because the header refers to EmptyKernel<void> , the template is instantiated in every translation unit
+that includes the header. ptxas then compiles it and reports it like any other kernel.
+	
+</pre>
 <pre>
 There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
 from transA and transB . Both template instantiations are reachable, so both get compiled, even though
@@ -601,11 +629,13 @@ math operations are completely done before the final registers are read or writt
 • 2 DEPBAR.LE: These are standard execution dependency barriers used to manage basic register 
 write-after-read hazards inside the general warp instructions.
 
-**Why build and build-release Look Exactly the Same**
-
-Usually, a debug build has way more instructions than a build-release. Because your counts match exactly down to the digit, it means your CMakeLists.txt is passing high optimization flags (like -O3 and strict architecture flags -arch=sm_90a) to nvcc for both directories. The compiler completely optimized the code in both setups.
-You now have the absolute baseline footprint of a working Hopper WGMMA kernel.
-Over your two-day study window, would you like to:
+Why build and build-release Look Exactly the Same:
+Usually, a debug build has way more instructions than a build-release. Because the counts match exactly 
+down to the digit, it means the CMakeLists.txt is passing high optimization flags (like -O3 and strict
+architecture flags -arch=sm_90a) to nvcc for both directories. The compiler completely optimized the code 
+in both setups.
+I now have the absolute baseline footprint of a working Hopper WGMMA kernel.
+Over the two-day study window, would you like to:
 	
 All of these run on my 5080 machine. cuobjdump reads the sm_90a code from the binary; it doesn’t need
 a Hopper GPU. In (d), the counts cover both kernels together. Loop unrolling also changes the totals, so
