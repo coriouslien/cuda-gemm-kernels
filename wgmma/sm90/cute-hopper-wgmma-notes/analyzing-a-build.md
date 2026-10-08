@@ -461,14 +461,157 @@ grep -E "CMAKE_BUILD_TYPE|CMAKE_CUDA_ARCHITECTURES|CMAKE_CUDA_FLAGS" build/CMake
 
 # b) Find the call that causes C7510 in the current binary
 cuobjdump -sass build/wgmma_sm90 | grep -n -B2 -A2 "CALL"
+   Why is the output empty?
+	• Perfect Inlining: The compiler successfully took all of the CuTe layouts, coordinate math, and 
+	utility functions and expanded them directly into a flat, straight line of hardware instructions.
+	• Zero Overhead: In high-performance GPU kernels, a CALL instruction usually means the code is jumping 
+	to a separate device function or falling back to a slow routine (like a runtime assertion check). 
+	Seeing no CALL lines means your binary has zero function-call overhead.
+
 cuobjdump -ptx build/wgmma_sm90 | grep -E "call|__assertfail|vprintf" | head
+Why is the output empty?
+	1. Why call is missing
+	In PTX, a call instruction is generated when a function cannot be inlined, or when they are calling a
+	separate __device__ function that isn't visible to the compiler at template instantiation. Because they 
+	are using CuTe and CUTLASS, the compiler is able to look at all the template layouts and inline 100% 
+	of the logic. The entire execution path is flattened into a single, highly efficient stream of execution.
+	2. Why __assertfail is missing
+	If the C++ code contains assert(...) statements, or if the underlying CuTe libraries include internal
+	runtime bounds checks, the compiler translates those into a conditional branch that calls __assertfail 
+	if a check fails.
+	• The Optimization: Because I compiled a Release build (evident from the build-release target and 
+	optimal register footprint), the compiler entirely removes these safety assert checks to maximize
+	execution speed.
+	3. Why vprintf is missing
+	If there is any printf(...) statements inside the __global__ or __device__ CUDA functions, the NVIDIA
+	compiler translates them under the hood into a PTX internal system call named vprintf. An empty output
+	proves that the device kernel does not contain any active debugging prints, which is critical because
+	device-side prints heavily bottleneck GPU performance.
+
+	
 # c) Configure a separate Release directory (adds -O3 -DNDEBUG) and build it
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release 2>&1 | tee release.log
+	
+The contents of the release.log file are shown below.
+	cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+	cmake --build build-release 2>&1 | tee release.log
+	-- The CXX compiler identification is GNU 13.3.0
+	-- The CUDA compiler identification is NVIDIA 12.9.86
+	-- Detecting CXX compiler ABI info
+	-- Detecting CXX compiler ABI info - done
+	-- Check for working CXX compiler: /usr/bin/c++ - skipped
+	-- Detecting CXX compile features
+	-- Detecting CXX compile features - done
+	-- Detecting CUDA compiler ABI info
+	-- Detecting CUDA compiler ABI info - done
+	-- Check for working CUDA compiler: /usr/local/cuda/bin/nvcc - skipped
+	-- Detecting CUDA compile features
+	-- Detecting CUDA compile features - done
+	-- Found CUDAToolkit: /usr/local/cuda/targets/x86_64-linux/include (found version "12.9.86") 
+	-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+	-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+	-- Found Threads: TRUE  
+	-- Found OpenMP_CXX: -fopenmp (found version "4.5") 
+	-- Found OpenMP: TRUE (found version "4.5")  
+	-- Configuring done (1.4s)
+	-- Generating done (0.0s)
+	-- Build files have been written to: /home/chialan/cuda-learning/cute_hopper/sm90/build-release
+	[ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+	ptxas info    : 47 bytes gmem
+	ptxas info    : Compiling entry function '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' for 'sm_90a'
+	ptxas info    : Function properties for _ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv
+	    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+	ptxas info    : Used 4 registers, used 0 barriers
+	ptxas info    : Compile time = 7.355 ms
+	ptxas info    : Compiling entry function '_Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJS5_S9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS5_NS3_ILi512EEEEEENS1_IJS9_NS3_ILi0EEEEEENS1_IJSQ_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSG_INS1_IJSJ_SH_EEENS1_IJNS1_IJS4_S9_EEESI_EEEEENS1_IJSI_S5_EEEEES8_SA_SW_S18_S8_NS1_IJS9_iEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1D_5MajorE0ELS1F_0ELNS1D_7ScaleInE1ELS1G_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSQ_SQ_SQ_EEEEENS1_IJNS0_10UnderscoreES1M_S1M_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_' for 'sm_90a'
+	ptxas info    : Function properties for _Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJS5_S9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS5_NS3_ILi512EEEEEENS1_IJS9_NS3_ILi0EEEEEENS1_IJSQ_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSG_INS1_IJSJ_SH_EEENS1_IJNS1_IJS4_S9_EEESI_EEEEENS1_IJSI_S5_EEEEES8_SA_SW_S18_S8_NS1_IJS9_iEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1D_5MajorE0ELS1F_0ELNS1D_7ScaleInE1ELS1G_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSQ_SQ_SQ_EEEEENS1_IJNS0_10UnderscoreES1M_S1M_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_
+	    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+	ptxas info    : Used 112 registers, used 1 barriers
+	ptxas info    : Compile time = 54.679 ms
+	ptxas info    : Compiling entry function '_Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJNS3_ILi1EEEiEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJS5_NS3_ILi2EEEEEENS1_IJNS3_ILi8EEESJ_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS9_NS3_ILi512EEEEEENS1_IJS5_NS3_ILi1024EEEEEENS1_IJNS3_ILi0EEENS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES11_EES8_EEENSG_INS1_IJS4_SJ_EEENS1_IJSJ_S9_EEEEES14_EES8_SA_SX_S17_S8_SA_NS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1B_5MajorE1ELS1D_1ELNS1B_7ScaleInE1ELS1E_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSS_SS_SS_EEEEENS1_IJNS0_10UnderscoreES1K_S1K_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_' for 'sm_90a'
+	ptxas info    : Function properties for _Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJNS3_ILi1EEEiEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJS5_NS3_ILi2EEEEEENS1_IJNS3_ILi8EEESJ_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS9_NS3_ILi512EEEEEENS1_IJS5_NS3_ILi1024EEEEEENS1_IJNS3_ILi0EEENS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES11_EES8_EEENSG_INS1_IJS4_SJ_EEENS1_IJSJ_S9_EEEEES14_EES8_SA_SX_S17_S8_SA_NS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1B_5MajorE1ELS1D_1ELNS1B_7ScaleInE1ELS1E_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSS_SS_SS_EEEEENS1_IJNS0_10UnderscoreES1K_S1K_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_
+	    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+	ptxas info    : Used 114 registers, used 1 barriers
+	ptxas info    : Compile time = 48.958 ms
+	[100%] Linking CUDA executable wgmma_sm90
+	[100%] Built target wgmma_sm90
+
+	
+	
 # d) Compare instruction counts between the two binaries
+#!/bin/bash
+
+# Target the directories you want to inspect
 for d in build build-release; do
-echo "== $d"
-cuobjdump -sass $d/wgmma_sm90 | grep -oE "HGMMA[.0-9A-Zx]*|WARPGROUP[.A-Z]*|CALL[.A-Z]*|LDGSTS[.0-9A-
-Z]*|LDGDEPBAR|DEPBAR[.A-Z]*" | sort | uniq -c
+  if [ -d "$d" ] && [ -f "$d/wgmma_sm90" ]; then
+    echo "== Analyzing Directory: $d"
+    cuobjdump -sass "$d/wgmma_sm90" | grep -oE "HGMMA[.0-9A-Zx]*|WARPGROUP[.A-Z]*|CALL[.A-Z]*|LDGSTS[.0-9A-Z]*|LDGDEPBAR|DEPBAR[.A-Z]*" | sort | uniq -c
+  else
+    echo "== Skipping: $d (binary not found)"
+  fi
 done
+
+The output are shown below:	
+== Analyzing Directory: build
+      2 DEPBAR.LE
+     32 HGMMA.64x64x16.F16
+      8 LDGDEPBAR
+     96 LDGSTS.E.LTC128B.128
+      2 WARPGROUP.ARRIVE
+      2 WARPGROUP.DEPBAR.LE
+== Analyzing Directory: build-release
+      2 DEPBAR.LE
+     32 HGMMA.64x64x16.F16
+      8 LDGDEPBAR
+     96 LDGSTS.E.LTC128B.128
+      2 WARPGROUP.ARRIVE
+      2 WARPGROUP.DEPBAR.LE
+
+
+1. 96 LDGSTS.E.LTC128B.128 (Global-to-Shared Asynchronous Moves)
+
+• What it means: LDGSTS stands for Load Global, Store Shared. It bypasses the register file entirely, 
+pulling data straight from global memory and pushing it directly into Shared Memory (smem).
+	• .E means it uses extended addressing (64-bit global pointers).
+	• .LTC128B.128 tells us it is performing 128-byte cache line transfers directly bypassing or 
+	interacting optimally with the L2 cache (LTC).
+• The Insight: A count of 96 instructions shows that the compiler has unrolled your global memory data 
+ingestion pipeline. It is staging massive chunks of the A and B matrices into shared memory asynchronously 
+to keep the Tensor Cores fed.
+
+2. 32 HGMMA.64x64x16.F16 & 2 WARPGROUP.ARRIVE
+
+• What it means: HGMMA.64x64x16.F16 is the exact native instruction for Hopper Group Matrix Multiply and
+Accumulate. It is computing a matrix block of shape 64 × 64 × 16 using FP16 precision.
+• The Structural Ratio (16 to 1): Notice that you have 32 HGMMA instructions but only 2 WARPGROUP.ARRIVE
+instructions. This means each WARPGROUP.ARRIVE acts as a macro-gate that fires off a sequence of 16 
+underlying HGMMA matrix math steps back-to-back inside the hardware execution pipeline before hitting a
+dependency barrier.
+
+3. Synchronization Footprint (8 LDGDEPBAR vs. 2 WARPGROUP.DEPBAR.LE & 2 DEPBAR.LE)
+
+Hopper uses separate hardware counter barriers to track memory versus math. This breakdown shows a highly
+optimized balance:
+• 8 LDGDEPBAR (Load Global Dependency Barrier): This tracks your async memory copies. The threads use these 
+8 checks to make sure the data flying in via the 96 LDGSTS commands has safely landed in shared memory 
+before anyone tries to read it.
+• 2 WARPGROUP.DEPBAR.LE: This stalls the execution stream to guarantee that the 32 Tensor Core HGMMA 
+math operations are completely done before the final registers are read or written back to global memory.
+• 2 DEPBAR.LE: These are standard execution dependency barriers used to manage basic register 
+write-after-read hazards inside the general warp instructions.
+
+**Why build and build-release Look Exactly the Same**
+
+Usually, a debug build has way more instructions than a build-release. Because your counts match exactly down to the digit, it means your CMakeLists.txt is passing high optimization flags (like -O3 and strict architecture flags -arch=sm_90a) to nvcc for both directories. The compiler completely optimized the code in both setups.
+You now have the absolute baseline footprint of a working Hopper WGMMA kernel.
+Over your two-day study window, would you like to:
+	
+All of these run on my 5080 machine. cuobjdump reads the sm_90a code from the binary; it doesn’t need
+a Hopper GPU. In (d), the counts cover both kernels together. Loop unrolling also changes the totals, so
+the useful comparison is Debug vs Release, not the exact numbers
+
+What should change if the hypothesis is right: both C7510 lines disappear from release.log , gmem
+drops well below 1076 bytes, and CALL disappears from the SASS. If C7510 is still there in Release, the
+CALL lines from step (b) will name what is being called, and we’ll trace it from there.
 </pre>
