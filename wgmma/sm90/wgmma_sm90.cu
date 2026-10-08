@@ -24,6 +24,10 @@ template <class ElementA,
           class SmemLayoutB>  // (N,K,P)
 struct SharedStorage
 {
+  // Hopper relies heavily on the TMA (Tensor Memory Accelerator) for asynchronous memory transfers from Global Memory 
+  // directly to Shared Memory. The TMA hardware strictly requires the destination shared memory address to be 128-byte aligned. 
+  // Without this alignment, TMA instructions will fault.
+  // The memory address of the variable A to be a multiple of 128 bytes
   alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
   alignas(128) cute::ArrayEngine<ElementB, cosize_v<SmemLayoutB>> B;
 };
