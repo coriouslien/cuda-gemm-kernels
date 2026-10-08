@@ -2,6 +2,7 @@
 ## Compiled examples/cute/tutorial/wgmma_sm90.cu ##
 <pre>
 The following was built on an RTX 5080 Blackwell SM120 system, not a datacenter system.
+Building gemm_nt.
 	
 cmake --build build
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
@@ -111,7 +112,7 @@ it directly, I will explicitly say so.
 Where CUB comes from:
 wgmma_sm90.cu stores its matrices in Thrust containers. In main it creates the host data in
 thrust::host_vector<TA> h_A and so on, then copies it to the GPU with thrust::device_vector<TA> d_A =
-h_A . Thrust’s GPU backend is built on CUB, so the include chain is roughly:
+h_A. Thrust’s GPU backend is built on CUB, so the include chain is roughly:
 wgmma_sm90.cu
 └─ <thrust/device_vector.h>
   └─ thrust CUDA backend headers
@@ -119,12 +120,25 @@ wgmma_sm90.cu
 CUTLASS’s own utility headers can also pull CUB in. Either way, it comes in through headers, not through
 code you wrote.	
 
-We can confirm this yourself by asking nvcc for the list of every header the file includes:
-nvcc -std=c++17 -arch=sm_90a <your same -I flags> -M wgmma_sm90.cu | tr ' ' '\n' | grep -E 
-"cub/|thrust/" | head -20
+I can confirm this myself by asking nvcc for the list of every header the file includes:
+nvcc -std=c++17 -arch=sm_90a \
+  -I../include \
+  -I../cutlass/include \
+  -I../cutlass/tools/util/include \
+  -M wgmma_sm90.cu | tr ' ' '\n' | grep -v -E '^\\?$' > deps.txt
 -M makes nvcc print the dependency list without compiling. We can see cub/util_device.cuh in the
 output.
+wc -l deps.txt                                   # total headers included
+grep -c "/thrust/" deps.txt                      # how many are Thrust
+grep -c "/cub/"    deps.txt                      # how many are CUB
+grep -n "cub/util_device.cuh" deps.txt           # the one we're looking for, with its line number
+grep -n -m1 "/cub/" deps.txt                     # the FIRST CUB header to appear
 
+Find which header brings in CUB
+-M lists headers in the order the preprocessor opens them, depth first. So the lines just before the first /cub/ line show the
+Thrust headers it was in when it reached CUB. If grep -n -m1 printed, for example, line 412:
+
+	
 What EmptyKernel is
 In cub/util_device.cuh it is essentially:
 	template <typename T>
@@ -142,7 +156,7 @@ namespace that encodes two things:
 |Part|Meaning|
 |:---|-------|
 |200802|The CUB version, encoded as major·100000 + minor·100 +<br>patch, so 2.8.2. This is the CCCL version bundled with<br>your CUDA 12.8 toolkit. It also tells you this build used the<br>toolkit’s built-in CCCL, not a separate ~/cccl checkout.|
-|SM_900|The architectures this translation unit was compiled for. It<br>comes from __CUDA_ARCH_LIST__ , so here it’s 900 for<br>sm_90a . If you compiled for sm_120 , it would read<br>SM_1200.|
+|SM_900|The architectures this translation unit was compiled for. It<br>comes from __CUDA_ARCH_LIST__, so here it’s 900 for<br>sm_90a. If you compiled for sm_120, it would read<br>SM_1200.|
 <pre>
 The purpose is to prevent ODR (One Definition Rule) violations. If two libraries in the same program were
 compiled with different CUB versions or for different architectures, their CUB symbols get different
@@ -151,7 +165,7 @@ mangled names, so the linker never mixes one library’s copy with the other’s
 Does it matter for the GEMM?
 No:
 It uses 4 registers, 0 bytes of stack and has no body.
-Nothing launches it unless CUB code runs PtxVersion() . The tutorial’s device_vector copies are
+Nothing launches it unless CUB code runs PtxVersion(). The tutorial’s device_vector copies are
 plain cudaMemcpy calls.
 It has no effect on gemm_device ’s registers, the C7510 warning, or the SASS you’re about to
 compare.
@@ -162,11 +176,11 @@ API to learn. When you start CUB, focus on the public interfaces: cub::BlockRedu
 cub::DeviceReduce , and so on.
 </pre>
 <pre>
-There are two GEMM kernels because main calls gemm() , which chooses gemm_nt or gemm_tn at run time
-from transA and transB . Both template instantiations are reachable, so both get compiled, even though
+There are two GEMM kernels because main calls gemm(), which chooses gemm_nt or gemm_tn at run time
+from transA and transB. Both template instantiations are reachable, so both get compiled, even though
 a given run uses only one (NT by default).
 </pre>
-### 2. Reading the mangled names: your configuration is inside them
+### 2. Reading the mangled names: the configuration is inside them
 <pre>
 The long names are C++ mangled template names. CUDA ships a demangler:
 echo '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' | cu++filt
@@ -192,9 +206,8 @@ Every static value is part of the type, which is exactly what “static” means
 |So it is| gemm_tn (K-major)|gemm_nt (MN-major)|
 
 <pre>
-That also tells you how CuTe numbers the enum: GMMA::Major::K = 0 and GMMA::Major::MN = 1 .
-The shared-memory layout of the NT kernel, decoded from the second name (my reading of the
-mangling substitutions; cu++filt will show it in plain form):
+That also tells the developer how CuTe numbers the enum: GMMA::Major::K = 0 and GMMA::Major::MN = 1 .
+The shared-memory layout of the NT kernel, decoded from the second name:
 
 Shape: ((64, 2), (8, 8), (1, 3))
 Stride: ((1, 512), (64, 1024), (0, 8192))
