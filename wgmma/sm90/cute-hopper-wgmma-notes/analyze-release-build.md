@@ -75,3 +75,4 @@ Source matched to the template argument in the ptxas name:
 |dB = make_stride(ldB, Int<1>{})	|same	|tuple<int, C<1>>|
 |dC = make_stride(Int<1>{}, ldC)|	(static 1, runtime)	|tuple<C<1>, int>|
 |bM, bN, bK = Int<128>, Int<128>, Int<64>|static|tuple<C<128>, C<128>, C<64>>|
+|bP = Int<3>{}	| static	| the (1,3):(0,8192) PIPE mode|
