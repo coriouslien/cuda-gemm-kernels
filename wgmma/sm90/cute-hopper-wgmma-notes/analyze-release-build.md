@@ -453,7 +453,9 @@ on a rented H100.
 
 1. The FlashAttention-3 paper (primary source)
 
-["FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision"](https://arxiv.org/abs/2407.08608)
+["FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision"]
+[FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision](https://arxiv.org/abs/2407.08608)
+  
  FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision https://arxiv.org/abs/2407.08608 (arXiv 2407.08608; also published at NeurIPS 2024). This is the main reference for Hopper FlashAttention. The sections that matter for your question:
 
 Section 3.1, Algorithm 1: the forward pass with warp specialization. The P·V product is explicitly labeled “RS-GEMM”, and the paper defines the SS/RS prefix as whether the first operand comes from shared memory or from the register file. So the second GEMM is exactly the _RS case we discussed. Section 3.1 also covers pingpong scheduling: two warpgroups alternate, one doing GEMMs while the other does softmax.
