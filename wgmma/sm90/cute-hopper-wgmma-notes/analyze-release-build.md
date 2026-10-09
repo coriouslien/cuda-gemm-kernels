@@ -128,4 +128,58 @@ Source matched to the template argument in the ptxas name:
 |dC = make_stride(Int<1>{}, ldC)|	(static 1, runtime)	|tuple<C<1>, int>|
 |bM, bN, bK = Int<128>, Int<128>, Int<64>|static|tuple<C<128>, C<128>, C<64>>|
 |bP = Int<3>{}	| static	| the (1,3):(0,8192) PIPE mode|
-|L383<br>tile_to_shape(GMMA::Layout_K_SW128_Atom<TA><br>{}, ...)| - | ComposedLayout<Swizzle<3,4,3>, …,|
+|L383<br>tile_to_shape(GMMA::Layout_K_SW128_Atom<TA><br>{}, ...)| - | ComposedLayout<Swizzle<3,4,3>, …,<br>((8,16),(64,1),(1,3)):…>|
+
+<pre>
+In the source line L383 tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, ...). In build output interpret 
+to ComposedLayout<Swizzle<3,4,3>, …, ((8,16),(64,1),(1,3)):…>
+This is a three-stage process, and only the first and last stages are visible: L383 (the call) 
+and the build log (the result). In between are two things defined inside CuTe’s headers that is not visible. 
+These are stage by stage, and say where each piece comes from.
+L383:      tile_to_shape( GMMA::Layout_K_SW128_Atom<TA>{},  make_shape(bM, bK, bP) )
+                          └──────── the "atom" ────────┘     └─ the target shape ─┘
+                                                              (128, 64, 3)
+
+build log: ComposedLayout< Swizzle<3,4,3>, smem_ptr_flag_bits<16>,
+                           Layout< ((8,16),(64,1),(1,3)) : ((64,512),(1,0),(0,8192)) > >
+Stage 1: The two inputs at L383 [source]
+
+The target shape is make_shape(bM, bK, bP). From L376–380: bM = Int<128>, bK = Int<64>, bP = Int<3>. 
+So the target is (128, 64, 3): M × K × pipeline stages. All three are compile-time constants.
+The atom is GMMA::Layout_K_SW128_Atom<TA> with TA = half_t. L383 only names it. Its definition is in 
+CuTe’s headers, not in the file. That’s Stage 2.
+
+tile_to_shape means: take the small atom and repeat it until it covers the target shape.   
+
+Stage 2: What the atom is [CuTe header]
+
+CuTe defines the GMMA atoms first in units of bits, then converts them to the element type. Roughly 
+(this is the shape of the definition; check the exact text with the grep below):
+// in bits
+using Layout_K_SW128_Atom_Bits =
+    ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag_bits<1>,
+                   Layout<Shape<_8,_1024>, Stride<_1024,_1>>>;
+
+// in units of Type: divide the bit layout by sizeof_bits<Type>
+template <class Type>
+using Layout_K_SW128_Atom = decltype(upcast<sizeof_bits<Type>::value>(Layout_K_SW128_Atom_Bits{}));
+Check in your CUTLASS checkout:
+  grep -rn "Layout_K_SW128_Atom" ../cutlass/include/cute/atom/
+
+swizzle isn’t fixed for SM90.
+Swizzle<3,4,3> is fixed for this one atom, Layout_K_SW128_Atom, the one the tutorial chose. Hopper’s 
+wgmma supports several shared-memory layout modes, and CuTe defines one atom for each, in the same file. 
+Their names follow the hardware modes:
+</pre>
+|Atom	|Swizzle	|16-byte chunks permuted	|Swizzle width|
+|:----|:-------|:-------------------------|:------------|
+|Layout_K_INTER_Atom	|Swizzle<0,4,3>|	none (B = 0, no swizzle)|	—|
+|Layout_K_SW32_Atom	|Swizzle<1,4,3>	|2	|32 bytes|
+|Layout_K_SW64_Atom	|Swizzle<2,4,3>	|4	|64 bytes|
+|Layout_K_SW128_Atom|	Swizzle<3,4,3>	|8	|128 bytes|
+<pre>
+The pattern is in the three numbers:
+• M = 4 is always the same: the unit being moved is a 16-byte chunk (address bits 0–3 stay inside the chunk);
+• S = 3 is always the same;
+• B varies, 0 to 3: it permutes 2^B chunks, so it sets the swizzle width (2^B × 16 bytes).
+</pre>
