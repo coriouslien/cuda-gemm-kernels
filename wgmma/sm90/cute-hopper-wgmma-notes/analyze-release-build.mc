@@ -69,7 +69,7 @@ ptxas info : Compile time = X ms       ┘
 Step 4: gemm_tn, the host setup that becomes kernel 1
 Source matched to the template argument in the ptxas name:
 </pre>
-|Source<b>the host setup	|Value	|Becomes in the name|
+|Source<br>the host setup	|Value	|Becomes in the name|
 |:------|:------|:------------------|
 |make_shape(M, N, K) with int|runtime|tuple<int,int,int>|
 |dA = make_stride(ldA, Int<1>{})|	(runtime, static 1) |tuple<int, C<1>>: K-major|
