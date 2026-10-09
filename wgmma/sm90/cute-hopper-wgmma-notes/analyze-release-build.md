@@ -128,4 +128,4 @@ Source matched to the template argument in the ptxas name:
 |dC = make_stride(Int<1>{}, ldC)|	(static 1, runtime)	|tuple<C<1>, int>|
 |bM, bN, bK = Int<128>, Int<128>, Int<64>|static|tuple<C<128>, C<128>, C<64>>|
 |bP = Int<3>{}	| static	| the (1,3):(0,8192) PIPE mode|
-|L383| - | ComposedLayout<Swizzle<3,4,3>, …,|
+|L383<br>tile_to_shape(GMMA::Layout_K_SW128_Atom<TA><br>{}, ...)| - | ComposedLayout<Swizzle<3,4,3>, …,|
