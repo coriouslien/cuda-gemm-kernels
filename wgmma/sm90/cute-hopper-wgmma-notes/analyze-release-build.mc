@@ -12,7 +12,7 @@ void cub::CUB_200802_SM_900::EmptyKernel<void>()
 (sed only strips the namespaces so the names fit on screen.)
 Each conclusion is labeled with its source:
 
-&bull&;[log]: read directly from your build output;
+&#8226;[log]: read directly from your build output;
 [name]: from the demangled kernel name, which encodes every template argument;
 [CuTe]: from how CuTe/CUTLASS defines these types (header knowledge, not in your log);
 [source]: from the tutorial’s wgmma_sm90.cu. I couldn’t open the file from here, so each [source] claim comes with a grep you can run to confirm it.
