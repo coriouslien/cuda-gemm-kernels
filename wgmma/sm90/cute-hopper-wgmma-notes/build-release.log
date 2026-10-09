@@ -1,0 +1,46 @@
+/usr/bin/gmake  -f CMakeFiles/Makefile2 clean
+gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/clean
+gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/cmake -P CMakeFiles/wgmma_sm90.dir/cmake_clean.cmake
+gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/gmake  -f CMakeFiles/analyze.dir/build.make CMakeFiles/analyze.dir/clean
+gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/cmake -P CMakeFiles/analyze.dir/cmake_clean.cmake
+gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+gmake[1]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/cmake -S/home/chialan/cuda-learning/cute_hopper/sm90 -B/home/chialan/cuda-learning/cute_hopper/sm90/build-release --check-build-system CMakeFiles/Makefile.cmake 0
+/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/sm90/build-release/CMakeFiles /home/chialan/cuda-learning/cute_hopper/sm90/build-release//CMakeFiles/progress.marks
+/usr/bin/gmake  -f CMakeFiles/Makefile2 all
+gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/depend
+gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+cd /home/chialan/cuda-learning/cute_hopper/sm90/build-release && /usr/bin/cmake -E cmake_depends "Unix Makefiles" /home/chialan/cuda-learning/cute_hopper/sm90 /home/chialan/cuda-learning/cute_hopper/sm90 /home/chialan/cuda-learning/cute_hopper/sm90/build-release /home/chialan/cuda-learning/cute_hopper/sm90/build-release /home/chialan/cuda-learning/cute_hopper/sm90/build-release/CMakeFiles/wgmma_sm90.dir/DependInfo.cmake "--color="
+gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/build
+gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+[ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" --expt-relaxed-constexpr --generate-line-info -Xptxas=-v -Xptxas=-warn-spills --resource-usage -UCUTLASS_ENABLE_SYNCLOG -MD -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d -x cu -c /home/chialan/cuda-learning/cute_hopper/sm90/wgmma_sm90.cu -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+ptxas info    : 47 bytes gmem
+ptxas info    : Compiling entry function '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' for 'sm_90a'
+ptxas info    : Function properties for _ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 4 registers, used 0 barriers
+ptxas info    : Compile time = 0.885 ms
+ptxas info    : Compiling entry function '_Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJS5_S9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS5_NS3_ILi512EEEEEENS1_IJS9_NS3_ILi0EEEEEENS1_IJSQ_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSG_INS1_IJSJ_SH_EEENS1_IJNS1_IJS4_S9_EEESI_EEEEENS1_IJSI_S5_EEEEES8_SA_SW_S18_S8_NS1_IJS9_iEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1D_5MajorE0ELS1F_0ELNS1D_7ScaleInE1ELS1G_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSQ_SQ_SQ_EEEEENS1_IJNS0_10UnderscoreES1M_S1M_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_' for 'sm_90a'
+ptxas info    : Function properties for _Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJiNS3_ILi1EEEEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJNS3_ILi8EEENS3_ILi16EEEEEENS1_IJS5_S9_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS5_NS3_ILi512EEEEEENS1_IJS9_NS3_ILi0EEEEEENS1_IJSQ_NS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES10_EES8_EEENSG_INS1_IJSJ_SH_EEENS1_IJNS1_IJS4_S9_EEESI_EEEEENS1_IJSI_S5_EEEEES8_SA_SW_S18_S8_NS1_IJS9_iEEENS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1D_5MajorE0ELS1F_0ELNS1D_7ScaleInE1ELS1G_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSQ_SQ_SQ_EEEEENS1_IJNS0_10UnderscoreES1M_S1M_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 112 registers, used 1 barriers
+ptxas info    : Compile time = 49.495 ms
+ptxas info    : Compiling entry function '_Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJNS3_ILi1EEEiEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJS5_NS3_ILi2EEEEEENS1_IJNS3_ILi8EEESJ_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS9_NS3_ILi512EEEEEENS1_IJS5_NS3_ILi1024EEEEEENS1_IJNS3_ILi0EEENS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES11_EES8_EEENSG_INS1_IJS4_SJ_EEENS1_IJSJ_S9_EEEEES14_EES8_SA_SX_S17_S8_SA_NS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1B_5MajorE1ELS1D_1ELNS1B_7ScaleInE1ELS1E_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSS_SS_SS_EEEEENS1_IJNS0_10UnderscoreES1K_S1K_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_' for 'sm_90a'
+ptxas info    : Function properties for _Z11gemm_deviceIN4cute5tupleIJiiiEEENS1_IJNS0_1CILi128EEES4_NS3_ILi64EEEEEEN7cutlass6half_tENS1_IJNS3_ILi1EEEiEEENS0_14ComposedLayoutINS0_7SwizzleILi3ELi4ELi3EEENS0_18smem_ptr_flag_bitsILi16EEENS0_6LayoutINS1_IJNS1_IJS5_NS3_ILi2EEEEEENS1_IJNS3_ILi8EEESJ_EEENS1_IJS9_NS3_ILi3EEEEEEEEENS1_IJNS1_IJS9_NS3_ILi512EEEEEENS1_IJS5_NS3_ILi1024EEEEEENS1_IJNS3_ILi0EEENS3_ILi8192EEEEEEEEEEEEENS0_9TiledCopyINS0_9Copy_AtomIJNS0_25SM80_CP_ASYNC_CACHEALWAYSINS7_9uint128_tES11_EES8_EEENSG_INS1_IJS4_SJ_EEENS1_IJSJ_S9_EEEEES14_EES8_SA_SX_S17_S8_SA_NS0_8TiledMMAINS0_8MMA_AtomIJNS0_4SM904GMMA25MMA_64x64x16_F16F16F16_SSILNS1B_5MajorE1ELS1D_1ELNS1B_7ScaleInE1ELS1E_1EEEEEENSG_INS1_IJS9_S9_S9_EEENS1_IJSS_SS_SS_EEEEENS1_IJNS0_10UnderscoreES1K_S1K_EEEEES8_S8_EvT_T0_PKT1_T2_T3_T4_PKT5_T6_T7_T8_PT9_T10_T11_T12_T13_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 114 registers, used 1 barriers
+ptxas info    : Compile time = 48.547 ms
+[100%] Linking CUDA executable wgmma_sm90
+/usr/bin/cmake -E cmake_link_script CMakeFiles/wgmma_sm90.dir/link.txt --verbose=1
+/usr/bin/g++ @CMakeFiles/wgmma_sm90.dir/objects1.rsp -o wgmma_sm90 @CMakeFiles/wgmma_sm90.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"
+gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+[100%] Built target wgmma_sm90
+gmake[1]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
+/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/sm90/build-release/CMakeFiles 0
