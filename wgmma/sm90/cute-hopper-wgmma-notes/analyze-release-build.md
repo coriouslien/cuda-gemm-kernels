@@ -467,8 +467,9 @@ K-major operands, and the FP32 accumulator layout doesn’t match the FP8 operan
 one GEMM’s output into the next.
 • Section 3.3: how they solve that for FP8 (layout transformations inside the kernel). The page I fetched 
 was cut off before this section’s text, so read it in the PDF.
+</pre>
 2. Overviews written by the authors
-<sub>[Tri Dao’s blog post on FlashAttention-3:](https://tridao.me/blog/2024/flash3/)</sub> a shorter tour of WGMMA, TMA, pingpong scheduling and i
+<sub>[Tri Dao’s blog post on FlashAttention-3:](https://tridao.me/blog/2024/flash3/)</sub></pre> a shorter tour of WGMMA, TMA, pingpong scheduling and i
 ntra-warpgroup overlap, with throughput numbers for each step (FP16 forward rising from about 570 to 620
 TFLOPS with pingpong, then to 640–660 with intra-warpgroup overlap). It doesn’t describe the second GEMM’s
 operand sources; the paper does.
