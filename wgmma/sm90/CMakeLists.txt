@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.18)
-project(SgemmPortfolio LANGUAGES CXX CUDA)
+cmake_minimum_required(VERSION 3.28)
+project(WgmmaSm90 LANGUAGES CXX CUDA)
 
 # compiling with release mode
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -9,11 +9,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-#set(CMAKE_CUDA_ARCHITECTURES "native")
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES "90a")
-#set(CMAKE_CUDA_ARCHITECTURES OFF)
 
-#set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_100a")
 
 find_package(CUDAToolkit REQUIRED)
 find_package(OpenMP REQUIRED)
@@ -29,13 +28,25 @@ set(SOURCES
     wgmma_sm90.cu
 )
 
-add_executable(wgmma_sm90 ${SOURCES})
+add_executable(wgmma_sm90 wgmma_sm90.cu)
+
+# Hopper with arch-specific features (wgmma requires sm_90a)
+set_property(TARGET wgmma_sm90 PROPERTY CUDA_ARCHITECTURES 90a)
 
 
+target_include_directories(wgmma_sm90 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include            # remove if unused
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cutlass/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cutlass/tools/util/include
+)
+
+# The only source is a .cu file, so these flags apply to CUDA compilation.
 target_compile_options(wgmma_sm90 PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
         --expt-relaxed-constexpr
         --generate-line-info
+        -Xptxas=-v 
+        -Xptxas=-warn-spills
         -O3
         --resource-usage
         -UCUTLASS_ENABLE_SYNCLOG
