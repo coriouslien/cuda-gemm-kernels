@@ -1,3 +1,7 @@
+cmake -S . -B build-release
+15144  cmake --build build-release --clean-first 2>&1 | tee build-release/build-release.log
+
+
 /usr/bin/gmake  -f CMakeFiles/Makefile2 clean
 gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/sm90/build-release'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/clean
