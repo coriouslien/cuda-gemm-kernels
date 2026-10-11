@@ -837,12 +837,6 @@ Why the loop isn’t unrolled: L212 CUTE_NO_UNROLL. K_TILE_MAX is a runtime valu
 one real loop. Everything inside (the 16 copies, the 16 wgmmas) is fully unrolled, because their counts 
 are static.
 
-Step 8: The epilogue (L257)
-axpby(alpha, tCrC, beta, tCgC);    // C = alpha * acc + beta * C
-
-The accumulators go straight from registers to global memory, with no smem staging. Each thread writes its 
-own fragment of C following the wgmma accumulator layout. main uses alpha = 1, beta = 0 (L512–513).
-
 Step 9: main and the launch (L467–581)
 
 L479: if (props.major != 9) { ...; return 0; }. On your RTX 5080/5050 (major = 12), the program exits here,
@@ -867,6 +861,13 @@ plan to rent a single PCIe GPU, expect that tail effect in nsys/ncu.
 Launch path (L418–438): cudaFuncSetAttribute(..., MaxDynamicSharedMemorySize, 98304) is required, because 
 any request above 48 KB of dynamic smem must be opted into. Then launch_kernel_on_cluster, CUTLASS’s 
 wrapper around the cluster launch API, with a 1×1×1 cluster (equivalent to a normal launch).
+
+Step 8: The epilogue (L257)
+axpby(alpha, tCrC, beta, tCgC);    // C = alpha * acc + beta * C
+
+The accumulators go straight from registers to global memory, with no smem staging. Each thread writes its 
+own fragment of C following the wgmma accumulator layout. main uses alpha = 1, beta = 0 (L512–513).
+
 </pre>
 <pre>
 =================================================================================
