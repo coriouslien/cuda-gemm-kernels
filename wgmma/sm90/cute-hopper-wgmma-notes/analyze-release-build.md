@@ -464,7 +464,7 @@ ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag, Layout<Shape<_8,_1024>,Stride<_102
 ../cutlass/include/cute/atom/mma_traits_sm90_gmma.hpp:104:using Layout_K_SW128_Atom =
 decltype(upcast<sizeof_bits<Type>::value>(Layout_K_SW128_Atom_Bits{}));
 
-To read upcast itself in your checkout:
+To read upcast itself in the checkout:
   grep -rn "upcast" ../cutlass/include/cute/layout.hpp | head
   
 In CuTe’s notation Shape : Stride, the left side is the shape and the right side the stride:
@@ -498,6 +498,42 @@ Step 1: What the source says [source L387–389]
 Thread layout Layout<Shape<_16,_8>, Stride<_8,_1>>: 16 × 8 threads, mapping a thread’s grid position (
 tm, tk) to its thread index:
 t = 8·tm + 1·tk        tm ∈ [0,16),  tk ∈ [0,8)
+The 8 in the formula is the stride, not the shape’s 8. Shape and stride pair up by position, one pair 
+per mode, and each pair plays a different role in the formula:
+  Layout< Shape <_16, _8>,
+        Stride< _8, _1> >
+
+mode 0:  shape 16, stride 8   →  coordinate tm ∈ [0,16),  contributes 8·tm
+mode 1:  shape  8, stride 1   →  coordinate tk ∈ [0,8),   contributes 1·tk
+• A shape is a range. It says how many values a coordinate can take. It never appears as a multiplier.
+• A stride is a multiplier. It’s what a coordinate is multiplied by in the formula.
+So in
+t = 8·tm + 1·tk        tm ∈ [0,16),  tk ∈ [0,8)
+</pre>
+|Number in the formula|	Where it comes from|
+|:--------------------|:-------------------|
+|8 in 8·tm|	stride of mode 0|
+|1 in 1·tk	|stride of mode 1|
+|16 in tm ∈ [0,16)|	shape of mode 0|
+|8 in tk ∈ [0,8)	|shape of mode 1|
+<pre>    
+he two 8s come from different modes and do different jobs. One is the multiplier for tm; the other is the range of tk.
+
+They’re equal here for a reason. Mode 1 has 8 positions (tk = 0…7), so one step in mode 0 must skip past 
+all 8 of them. Stride of mode 0 = shape of mode 1 is the condition for the layout to be compact (row-major, 
+no gaps or overlaps). You saw the same thing in (8,1024):(1024,1), where the stride of mode 0 equals the 
+shape of mode 1.
+</pre>
+A quick check with a few threads:
+|tm	|tk	|t = 8·tm + 1·tk|
+|:--|:--|:--------------|
+|0|	0|	0|
+|0|	7|	7|
+|1|	0|	8|
+|1|	5|	13|
+|15|	7|	127|
+Every t from 0 to 127 appears exactly once.
+<pre>
 Going the other way: tm = t / 8, tk = t mod 8. Thread 0 is at (0,0), thread 1 at (0,1), …, thread 7 at 
 (0,7), thread 8 at (1,0). Threads are numbered along K first, which is the “k-major” in the source comment.
 
@@ -517,12 +553,55 @@ hat’s the (16, 64) at the end of the build-log type: one copy step covers a 16
 
 Step 3: Who owns which element of the tile [CuTe: raked_product]
 
-The remaining question is how values and threads interleave inside the tile. Along K there are 8 thread positions and 8 values per thread. Two choices:
-
+The remaining question is how values and threads interleave inside the tile. Along K there are 8 thread
+positions and 8 values per thread. Two choices:
 values fast: k = 8·tk + v, so each thread’s 8 values are adjacent (a contiguous 16-byte chunk);
 threads fast: k = tk + 8·v, so each thread’s values are 8 apart.
+The idea is simpler with a picture of one row. Here use only row 0 of the tile (threads 0–7) and describe 
+both arrangements concretely.
+The setup
+One row of the 16 × 64 tile has 64 positions along K (k = 0 … 63).
+From the source, that row is shared by 8 threads: in row 0 those are threads 0–7, at grid positions 
+tk = 0 … 7 (t = 8·tm + tk with tm = 0). Each thread has 8 values (v = 0 … 7).
 
-make_tiled_copy combines the two layouts with raked_product(thr_layout, val_layout), which puts each thread’s values innermost, i.e. the first choice. That’s what a 16-byte cp.async needs: 8 halfs at consecutive addresses. So:
+8 threads × 8 values = 64 positions. Every position gets exactly one (thread, value) pair. The question is
+which pair goes where. There are two natural ways to deal them out.
+Choice 1: “values fast”, k = 8·tk + v
+Each thread takes a block of 8 neighbors:
+k:      0  1  2  3  4  5  6  7 | 8  9 10 11 12 13 14 15 | 16 ... 23 | ... | 56 ... 63
+thread: 0  0  0  0  0  0  0  0 | 1  1  1  1  1  1  1  1 |  2 ...  2 | ... |  7 ...  7
+value:  0  1  2  3  4  5  6  7 | 0  1  2  3  4  5  6  7 |  0 ...  7 | ... |  0 ...  7
+Moving one step to the right changes v first (the “fast” index). tk changes only every 8 steps.
+• Thread 0 gets k = 0…7, thread 1 gets k = 8…15, thread 5 gets k = 40…47.
+• Each thread’s 8 halfs sit next to each other: 8 × 2 bytes = 16 consecutive bytes.
+
+Choice 2: “threads fast”, k = tk + 8·v
+The threads take turns, one position each, like dealing cards around a table:
+k:      0  1  2  3  4  5  6  7 | 8  9 10 11 12 13 14 15 | 16 ... 23 | ... | 56 ... 63
+thread: 0  1  2  3  4  5  6  7 | 0  1  2  3  4  5  6  7 |  0 ...  7 | ... |  0 ...  7
+value:  0  0  0  0  0  0  0  0 | 1  1  1  1  1  1  1  1 |  2 ...  2 | ... |  7 ...  7
+Moving one step to the right changes tk first (now the “fast” index). v changes only every 8 steps.
+• Thread 0 gets k = 0, 8, 16, 24, 32, 40, 48, 56.
+• Each thread’s 8 halfs are 8 positions apart: scattered across the row, not adjacent.
+  
+Why the tutorial needs Choice 1
+The copy atom is SM80_CP_ASYNC_CACHEALWAYS<uint128_t>: one cp.async instruction moves 16 contiguous bytes. 
+A thread can copy its 8 halfs with that single instruction only if they sit side by side in memory.
+
+Choice 1: each thread’s 8 halfs are adjacent → one 16-byte cp.async per thread. 
+Choice 2: each thread’s 8 halfs are scattered → impossible with one 16-byte copy; it would need 8 separate 
+2-byte copies.
+  
+make_tiled_copy always builds Choice 1: it places each thread’s values innermost (that’s what the
+raked_product step does).
+  
+Check against thread 13 from earlier
+Thread 13 is in row tm = 13 / 8 = 1, at tk = 13 mod 8 = 5. Choice 1 gives k = 8·5 + v = 40 … 47, the 
+same answer Step 5 got from the TV layout in the build log.
+  
+make_tiled_copy combines the two layouts with raked_product(thr_layout, val_layout), which puts each 
+thread’s values innermost, i.e. the first choice. That’s what a 16-byte cp.async needs: 8 halfs at 
+consecutive addresses. So:
 
 m = tm                    (1 value along M, so the thread's row)
 k = 8·tk + v              (thread picks a 16-byte chunk, value walks inside it)
@@ -531,7 +610,8 @@ Written as a layout from tile coordinates (m, k) to a combined index t + 128·v,
 
 Step 4: Invert it → the TV layout [CuTe: right_inverse]
 
-CuTe stores the opposite direction: for each (thread t, value v), where in the 16 × 64 tile is it? Positions in the tile are numbered column-major: index = m + 16·k.
+CuTe stores the opposite direction: for each (thread t, value v), where in the 16 × 64 tile is it? 
+Positions in the tile are numbered column-major: index = m + 16·k.
 
 Substitute Step 1 and Step 3:
 
@@ -544,12 +624,13 @@ Now read off the strides:
 • t mod 8 (the fast part of t, size 8) → stride 128
 • t / 8 (the slow part of t, size 16) → stride 1
 • v (size 8) → stride 16
-The thread index splits into its two parts, t = (t mod 8) + 8·(t / 8), so the thread mode is the nested shape (8, 16), fast part first:
+The thread index splits into its two parts, t = (t mod 8) + 8·(t / 8), so the thread mode is the nested 
+shape (8, 16), fast part first:
 
 (  (8, 16),   8  ) : (  (128, 1),  16  )
    └threads┘  └v┘       └threads─┘  └v┘
 
-That’s exactly the TV layout in your build log: ((8,16),8):((128,1),16).
+That’s exactly the TV layout in the build log: ((8,16),8):((128,1),16).
 
 right_inverse is the CuTe operation that produces this inverse from the Step 3 layout; the result is 
 grouped as (thread = 128, value = 8).
@@ -588,12 +669,7 @@ To see it printed: add print(copyA_tn) or print_latex(copyA_tn) to print_layouts
 draws the 16 × 64 tile with the thread number in each cell, so you can see the result of Step 5 for every
 thread at once.
 
-Step 5: gemm_nt and two discrepancies in the source (L260–350)
-
-The differences from TN:
-</pre>
-
-<pre>
+  
 Step 5: gemm_nt and two discrepancies in the source (L260–350)
 The differences from TN:
 </pre>
@@ -609,11 +685,18 @@ NT copy, checked. (16,8):(1,16) maps thread t to (t mod 16, t / 16): 16 thread-r
 along K. The value layout (8,1) gives each thread 8 consecutive M elements in one K column. So thread t copies
 M elements 8·(t mod 16) … +7 of K column t/16, matching the derivation from the name.
 
-Discrepancy 1: the comments are stale. L296 and L299 say // Thr layout 32x4 m-major and L297/L300 say // Val layout 8x1. The code is Shape<_16,_8>: 16×8, not 32×4. The compiled kernel, and the TV layout in your ptxas name, follow the code. The comment was probably left from an earlier version. Trust the code and the demangled type, not comments.
+Discrepancy 1: the comments are stale. L296 and L299 say // Thr layout 32x4 m-major and 
+L297/L300 say // Val layout 8x1. The code is Shape<_16,_8>: 16×8, not 32×4. The compiled kernel, 
+and the TV layout in your ptxas name, follow the code. The comment was probably left from an earlier 
+version. Trust the code and the demangled type, not comments.
 
-Discrepancy 2: dead code that wouldn’t compile. L305–307 and L397–399 contain print(mmaC), but no variable mmaC exists (the MMA is tiled_mma). It’s inside #if 0, so it’s never compiled. If you change it to #if 1 to print the layouts, change mmaC to tiled_mma.
+Discrepancy 2: dead code that wouldn’t compile. L305–307 and L397–399 contain print(mmaC), but no variable
+mmaC exists (the MMA is tiled_mma). It’s inside #if 0, so it’s never compiled. If I change it to #if 1 to
+print the layouts, change mmaC to tiled_mma.
 
-Order in the log ≠ order in the file. gemm_nt is defined first (L264) and called first (L458), yet ptxas reported the TN kernel first. The order of entry functions in the PTX isn’t source order, so always identify kernels by their names, as we did with dA.
+Order in the log ≠ order in the file. gemm_nt is defined first (L264) and called first (L458), yet ptxas
+reported the TN kernel first. The order of entry functions in the PTX isn’t source order, so always 
+identify kernels by their names, as I did with dA.
 
 Step 10: Verify the layouts print_layouts.cu on my own machine - RTX 5080 Blackwell sm120 (no Hopper needed)
 The layouts and TV layouts are host-side CuTe objects, so I can print them on the machine, as a host-only
