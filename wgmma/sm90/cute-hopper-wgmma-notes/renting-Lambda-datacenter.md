@@ -36,13 +36,17 @@ So for your tutorial: H100 PCIe, or H100 SXM if PCIe is unavailable.
 If an option is greyed out or missing, it’s temporarily sold out in every region. Try again later, or check another region.
 
 Three details from the same guide that affect your plan
-The default image is Ubuntu 22.04 with CUDA 12.x (“Lambda Stack”). Ubuntu 22.04’s CMake is 3.22, so keep cmake_minimum_required(VERSION 3.18) in your CMakeLists.txt. Don’t raise it to 3.24 as I suggested earlier, or the configure step may fail there.
-Billing is per minute, and there is no stop or pause, only terminate. An idle instance keeps costing money until you terminate it.
-Local data is deleted on terminate. Copy your results back with scp before terminating, or attach a persistent filesystem at launch time.
+The default image is Ubuntu 22.04 with CUDA 12.x (“Lambda Stack”). Ubuntu 22.04’s CMake is 3.22, so keep
+cmake_minimum_required(VERSION 3.18) in your CMakeLists.txt. Don’t raise it to 3.24 as I suggested earlier,
+or the configure step may fail there.
+Billing is per minute, and there is no stop or pause, only terminate. An idle instance keeps costing money 
+until you terminate it.
+Local data is deleted on terminate. Copy your results back with scp before terminating, or attach a persistent
+filesystem at launch time.
 
 Check the CUDA version once you’re connected (nvcc --version). sm_90a needs CUDA 12.0 or newer.
 </pre>
-Sources:
+<small><small>Sources:<br></small></small>
 <sub>[Lambda Labs GPU Cloud – Hermes Agent docs(third-party guide)](https://hermes-agent.nousresearch.com/docs/user-guide/skills/optional/mlops/mlops-lambda-labs)</sub><br>
 <sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub><br>
 <pre>    
