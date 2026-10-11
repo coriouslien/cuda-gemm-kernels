@@ -1,4 +1,8 @@
 // print_layouts.cu — host only; runs on any machine
+//nvcc -std=c++17 --expt-relaxed-constexpr \
+//     -I ../cutlass/include -I ../cutlass/tools/util/include \
+//     print_layouts.cu -o print_layouts && ./print_layouts
+
 #include <cute/tensor.hpp>
 using namespace cute;
 
