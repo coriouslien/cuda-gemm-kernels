@@ -116,7 +116,7 @@ For the study: this kernel is a side effect of including Thrust, so recognize it
 of your output is the first gemm_device (the TN kernel), which is where the real study starts.
 </pre>
 <pre>
-Step 4: gemm_tn, the host setup that becomes kernel 1
+Step 4: gemm_tn, the host setup that becomes kernel 1 
 Source matched to the template argument in the ptxas name:
 </pre>
 
@@ -129,6 +129,8 @@ Source matched to the template argument in the ptxas name:
 |bM, bN, bK = Int<128>, Int<128>, Int<64>|static|tuple<C<128>, C<128>, C<64>>|
 |bP = Int<3>{}	| static	| the (1,3):(0,8192) PIPE mode|
 |L383<br>tile_to_shape(GMMA::Layout_K_SW128_Atom<TA><br>{}, ...)| - | ComposedLayout<Swizzle<3,4,3>, …,<br>((8,16),(64,1),(1,3)):…>|
+|L387–389 make_tiled_copy(...,<br> Layout<Shape<_16,_8>,Stride<_8,_1>>,<br> Layout<Shape<_1,_8>>)| - | TiledCopy<…, ((8,16),8):<br>((128,1),16), (16,64)>|
+|L394 SM90_64x64x16_F16F16F16_SS<Major::K,<br> Major::K>| - | MMA_64x64x16_F16F16F16_SS<0,0,1,1>|
 
 <pre>
 In the source line L383 tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, ...). In build output interpret 
@@ -326,6 +328,7 @@ my table.
 |Swizzle<2,4,3>	|Layout_K_SW64_Atom	|Layout_MN_SW64_Atom|
 |Swizzle<3,4,3>	|Layout_K_SW128_Atom|	Layout_MN_SW128_Atom|
 <pre>
+The swizzle is the same in both columns; what changes is which dimension is contiguous inside the 128-byte row.
 Three constraints that go with them
 MN-major only works for 16-bit types. wgmma can read an MN-major (transposed) operand only for f16/bf16. 
 For tf32, fp8 and integer types, A and B in shared memory must be K-major. That’s why the tutorial can 
@@ -443,6 +446,140 @@ offset(m, k) = m·1024 + k·1      (m in [0,8), k in [0,1024), in bits)
   
 See all the atoms in your header
   sed -n '70,125p' ../cutlass/include/cute/atom/mma_traits_sm90_gmma.hpp
+
+The source L387–389 make_tiled_copy(..., Layout<Shape<_16,_8>,Stride<_8,_1>>, Layout<Shape<_1,_8>>)
+Extraction from build output: TiledCopy<…, ((8,16),8):((128,1),16), (16,64)>
+The two layouts in the source and the two objects in the build log describe the same assignment of work in 
+two different directions:
+• the source describes it from the threads’ side: how threads are arranged, and how each thread’s values 
+are arranged;
+• the build log stores it from the opposite side: given a (thread, value) pair, where in the tile that 
+element is. That’s the TV layout, plus the size of the tile.
+Step 1: What the source says [source L387–389]
+
+Thread layout Layout<Shape<_16,_8>, Stride<_8,_1>>: 16 × 8 threads, mapping a thread’s grid position (
+tm, tk) to its thread index:
+t = 8·tm + 1·tk        tm ∈ [0,16),  tk ∈ [0,8)
+Going the other way: tm = t / 8, tk = t mod 8. Thread 0 is at (0,0), thread 1 at (0,1), …, thread 7 at 
+(0,7), thread 8 at (1,0). Threads are numbered along K first, which is the “k-major” in the source comment.
+
+Value layout Layout<Shape<_1,_8>>: each thread owns 1 × 8 values: 1 along M, 8 along K. Value index v ∈ [0,8).
+
+Why 8 values: the copy atom is SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, and 128 bits = 8 halfs. So each 
+thread does exactly one 16-byte cp.async per copy step.
+Step 2: The tile they cover together → (16, 64)
+Multiply the thread grid by the value grid, mode by mode:
+</[re>
+|Mode|	Threads|	× Values per thread|	= Tile|
+|:---|:--------|:--------------------|:-------|
+|M	|16|	× 1	|16|
+|K	|8	|× 8	|64|
+<pre>
+hat’s the (16, 64) at the end of the build-log type: one copy step covers a 16 × 64 piece of A.
+
+Step 3: Who owns which element of the tile [CuTe: raked_product]
+
+The remaining question is how values and threads interleave inside the tile. Along K there are 8 thread positions and 8 values per thread. Two choices:
+
+values fast: k = 8·tk + v, so each thread’s 8 values are adjacent (a contiguous 16-byte chunk);
+threads fast: k = tk + 8·v, so each thread’s values are 8 apart.
+
+make_tiled_copy combines the two layouts with raked_product(thr_layout, val_layout), which puts each thread’s values innermost, i.e. the first choice. That’s what a 16-byte cp.async needs: 8 halfs at consecutive addresses. So:
+
+m = tm                    (1 value along M, so the thread's row)
+k = 8·tk + v              (thread picks a 16-byte chunk, value walks inside it)
+
+Written as a layout from tile coordinates (m, k) to a combined index t + 128·v, this is the “MN layout”, the intermediate form CuTe builds from the source’s two layouts.
+
+Step 4: Invert it → the TV layout [CuTe: right_inverse]
+
+CuTe stores the opposite direction: for each (thread t, value v), where in the 16 × 64 tile is it? Positions in the tile are numbered column-major: index = m + 16·k.
+
+Substitute Step 1 and Step 3:
+
+index = m + 16·k
+      = tm + 16·(8·tk + v)
+      = (t / 8)  +  128·(t mod 8)  +  16·v
+
+Now read off the strides:
+
+• t mod 8 (the fast part of t, size 8) → stride 128
+• t / 8 (the slow part of t, size 16) → stride 1
+• v (size 8) → stride 16
+The thread index splits into its two parts, t = (t mod 8) + 8·(t / 8), so the thread mode is the nested shape (8, 16), fast part first:
+
+(  (8, 16),   8  ) : (  (128, 1),  16  )
+   └threads┘  └v┘       └threads─┘  └v┘
+
+That’s exactly the TV layout in your build log: ((8,16),8):((128,1),16).
+
+right_inverse is the CuTe operation that produces this inverse from the Step 3 layout; the result is 
+grouped as (thread = 128, value = 8).
+
+Step 5: Check one thread by hand
+Thread t = 13: t mod 8 = 5, t / 8 = 1.
+</pre>
+|v	|index = 128·5 + 1·1 + 16·v|	m = index mod 16|	k = index / 16|
+|:--|:-------------------------|:-----------------|:--------------|
+|0	|641|	1	|40|
+|1	|657|	1	|41|
+|…	|…	|…	|…|
+|7	|753|	1	|47|
+<pre>
+Thread 13 copies row 1, K = 40…47: 8 consecutive halfs = one 16-byte chunk. From the source directly: 
+thread 13 sits at grid position (tm, tk) = (13/8, 13 mod 8) = (1, 5), so row 1, chunk 5 → K = 5·8 = 40…47.
+Both forms agree.
+
+The script I ran checked this agreement for every thread and value (128 × 8 = 1024 elements), and also that
+the Step 3 layout and the Step 4 TV layout are exact inverses of each other. Both checks passed.
+
+Summary
+source (thread side)                        build log (tile side)
+──────────────────────                      ─────────────────────────────────────
+thr (16,8):(8,1)  ┐   raked_product          right_inverse
+val (1,8)         ┘ ─────────────→ MN layout ─────────────→ TV ((8,16),8):((128,1),16)
+                    (values innermost)                     tile (16, 64)
+
+To read the implementation in the checkout (I described what it computes; this shows the exact code):
+grep -n "make_tiled_copy" -A20 ../cutlass/include/cute/atom/copy_atom.hpp | head -60
+Look for raked_product, right_inverse and product_each(shape(...)); that last one computes the (16,64) 
+tile from Step 2.
+
+To see it printed: add print(copyA_tn) or print_latex(copyA_tn) to print_layouts.cu (Step 10). print_latex
+draws the 16 × 64 tile with the thread number in each cell, so you can see the result of Step 5 for every
+thread at once.
+
+Step 5: gemm_nt and two discrepancies in the source (L260–350)
+
+The differences from TN:
+</pre>
+
+<pre>
+Step 5: gemm_nt and two discrepancies in the source (L260–350)
+The differences from TN:
+</pre>
+| |TN|	NT|
+|:---|:---|:---|
+|dA, dB	|(ldA, 1)	|(1, ldA) (L279–280): M/N-major|
+|smem atom|	Layout_K_SW128_Atom|	Layout_MN_SW128_Atom (L291–292)|
+|copy thread layout	|(16,8):(8,1)	|(16,8), default column-major stride (1,16)|
+|copy value layout	|(1,8)	|(8,1)|
+|MMA	|Major::K, Major::K	|Major::MN, Major::MN (L302)|
+<pre>
+NT copy, checked. (16,8):(1,16) maps thread t to (t mod 16, t / 16): 16 thread-rows along M, 8 thread-columns
+along K. The value layout (8,1) gives each thread 8 consecutive M elements in one K column. So thread t copies
+M elements 8·(t mod 16) … +7 of K column t/16, matching the derivation from the name.
+
+Discrepancy 1: the comments are stale. L296 and L299 say // Thr layout 32x4 m-major and L297/L300 say // Val layout 8x1. The code is Shape<_16,_8>: 16×8, not 32×4. The compiled kernel, and the TV layout in your ptxas name, follow the code. The comment was probably left from an earlier version. Trust the code and the demangled type, not comments.
+
+Discrepancy 2: dead code that wouldn’t compile. L305–307 and L397–399 contain print(mmaC), but no variable mmaC exists (the MMA is tiled_mma). It’s inside #if 0, so it’s never compiled. If you change it to #if 1 to print the layouts, change mmaC to tiled_mma.
+
+Order in the log ≠ order in the file. gemm_nt is defined first (L264) and called first (L458), yet ptxas reported the TN kernel first. The order of entry functions in the PTX isn’t source order, so always identify kernels by their names, as we did with dA.
+
+Step 10: Verify the layouts print_layouts.cu on my own machine - RTX 5080 Blackwell sm120 (no Hopper needed)
+The layouts and TV layouts are host-side CuTe objects, so I can print them on the machine, as a host-only
+program with no kernel launch. This checks Parts 5 and 6 of the analysis with real output instead of 
+my derivations:
 
 </pre>
 <pre>
