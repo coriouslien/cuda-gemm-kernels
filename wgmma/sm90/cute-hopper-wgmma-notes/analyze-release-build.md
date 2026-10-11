@@ -579,8 +579,41 @@ Order in the log ≠ order in the file. gemm_nt is defined first (L264) and call
 Step 10: Verify the layouts print_layouts.cu on my own machine - RTX 5080 Blackwell sm120 (no Hopper needed)
 The layouts and TV layouts are host-side CuTe objects, so I can print them on the machine, as a host-only
 program with no kernel launch. This checks Parts 5 and 6 of the analysis with real output instead of 
-my derivations:
+my derivations.
+Here is what to expect in the print_layouts.cu program, assuming my analysis is correct.
+• sA_tn prints Sw<3,4,3> o smem_ptr[16b](unset) o ((_8,_16),(_64,_1),(_1,_3)):((_64,_512),(_1,_0),(_0,_8192)),
+or similar;
+• cosize = 24576;
+• the swizzle table matches the one I checked numerically here:
+    0 1 2 3 4 5 6 7
+  1 0 3 2 5 4 7 6
+  2 3 0 1 6 7 4 5
+  3 2 1 0 7 6 5 4
+  4 5 6 7 0 1 2 3
+  5 4 7 6 1 0 3 2
+  6 7 4 5 2 3 0 1
+  7 6 5 4 3 2 1 0
+I haven’t compiled this program. In particular, I’m not certain that layout_b() is the accessor name for 
+the inner layout in your CUTLASS version, or that print works on a GMMA TiledMMA on the host. If anything
+fails, paste the error and we’ll fix it. Its output gives you first-hand evidence for the layout analysis,
+which is also good material for your write-up.
 
+Step 6: The kernel body, setup (L65–143)
+6.1 Global tensors and the CTA’s tiles (L66–74)
+Tensor mA = make_tensor(make_gmem_ptr(A), select<0,2>(shape_MNK), dA);  // (M,K)
+auto cta_coord = make_coord(blockIdx.x, blockIdx.y, _);                 // (m,n,k)
+Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{});    // (BLK_M,BLK_K,k)
+• mA is all of A as an (M,K) tensor with the strides.
+• local_tile cuts it into 128×64 tiles and selects this CTA’s row of tiles. Step<_1, X, _1> means “use the
+tiler’s M and K modes, ignore N” (A has no N mode). _ in cta_coord keeps all k-tiles, giving the trailing 
+mode k.
+• So blockIdx.x picks the M tile and blockIdx.y the N tile. The loop walks the k mode.
+
+6.2 Shared tensors (L77–81)
+extern __shared__ char shared_memory[];                                  // L77
+SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);  // L79
+Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});  // L80
+  
 </pre>
 <pre>
 =================================================================================
