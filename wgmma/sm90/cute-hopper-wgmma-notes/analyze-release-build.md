@@ -507,7 +507,7 @@ Why 8 values: the copy atom is SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, and 128 bit
 thread does exactly one 16-byte cp.async per copy step.
 Step 2: The tile they cover together → (16, 64)
 Multiply the thread grid by the value grid, mode by mode:
-</[re>
+</pre>
 |Mode|	Threads|	× Values per thread|	= Tile|
 |:---|:--------|:--------------------|:-------|
 |M	|16|	× 1	|16|
