@@ -43,7 +43,7 @@ Local data is deleted on terminate. Copy your results back with scp before termi
 Check the CUDA version once you’re connected (nvcc --version). sm_90a needs CUDA 12.0 or newer.
 </pre>
 Sources:
-<sub>[Lambda Labs GPU Cloud – Hermes Agent docs] (third-party guide)(https://hermes-agent.nousresearch.com/docs/user-guide/skills/optional/mlops/mlops-lambda-labs)</sub><br>
+<sub>[Lambda Labs GPU Cloud – Hermes Agent docs(third-party guide)](https://hermes-agent.nousresearch.com/docs/user-guide/skills/optional/mlops/mlops-lambda-labs)</sub><br>
 <sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub><br>
 <pre>    
 2. Create an SSH key if you don’t already have one:
