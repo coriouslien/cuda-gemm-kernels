@@ -117,7 +117,7 @@ For the first time, a measured answer to the question your write-up raises: how 
 
 Sources:
 </pre>
-<sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub>
+<sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub><br>
 <sub>[Running Nvidia NSight – permissions issue (Lambda forum)](https://deeptalk.lambda.ai/t/running-nvidia-nsight-permissions-issue/4433)</sub>
 <sub>[NVIDIA: ERR_NVGPUCTRPERM solutions](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute)</sub>
 
