@@ -258,9 +258,10 @@ Stage 4         wrap:           Sw<3,4,3> ∘ flag<16> ∘ ((8,16),(64,1),(1,3))
                                                 │
 build log [name]                 ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag_bits<16>, Layout<…>>
 
-The program print_layouts.cu. Verify the layouts on your own machine (no Hopper needed)
-prints this same layout on your own machine. That lets you check Stage 4 directly. Printing
-GMMA::Layout_K_SW128_Atom<half_t>{} on its own would also show the Stage 2 atom before it’s repeated. 
+The program print_layouts.cu.(check the attached program, print_layouts.cu.) Verify the layouts on your 
+own machine (no Hopper needed) prints this same layout on your own machine. That lets you check Stage 4
+directly. Printing GMMA::Layout_K_SW128_Atom<half_t>{} on its own would also show the Stage 2 atom before 
+it’s repeated. 
   
 swizzle isn’t fixed for SM90.
 Swizzle<3,4,3> is fixed for this one atom, Layout_K_SW128_Atom, the one the tutorial chose. Hopper’s 
