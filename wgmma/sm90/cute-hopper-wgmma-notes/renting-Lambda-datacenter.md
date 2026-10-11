@@ -1,13 +1,37 @@
 <pre>
-Below is a complete procedure. The main idea is to do all the preparation on your own machine first, so the paid time on the H100 is spent only on building, running and profiling.
+Below is a complete procedure. The main idea is to do all the preparation on my own machine first, so the
+paid time on the H100 is spent only on building, running and profiling (nsys and ncu).
 
-A few details below I could not confirm from Lambda’s own pages today: the exact button names, the billing increment, and the current price. I mark those. Check them on Lambda’s site when you sign up.
+A few details below I could not confirm from Lambda’s own pages today: the exact button names, the billing
+increment, and the current price. I mark those. Check them on Lambda’s site when I sign up, and give an 
+update later.
 
-Part A: Before renting (free, on your machine)
+Part A: Before renting (free, on my machine, RTX5080 Blackwell, sm120)
 
 1. Create a Lambda account
-Sign up at lambda.ai (the Cloud / GPU instances section) and add a payment method. On-demand instances are billed while they run.
+Sign up at lambda.ai (the Cloud / GPU instances section) and add a payment method. On-demand instances are
+billed while they run.
+https://cloud.lambda.ai/
+Where to choose the GPU
+On lambda.ai, sign up or log in.
+Go to the cloud console: https://cloud.lambda.ai, then the Instances page (https://cloud.lambda.ai/instances).
+Click “Launch instance”.
+A list of GPU types appears, by model name, for example “1x H100 (80 GB PCIe)”. Pick one, then the region,
+then the SSH key.
 
+(This is from a third-party guide to Lambda’s console, not Lambda’s own documentation; the page layout may
+differ slightly.)
+</pre>
+Which model is which architecture
+|GPU model in<br> the list	|Architecture	|Can it run wgmma_sm90.cu?|
+|:-------------------|:----------------------|:------------------------|
+|H100 PCIe|	Hopper, SM90|	Yes. Choose this one.|
+|H100 SXM	|Hopper, SM90|	Yes (faster memory, higher price)|
+|GH200	|Hopper GPU + ARM<br> Grace CPU|	The GPU is right, but the ARM CPU complicates setup.<br> Avoid.|
+|B200/GB200|Blackwell, SM100|	No. SM100 uses tcgen05, not WGMMA. A kernel<br> compiled for sm_90a can’t run there.|
+|A100,A10,<br>A6000|	Ampere, SM80/86|	No. No WGMMA.|
+
+<pre>
 2. Create an SSH key if you don’t already have one:
 
 ssh-keygen -t ed25519 -C "lambda"          # accept the default path ~/.ssh/id_ed25519
