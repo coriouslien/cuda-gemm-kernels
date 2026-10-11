@@ -613,7 +613,138 @@ mode k.
 extern __shared__ char shared_memory[];                                  // L77
 SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);  // L79
 Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});  // L80
+This confirms why ptxas printed no smem: L77 is dynamic shared memory, sized only at launch.
+
+6.3 Copy partitioning and the position-independent swizzle (L87–95)
+Tensor tAgA = thr_copy_a.partition_S(gA);                 // (CPY,CPY_M,CPY_K,k)
+Tensor sA_  = as_position_independent_swizzle_tensor(sA); // L89
+Tensor tAsA = thr_copy_a.partition_D(sA_);                // (CPY,CPY_M,CPY_K,PIPE)
+Tensor tAgA = thr_copy_a.partition_S(gA);                 // (CPY,CPY_M,CPY_K,k)
+Tensor sA_  = as_position_independent_swizzle_tensor(sA); // L89
+Tensor tAsA = thr_copy_a.partition_D(sA_);                // (CPY,CPY_M,CPY_K,PIPE)
+Shapes for this thread:
+</pre>
+|CPY|	CPY_M|	CPY_K|
+|:---|:----|:------|
+|TN|	8 halfs (one 16-byte cp.async)|	128/16 = 8|	64/64 = 1|
+|NT|	8 halfs|	128/128 = 1|	64/8 = 8|
+<pre>
+Either way, 8 cp.async per operand per k-tile, 16 total, matching the analysis.
+
+This is the refinement about the swizzle. Note that L89/L94 convert sA before partitioning the copy, 
+but L128 (Step 6.4) partitions the original sA for the MMA:
+
+Copy path: as_position_independent_swizzle_tensor rewrites the tensor so the swizzle is applied to the 
+element offset relative to the buffer start, instead of to the absolute pointer value. As far as I know, 
+this relies on the buffer being aligned to the swizzle period (Step 2), and it lets CuTe compute each 
+thread’s smem destination with plain offset arithmetic.
+MMA path: wgmma doesn’t take addresses per element. It takes a descriptor (start address plus layout 
+and swizzle mode), and the hardware applies the 128-byte swizzle to the addresses itself.
+
+So my earlier sentence “the swizzle acts on the absolute byte address” is accurate for what the hardware 
+does on the MMA side, but the copy side uses the offset-based form. To read the function itself:
+  grep -rn "as_position_independent_swizzle_tensor" -A15 cutlass/include/cute/ | head -40
   
+6.4 MMA partitioning: descriptors, not data (L127–136)
+Tensor tCsA = thr_mma.partition_A(sA);        // (MMA,MMA_M,MMA_K,PIPE)
+Tensor tCrA = thr_mma.make_fragment_A(tCsA);  // (MMA,MMA_M,MMA_K,PIPE)
+Tensor tCrC = thr_mma.make_fragment_C(tCgC);  // (MMA,MMA_M,MMA_N)
+• MMA_M = 128/64 = 2, MMA_N = 2, MMA_K = 64/16 = 4, PIPE = 3.
+• New finding (3): for an _SS atom, both operands are read from shared memory by the hardware. So 
+make_fragment_A doesn’t create registers holding A values. In CuTe’s GMMA traits the A/B “fragment” type for
+_SS is a shared-memory matrix descriptor (a 64-bit value encoding start address, strides and swizzle mode).
+tCrA is therefore a tensor of descriptors, one per (MMA_M, MMA_K, PIPE). The name tCrA (“register A”) is
+misleading here.
+• tCrC really is registers: 2 × 2 atoms × 32 halfs = 128 halfs per thread = 64 registers, as computed from 
+the log.
+
+Where the descriptors live in the machine code: the earlier SASS showed UMOV instructions between HGMMAs,
+which points to uniform registers (UR*, one value shared by the warp). As far as I know, ptxas’s “Used N
+registers” counts only the regular per-thread registers, so descriptors held in uniform registers wouldn’t 
+be part of the 112. I can’t confirm that from this file; the SASS register names would.
+
+clear(tCrC) appears twice (L143 and L199). It’s harmless (the compiler removes the duplicate zeroing) and 
+is probably left over from editing, like the commented-out PREFETCH block at L106–121, which is dead code.
+
+Step 7: The main loop, line by line (L178–251)
+auto K_TILE_MAX = size<3>(tAgA);   // number of k-tiles = K/64 (runtime)
+auto K_PIPE_MAX = size<3>(tAsA);   // 3 (static)
+Prefetch (L190–196):
+for (int k = 0; k < K_PIPE_MAX-1; ++k) {        // k = 0, 1
+  copy(copy_a, tAgA(_,_,_,k), tAsA(_,_,_,k));
+  copy(copy_b, tBgB(_,_,_,k), tBsB(_,_,_,k));
+  cp_async_fence();                             // cp.async.commit_group
+}
+__syncthreads();                                // L201 — the ONLY barrier
+k-tiles 0 and 1 are requested into stages 0 and 1, each as one commit group.
+
+This corrects the analysis: the only __syncthreads() in the kernel is L201, before the loop. That’s what used 1 barriers counts (barrier 0, used once in the code). Inside the loop there’s no __syncthreads().
+
+Each iteration (L213–249):
+</pre>
+|Lines|	Code|	PTX it maps to|	Meaning|
+|:----|:----|:--------------|:-------|
+|L215–<br>216|k_tile_next = min(k_tile + 2,<br> K_TILE_MAX-1)| - | the tile to load next<br> (clamped, so the last<br> iterations re-load the<br> last tile)|
+|L222<br>–224|2 × copy + cp_async_fence()|16 × cp.async,<br> cp.async.commit_group|request the next tile<br> into stage<br> k_pipe_write|
+|L227<br>–228|	advance k_pipe_write mod 3| - ||
+|L235|	cp_async_wait<0>()|	cp.async.wait_group 0|	wait until 0 groups<br> are pending, i.e. all<br> copies, including the<br> one just issued|
+|L237	|warpgroup_fence_operand(tCrC)|	(compiler-only)	stop the compiler<br> from moving<br> accumulator register<br> accesses across this point|
+|L238|	warpgroup_arrive()|	wgmma.fence|	prior register/smem<br> accesses are ordered<br>before the wgmmas|
+|L240	|cute::gemm(mma,<br> tCrA(_,_,_,k_pipe_read),<br> tCrB(...), tCrC)|	16 × wgmma.mma_async|	4 (K) × 2 (M) × 2 (N)|
+|L241|	warpgroup_commit_batch()|	wgmma.commit_group|	close the batch of 16|
+|L243|	warpgroup_wait<0>()|	wgmma.wait_group 0|	wait until all 16 are<br> finished|
+|L244|	warpgroup_fence_operand(tCrC)|	(compiler-only)||	
+|L247<br>–248|advance k_pipe_read mod 3| - | |
+<pre>
+New finding (2): this loop doesn’t overlap memory and compute. cp.async.wait_group N waits until at most N
+commit groups are still in flight. With N = 0 at L235, every iteration waits for the copy it just issued 
+before any wgmma starts, and L243 waits for every wgmma before the next copy is issued. So loading and 
+computing alternate instead of overlapping, and the three stages give no latency hiding. The source says 
+so itself in the comment on L234: “optimize by pipelining to overlap GMEM reads”. A real pipeline would 
+wait with N = K_PIPE_MAX-2 (= 1), keeping one load in flight during compute. This will matter when you 
+profile on an H100: expect ncu to show the tensor cores idle while waiting on memory. It’s also a natural
+modification to try.
+
+An open question I can’t settle from this file: each wgmma reads smem tiles that other threads wrote with
+cp.async. L235 only waits for the calling thread’s own copies, and there’s no CTA barrier between L235 
+and L240. I can’t confirm from this file whether wgmma.fence plus the per-thread waits fully guarantee 
+that other threads’ data is visible to the wgmma. CUTLASS’s production SM90 kernels load with TMA and
+synchronize with mbarriers instead. Treat this loop as a teaching simplification, not a pattern to copy.
+
+Why the loop isn’t unrolled: L212 CUTE_NO_UNROLL. K_TILE_MAX is a runtime value (from K), so this is the 
+one real loop. Everything inside (the 16 copies, the 16 wgmmas) is fully unrolled, because their counts 
+are static.
+
+Step 8: The epilogue (L257)
+axpby(alpha, tCrC, beta, tCgC);    // C = alpha * acc + beta * C
+
+The accumulators go straight from registers to global memory, with no smem staging. Each thread writes its 
+own fragment of C following the wgmma accumulator layout. main uses alpha = 1, beta = 0 (L512–513).
+
+Step 9: main and the launch (L467–581)
+
+L479: if (props.major != 9) { ...; return 0; }. On your RTX 5080/5050 (major = 12), the program exits here,
+before any kernel. This is the source-level reason it can’t run on your machines (the compiler-level 
+reason was sm_90a).
+
+New finding (1): the default run uses the NT kernel. L499 and L503 default to transA = 'N', transB = 'T', 
+and L457–458 dispatch that to gemm_nt. So kernel 2 (114 registers) is the one that runs unless you pass T N 
+as arguments 4–5. When you profile on a rented H100, run both:
+./wgmma_sm90 5120 5120 4096 N T    # NT kernel (default)
+./wgmma_sm90 5120 5120 4096 T N    # TN kernel
+
+Default problem size (L487–497): M = N = 5120, K = 4096.
+• grid = ⌈5120/128⌉ × ⌈5120/128⌉ = 40 × 40 = 1,600 CTAs (L416–417; the cluster is 1×1×1, so round_up 
+changes nothing);
+• k-tiles per CTA = 4096 / 64 = 64 loop iterations.
+
+At 2 CTAs per SM (the smem limit), an H100 PCIe (114 SMs) holds 228 CTAs at once: 1,600 / 228 ≈ 7.0, so 
+8 waves, the last one nearly empty. An H100 SXM (132 SMs) holds 264: about 6.1, so 7 waves. Since you 
+plan to rent a single PCIe GPU, expect that tail effect in nsys/ncu.
+
+Launch path (L418–438): cudaFuncSetAttribute(..., MaxDynamicSharedMemorySize, 98304) is required, because 
+any request above 48 KB of dynamic smem must be opted into. Then launch_kernel_on_cluster, CUTLASS’s 
+wrapper around the cluster launch API, with a 1×1×1 cluster (equivalent to a normal launch).
 </pre>
 <pre>
 =================================================================================
