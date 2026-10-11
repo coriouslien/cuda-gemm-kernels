@@ -100,12 +100,27 @@ scp -r ubuntu@<IP>:~/sm90/logs    ~/cuda-learning/cute_hopper/sm90/logs-h100
 scp -r ubuntu@<IP>:~/sm90/results ~/cuda-learning/cute_hopper/sm90/results-h100
 scp -r ubuntu@<IP>:~/sm90/logs    ~/cuda-learning/cute_hopper/sm90/logs-h100
 </pre>
-Step	Rough time
-Launch and environment check	5–10 min
-Clone CUTLASS, copy project, build both	10–15 min
-Runs + nsys + 2 × ncu --set full	10–20 min
-Checking results, copying back	10 min
-Total	about 1 hour
+|Step|	Rough time|
+|:----|:-------------|
+|Launch and environment check|	5–10 min|
+|Clone CUTLASS, copy project, build both	|10–15 min|
+|Runs + nsys + 2 × ncu --set full	|10–20 min|
+|Checking results, copying back	|10 min|
+|Total	about 1 |hour|
+
+<pre>
+At roughly $2.50/hour that’s a few dollars. Budget for 2 hours in case something needs fixing. Check Lambda’s pricing page for the billing increment.
+
+What this gives you
+
+For the first time, a measured answer to the question your write-up raises: how much does C7510 serialization actually cost? Run time and TFLOP/s of Debug vs Release on the same H100, plus ncu’s view of tensor-core utilization in each. That’s part 2 of your notes.
+
+Sources:
+</pre>
+<sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub>
+Running Nvidia NSight – permissions issue (Lambda forum)
+NVIDIA: ERR_NVGPUCTRPERM solutions
+
 
 
 
