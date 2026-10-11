@@ -262,6 +262,43 @@ The program print_layouts.cu.(check the attached program, print_layouts.cu.) Ver
 own machine (no Hopper needed) prints this same layout on your own machine. That lets you check Stage 4
 directly. Printing GMMA::Layout_K_SW128_Atom<half_t>{} on its own would also show the Stage 2 atom before 
 it’s repeated. 
+
+nvcc -std=c++17 --expt-relaxed-constexpr \
+     -I ../cutlass/include -I ../cutlass/tools/util/include \
+     print_layouts.cu -o print_layouts && ./print_layouts
+nvcc warning : Support for offline compilation for architectures prior to '<compute/sm/lto>_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).
+sA_tn : Sw<3,4,3> o smem_ptr[16b](unset) o ((_8,_16),(_64,_1),(_1,_3)):((_64,_512),(_1,_0),(_0,_8192))
+sA_nt : Sw<3,4,3> o smem_ptr[16b](unset) o ((_64,_2),(_8,_8),(_1,_3)):((_1,_512),(_64,_1024),(_0,_8192))
+cosize: _24576
+TiledCopy
+  Tiler_MN:       (_16,_64)
+  TiledLayout_TV: ((_8,_16),_8):((_128,_1),_16)
+Copy_Atom
+  ThrID:        _1:_0
+  ValLayoutSrc: (_1,_8):(_0,_1)
+  ValLayoutDst: (_1,_8):(_0,_1)
+  ValLayoutRef: (_1,_8):(_0,_1)
+  ValueType:    16b
+
+TiledMMA
+  ThrLayoutVMNK:  (_128,_1,_1,_1):(_1,_0,_0,_0)
+  PermutationMNK: (_,_,_)
+MMA_Atom
+  ThrID:      _128:_1
+  Shape_MNK:  (_64,_64,_16)
+  LayoutA_TV: (_128,(_64,_16)):(_0,(_1,_64))
+  LayoutB_TV: (_128,(_64,_16)):(_0,(_1,_64))
+  LayoutC_TV: ((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
+
+0 1 2 3 4 5 6 7 
+1 0 3 2 5 4 7 6 
+2 3 0 1 6 7 4 5 
+3 2 1 0 7 6 5 4 
+4 5 6 7 0 1 2 3 
+5 4 7 6 1 0 3 2 
+6 7 4 5 2 3 0 1 
+7 6 5 4 3 2 1 0 
+
   
 swizzle isn’t fixed for SM90.
 Swizzle<3,4,3> is fixed for this one atom, Layout_K_SW128_Atom, the one the tutorial chose. Hopper’s 
