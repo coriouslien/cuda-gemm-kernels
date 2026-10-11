@@ -522,10 +522,7 @@ Thread t = 13: t mod 8 = 5, t / 8 = 1.
 </pre>
 |v	|index = 128·5 + 1·1 + 16·v|	m = index mod 16|	k = index / 16|
 |:--|:-------------------------|:-----------------|:--------------|
-|0	|641|	1	|40|
-|1	|657|	1	|41|
-|…	|…	|…	|…|
-|7	|753|	1	|47|
+
 <pre>
 Thread 13 copies row 1, K = 40…47: 8 consecutive halfs = one 16-byte chunk. From the source directly: 
 thread 13 sits at grid position (tm, tk) = (13/8, 13 mod 8) = (1, 5), so row 1, chunk 5 → K = 5·8 = 40…47.
