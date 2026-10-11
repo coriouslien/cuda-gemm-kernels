@@ -1,3 +1,4 @@
+<pre>
 Below is a complete procedure. The main idea is to do all the preparation on your own machine first, so the paid time on the H100 is spent only on building, running and profiling.
 
 A few details below I could not confirm from Lambda’s own pages today: the exact button names, the billing increment, and the current price. I mark those. Check them on Lambda’s site when you sign up.
@@ -98,6 +99,7 @@ scp -r ubuntu@<IP>:~/sm90/results ~/cuda-learning/cute_hopper/sm90/results-h100
 scp -r ubuntu@<IP>:~/sm90/logs    ~/cuda-learning/cute_hopper/sm90/logs-h100
 scp -r ubuntu@<IP>:~/sm90/results ~/cuda-learning/cute_hopper/sm90/results-h100
 scp -r ubuntu@<IP>:~/sm90/logs    ~/cuda-learning/cute_hopper/sm90/logs-h100
+</pre>
 Step	Rough time
 Launch and environment check	5–10 min
 Clone CUTLASS, copy project, build both	10–15 min
