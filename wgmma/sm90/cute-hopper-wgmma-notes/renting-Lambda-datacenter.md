@@ -114,9 +114,8 @@ At roughly $2.50/hour that’s a few dollars. Budget for 2 hours in case somethi
 What this gives you
 
 For the first time, a measured answer to the question your write-up raises: how much does C7510 serialization actually cost? Run time and TFLOP/s of Debug vs Release on the same H100, plus ncu’s view of tensor-core utilization in each. That’s part 2 of your notes.
-
-Sources:
 </pre>
+Source:
 <sub>[H100 PCIe on Lambda Labs – GPUPerHour](https://gpuperhour.com/providers/lambda-labs)</sub><br>
 <sub>[Running Nvidia NSight – permissions issue (Lambda forum)](https://deeptalk.lambda.ai/t/running-nvidia-nsight-permissions-issue/4433)</sub><br>
 <sub>[NVIDIA: ERR_NVGPUCTRPERM solutions](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute)</sub><br>
