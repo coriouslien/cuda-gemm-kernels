@@ -917,14 +917,13 @@ flash_attn/cute is FlashAttention-4, aimed at Hopper and Blackwell (H100, B200).
 
 To find the RS second GEMM in hopper/, search for these terms. They’re my best guesses at the names used, not confirmed:
 
-bash
 git clone https://github.com/Dao-AILab/flash-attention.git
 cd flash-attention/hopper
 grep -rn "rs_op_selector\|_RS\b\|PV_is_RS\|Mma_PV\|MmaPV" --include=*.h --include=*.hpp --include=*.cu . | head -30
 
 CUTLASS’s own attention examples: your CUTLASS checkout may also contain Hopper and Blackwell FMHA examples. I couldn’t confirm the exact directory names, so list them yourself:
 
-bash
+
 ls ../cutlass/examples | grep -i -E "fmha|attention"
 A suggested reading order
 FA3 paper, Sections 2.2 and 3.1 (Algorithm 1 and the RS-GEMM label).
@@ -946,8 +945,9 @@ PTX ISA 8.2 (archived)
 CUTLASS Warpgroup MMA Programming Guide
 Dao-AILab/flash-attention on GitHub
 </pre>
-+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 <pre>
+=====================================================================
 Flash Attention and softmax :
 Start from zero, with small numbers we can check by hand or in a few lines of C++. I’ll go 
 in lessons, each building only on the ones before. This answer covers the foundation: softmax,
@@ -1028,8 +1028,630 @@ Lesson 3: Attention, with a complete small example
 What goes in
 A sequence of N tokens (words or word pieces). For each token, the model has already computed
 three vectors of length d (the “head dimension”):
-Q (query): “what is this token looking for?”
-K (key): “what does this token offer?”
-V (value): “what information does this token carry?”
+• Q (query): “what is this token looking for?”
+• K (key): “what does this token offer?”
+• V (value): “what information does this token carry?”
+Stacked as rows, they form three matrices: Q is N × d, K is N × d, V is N × d. Row i belongs 
+to token i.
 
+What attention computes, in three steps
+1. S = Q · Kᵀ / √d       scores: how well each query matches each key    (N × N)
+2. P = softmax(S)        row by row: each row becomes probabilities       (N × N)
+3. O = P · V             each output row = weighted average of V's rows   (N × d)
+Q = [ 1 0 1 0 ]   token 0         K = [ 1 0 1 0 ]   token 0         V = [ 10  0 ]   token 0
+    [ 0 2 0 0 ]   token 1             [ 0 1 0 1 ]   token 1             [  0 10 ]   token 1
+    [ 1 1 1 1 ]   token 2             [ 2 0 0 0 ]   token 2             [  5  5 ]   token 2
+
+(V usually also has d columns; I gave it 2 to keep the output small. That’s allowed: V’s 
+width only sets the output width.)
+Step 1: scores S = Q · Kᵀ / √d
+Entry S[i][j] is the dot product of query i with key j: how well token i’s question matches
+token j’s offer.
+Example, S[0][0]: Q row 0 · K row 0 = 1·1 + 0·0 + 1·1 + 0·0 = 2.
+All nine dot products:
+Q · Kᵀ = [ 2 0 2 ]
+         [ 0 2 0 ]
+         [ 2 2 2 ]
+Divide by √d = 2:  
+S = [ 1 0 1 ]     row 0: query of token 0 vs keys of tokens 0, 1, 2
+    [ 0 1 0 ]     row 1
+    [ 1 1 1 ]     row 2
+Why divide by √d: with larger d, dot products grow, and by Lesson 1(b) bigger scores make softmax too peaked. Dividing by √d keeps their scale moderate.
+
+Step 2: softmax of each row → P
+Row 0, [1, 0, 1], done safely (Lesson 2) with m = 1:
+exp(S − m) = [ 1.0000, 0.3679, 1.0000 ]    sum = 2.3679
+P row 0    = [ 0.4223, 0.1554, 0.4223 ]
+All three rows:
+P = [ 0.4223 0.1554 0.4223 ]    token 0 attends mostly to tokens 0 and 2
+    [ 0.2119 0.5761 0.2119 ]    token 1 attends mostly to itself
+    [ 0.3333 0.3333 0.3333 ]    token 2 attends to all equally (all scores were equal)
+
+Each row sums to 1.
+Step 3: output O = P · V
+Row i of O is a weighted average of V’s rows, with row i of P as the weights.
+Row 0:
+0.4223 · [10, 0]  +  0.1554 · [0, 10]  +  0.4223 · [5, 5]
+= [4.223, 0]      +  [0, 1.554]        +  [2.112, 2.112]
+= [6.3348, 3.6652]
+  
+All three rows:
+O = [ 6.3348 3.6652 ]
+    [ 3.1791 6.8209 ]
+    [ 5.0000 5.0000 ]
+Token 2’s output is exactly [5, 5], the plain average of the three V rows, because its weights
+were all 1/3.
+  
+The one fact to take into the next lessons
+Every row is independent. Row i of O needs only row i of Q, plus all of K and V. So the work
+splits by rows of Q. In FlashAttention, each thread block takes a block of Q rows (in Lesson
+5’s terms, “a block of query rows”).
+the King of Swords reversed appears, casting a shadow of harshness or distance. This final 
+card acts as a mirror to your past, but instead of the harmony of the Lovers, it speaks of 
+a figure who has become cold, disconnected, or perhaps unreachable in a very permanent sense.
+This future energy does not show a man who is actively moving through the world with warmth;
+rather, it suggests a severance of communication and a static, frozen state of being.
+kernel 1:  read Q, K      → compute S      → write S  (N × N) to HBM
+kernel 2:  read S         → softmax        → write P  (N × N) to HBM
+kernel 3:  read P, V      → compute O      → write O  (N × d) to HBM
+How big is S?
+For a real sequence, N = 8192 tokens, in FP16 (2 bytes per element):
+N × N × 2 bytes = 8192 × 8192 × 2 = 134,217,728 bytes = 128 MiB
+That’s per attention head, per sequence, and a model has many heads and runs many sequences 
+at once. For comparison, Q, K and V together are only 3 × 8192 × 128 × 2 bytes = 6 MiB 
+(with d = 128).
+  
+The cost:
+• S and P are each written to HBM once and read back once: about 4 × 128 MiB = 512 MiB of 
+memory traffic per head, versus about 8 MiB for Q, K, V and O.
+• The arithmetic in kernel 2 (exp, max, sum) is tiny. That kernel spends almost all its time
+waiting for memory.
+• S grows as N²: double the sequence length, and S takes 4× the memory.
+A whole S matrix also can’t simply stay on-chip: an H100 SM has about 228 KB of shared memory,
+and S for one head is 128 MiB.
+
+What FlashAttention changes
+
+FlashAttention never writes S or P to HBM at all. One kernel reads blocks of Q, K and V into 
+on-chip memory, computes a block of S, applies softmax, multiplies by V, accumulates into O,
+and throws that block of S away. Only O is written out.
+The obstacle is softmax. Lesson 3 needed the whole row of S to find the maximum and the sum
+before producing any P values. If a block only sees part of a row at a time, how can it 
+compute a correct softmax?
+That’s exactly the question the next lesson answers.
+Coming next
+Lesson 5: Online softmax. Computing the softmax of a row piece by piece, keeping only a running
+maximum m and a running sum l, with a correction factor when the maximum changes. We’ll use row
+0 of this example, split into pieces, and check that the answer comes out identical.
+Lesson 6: FlashAttention = tiling + online softmax. The full loop over blocks of K and V, 
+still with this 3-token example.
+Lesson 7: Mapping it onto the GPU. Which thread block handles which rows, and what lives in
+registers and shared memory. That’s where the previous FA3 discussion (pingpong, _RS, overlap) 
+will make sense.
+
+Try reproducing Lesson 3’s numbers yourself (a small host-only C++ program is enough) before
+moving on. When you’re ready, ask for Lesson 5.
+
+softmax - Lessons 1–2. This lesson takes the next step: online softmax, the form of softmax
+that FlashAttention actually uses. After that, Lesson 6 puts it into the attention loop.
+
+Everything below was compiled and run as C++ (the program is at the end). The input row is made
+up by me; every other number is computed from it.
+
+Lesson 5: Online softmax
+1. The problem
+Safe softmax (Lesson 2) needs two facts(m, l) about the whole row before it can produce 
+any weight:
+
+• m: the row’s maximum
+• l: the sum of exp(x − m) over the row
+
+That’s why it makes three passes over the row: find m, compute l, then compute each weight.
+
+In FlashAttention, a row of S is never available all at once. It arrives one block at a time
+(one block of keys per loop iteration), and old blocks are thrown away to save memory. 
+So the question is:
+
+Can we compute m and l while seeing the row only block by block, keeping just two numbers
+between blocks?
+Yes. That’s online softmax.
+2. The idea: running values, corrected when the maximum changes
+Keep two running values, starting from “nothing seen yet”:
+m = −∞      (largest value seen so far)
+l = 0       (sum of exp(x − m) over everything seen so far)
+They’re(m = −∞, l = 0)  the initial values of the two running variables, set once before the
+loop over blocks begins. In the Lesson 5 program they’re these two lines:
+float m = -std::numeric_limits<float>::infinity();   // m = −∞
+float l = 0.f;                                        // l = 0
+for (int start = 0; start < n; start += B) {
+    ...                                               // updated once per block
+}
+They’re set once per row. In attention, every row of S has its own m and l, so each row 
+starts again from m = −∞, l = 0.
+
+For each new block:
+1. m_blk  = max of this block
+2. m_new  = max(m, m_blk)
+3. scale  = exp(m − m_new)                  ← correction factor for the old sum
+4. l      = l · scale  +  Σ exp(x − m_new)  over this block
+5. m      = m_new
+  
+Why step 3 is needed
+l holds Σ exp(x − m_old): each term is measured relative to the old maximum. When a bigger
+maximum appears, every old term must be re-expressed relative to m_new. One rule of
+exponentials does it for all of them at once:
+exp(x − m_new) = exp(x − m_old) · exp(m_old − m_new)
+                                   └───── scale ─────┘
+So multiplying the whole old sum by scale converts it, without needing the old x values. That’s the key trick: the old block can be forgotten, because its contribution is fully captured by l.
+
+If the maximum didn’t change (m_new = m_old): scale = exp(0) = 1, and nothing changes.
+If it grew: scale < 1, and the old sum shrinks accordingly.
+First block: m = −∞, so scale = exp(−∞) = 0, but l = 0 anyway, so 0 · 0 = 0. The empty 
+start needs no special case.
+3. Worked example
+Row (made up): x = [2, 1, 0, 3, 1, 4], processed in blocks of 2. I chose values where the
+maximum changes in every block, so the correction is used twice.
+
+Block 1: [2, 1]
+m_blk = 2      m_new = max(−∞, 2) = 2      scale = exp(−∞ − 2) = 0
+block sum = exp(2−2) + exp(1−2) = 1 + 0.3679 = 1.3679
+l = 0 · 0 + 1.3679 = 1.3679
+m = 2
+
+Block 2: [0, 3], the maximum grows from 2 to 3
+m_blk = 3      m_new = max(2, 3) = 3       scale = exp(2 − 3) = 0.3679
+block sum = exp(0−3) + exp(3−3) = 0.0498 + 1 = 1.0498
+l = 1.3679 · 0.3679 + 1.0498 = 0.5032 + 1.0498 = 1.5530
+m = 3
+
+1.3679 · 0.3679 = 0.5032 is block 1’s sum re-expressed relative to 3: exp(2−3) + exp(1−3) =
+0.3679 + 0.1353 = 0.5032.
+
+Block 3: [1, 4], the maximum grows from 3 to 4
+m_blk = 4      m_new = max(3, 4) = 4       scale = exp(3 − 4) = 0.3679
+block sum = exp(1−4) + exp(4−4) = 0.0498 + 1 = 1.0498
+l = 1.5530 · 0.3679 + 1.0498 = 0.5713 + 1.0498 = 1.6211
+m = 4
+
+Check against the whole row at once
+Safe softmax over the full row: m = 4, and
+l = e⁻² + e⁻³ + e⁻⁴ + e⁻¹ + e⁻³ + e⁰ = 1.6211        (computed)
+The same m and l, obtained while seeing only 2 values at a time.
+
+The weights
+With the final m = 4 and l = 1.6211, each weight is exp(x − m) / l. Output of the program 
+(ref = safe softmax on the whole row, online = block by block):
+x=2  ref=0.0835  online=0.0835
+x=1  ref=0.0307  online=0.0307
+x=0  ref=0.0113  online=0.0113
+x=3  ref=0.2269  online=0.2269
+x=1  ref=0.0307  online=0.0307
+x=4  ref=0.6169  online=0.6169
+max |ref - online| = 0
+Identical.
+
+4. One problem left, solved in Lesson 6
+Look at the last line of the algorithm: to produce the weights, it still needs a final pass
+over x, with the final m and l. So online softmax alone gets m and l in one pass, but the
+weights themselves still need the whole row.
+
+FlashAttention avoids that last pass entirely. It never needs the final weights P. It needs
+only O = P · V, and the same scale trick can be applied to a running O:
+O = O · scale + (this block's exp values) · (this block's V rows)
+and divide by l once at the very end. That’s Lesson 6: the full FlashAttention loop, using 
+the Lesson 3 example.
+
+The program
+Host-only C++. It runs on any machine, no GPU needed:
+#include <cmath>
+#include <cstdio>
+#include <limits>
+
+// Reference: safe softmax over the whole row (Lesson 2) — three passes
+void safe_softmax(const float* x, float* p, int n) {
+    float m = x[0];
+    for (int i = 1; i < n; ++i) m = std::fmax(m, x[i]);          // pass 1: max
+    float l = 0.f;
+    for (int i = 0; i < n; ++i) l += std::exp(x[i] - m);         // pass 2: sum
+    for (int i = 0; i < n; ++i) p[i] = std::exp(x[i] - m) / l;   // pass 3: weights
+}
+
+// Online softmax: visit the row block by block, keep only m and l
+void online_softmax(const float* x, float* p, int n, int B) {
+    float m = -std::numeric_limits<float>::infinity();
+    float l = 0.f;
+    for (int start = 0; start < n; start += B) {
+        int end = start + B < n ? start + B : n;
+        float m_blk = x[start];
+        for (int i = start + 1; i < end; ++i) m_blk = std::fmax(m_blk, x[i]);
+        float m_new = std::fmax(m, m_blk);
+        float scale = std::exp(m - m_new);            // correction for the old sum
+        float s = 0.f;
+        for (int i = start; i < end; ++i) s += std::exp(x[i] - m_new);
+        l = l * scale + s;
+        std::printf("block [%d,%d): m_blk=%g m_new=%g scale=%.4f block_sum=%.4f l=%.4f\n",
+                    start, end, m_blk, m_new, scale, s, l);
+        m = m_new;
+    }
+    for (int i = 0; i < n; ++i) p[i] = std::exp(x[i] - m) / l;   // final pass (removed in Lesson 6)
+}
+
+int main() {
+    const int n = 6;
+    float x[n] = {2, 1, 0, 3, 1, 4};
+    float p_ref[n], p_on[n];
+    safe_softmax(x, p_ref, n);
+    online_softmax(x, p_on, n, 2);
+    float maxdiff = 0.f;
+    for (int i = 0; i < n; ++i) {
+        std::printf("x=%g  ref=%.4f  online=%.4f\n", x[i], p_ref[i], p_on[i]);
+        maxdiff = std::fmax(maxdiff, std::fabs(p_ref[i] - p_on[i]));
+    }
+    std::printf("max |ref - online| = %g\n", maxdiff);
+}
+    
+g++ -O2 -std=c++17 online_softmax.cpp -o online_softmax && ./online_softmax
+
+Its block-by-block lines print the same m_new, scale and l values as section 3:
+block [0,2): m_blk=2 m_new=2 scale=0.0000 block_sum=1.3679 l=1.3679
+block [2,4): m_blk=3 m_new=3 scale=0.3679 block_sum=1.0498 l=1.5530
+block [4,6): m_blk=4 m_new=4 scale=0.3679 block_sum=1.0498 l=1.6211
+
+Two things to try yourself: change the block size B to 1, 3 or 6 (the result must stay
+identical), and reorder x so the maximum comes first (then scale is 1 after the first 
+block). When it’s clear, ask for Lesson 6.
+
+
+      
+Standard attention: softmax is a separate step.
+How FlashAttention handles softmax internally.
+</pre>
+|Symbol	|Stands for	|What it holds|
+|:------|:----------|:------------|
+|S	|Scores	|Q · Kᵀ / √d: how well each query matches each key|
+|P	|Probabilities |	softmax(S), each row summing to 1. Also called the attention weights|
+|O	|Output 	|P · V: each token’s weighted average of the values|
+
+<pre>
+Each step finishes completely before the next one starts. S and P exist in full (and are 
+stored in memory).
+FlashAttention: softmax is split up and merged into the loop
+for each block of K and V:
+    S_blk = Q · K_blkᵀ / √d                 ← one block of scores
+    online softmax update (m, l, scale)     ← Lesson 5
+    O = O · scale + exp(S_blk − m) · V_blk  ← accumulate the output
+O = O / l                                   ← normalize once at the end
+  
+There’s no complete S, no complete P and no separate softmax step. Softmax happens piece by
+piece, interleaved with the two matrix multiplications, using the running m and l and the 
+scale correction.
+
+softmax and FlashAttention: The right way to think about it
+Same:	the mathematical result: O is identical to standard attention (up to floating-point
+rounding)
+Different:	how it’s computed: softmax is rewritten as online softmax and fused with both 
+GEMMs into one loop, so S and P are never stored in full
+
+So a more precise version of your sentence is:
+
+FlashAttention computes exactly the same softmax attention, but rewrites softmax in its 
+online (block-by-block) form so that it can be fused with Q·Kᵀ and P·V in a single loop.
+
+That’s why we went in this order: ordinary softmax (Lessons 1–2) → attention with ordinary
+softmax (Lesson 3) → why that’s slow (Lesson 4) → online softmax (Lesson 5) → Lesson 6, where
+online softmax and the two GEMMs are combined into the FlashAttention loop.
+
+The sequence appears in a different symbol: N, the sequence length (number of tokens). 
+It’s why S and P are N × N.
+</pre>
+<pre>
+=============================================================================
+Interleave block-wise matmul and softmax operations:
+“Interleave block-wise matmul and softmax operations” is how the FlashAttention-3 paper
+describes its second main technique; the first is overlapping data movement with compute
+through warp specialization. Some of what follows comes from my earlier reading of the paper.
+Section 3.1 (pingpong scheduling), Section 3.2 (intra-warpgroup overlap, Algorithm 2), 
+Appendix B.3 (a 3-stage variant), the “RS-GEMM” label on P·V, and the blog’s throughput 
+numbers are all confirmed. 
+
+Step 1: Attention for one block of queries
+For one attention head, with d the head dimension (often 128):
+S = Q · Kᵀ          scores           (N × N)
+P = softmax(S)      row by row       (N × N)
+O = P · V           output           (N × d)
+
+d is the length of each token’s query, key and value vector inside one attention head. 
+In matrix terms, it’s the number of columns of Q, K and V.
+
+In our example
+Q = the [ 1 0 1 0 ]      ← 4 numbers per token → d = 4
+    cat [ 0 2 0 0 ]
+    sat [ 1 1 1 1 ]
+
+Q and K each have N = 3 rows (tokens) and d = 4 columns. (V had 2 columns only because it is
+simplified it; normally it also has d.)
+Where d appears in the computation
+Place	Role of d
+S = Q · Kᵀ	each score is a dot product of d terms (query length = key length = d)
+/ √d	the scaling factor uses d (here √4 = 2)
+O = P · V	each output row has d numbers (the width of V)
+Shapes	Q, K, V and O are all N × d; only S and P are N × N
+Where d comes from: the weight matrices
+
+From the embedding lesson: Q = X · W_Q, with W_Q of size d_model × d. So d is the number of
+columns of W_Q (and of W_K, W_V). It’s a size the model’s designers choose, not something
+computed. In my example, W_Q was 3 × 4, so d = 4.
+
+Why it’s (d) called the head dimension
+A real model doesn’t run attention once per layer. It runs it several times in parallel, 
+each with its own W_Q, W_K, W_V. Each of these independent copies is called a head:
+
+X (N × d_model)
+ ├─► head 0: own W_Q, W_K, W_V → Q₀, K₀, V₀ (N × d) → attention → O₀ (N × d)
+ ├─► head 1: own W_Q, W_K, W_V → Q₁, K₁, V₁ (N × d) → attention → O₁ (N × d)
+ ├─► …
+ └─► head h−1                                                    → O_{h−1}
+                     outputs placed side by side → N × (h · d)
+
+d is the width of one head, hence “head dimension”. Typical example: 32 heads × d = 128 = 4096
+= d_model. The value 128 is common, and 64 is too.
+
+The heads never interact during attention. Each is a completely separate Q/K/V problem, so a
+FlashAttention kernel handles one head at a time per thread block, and different heads go to
+different thread blocks.
+
+Why d matters for kernels
+It sets the size of every Q, K, V and O tile, and therefore the shared memory and registers a
+thread block needs. The O accumulator, for example, is (rows per block) × d.
+As far as I know, FlashAttention kernels are compiled separately for each supported head
+dimension (as template parameters), because the tile sizes depend on it.
+In the cost estimate from the FA3 discussion, each score needed 4d matmul FLOPs per
+exponential. That ratio comes from d.
+
+So in a FlashAttention kernel, d is a compile-time constant (like the tile sizes in
+wgmma_sm90.cu), while N, the sequence length, is a runtime value, like M, N and K there.
+  
+A thread block (CTA) handles one block of query rows, Q_i of size Br × d (e.g. Br = 128). 
+For those rows it needs all of K and V. The full score rows (Br × N) are too large to keep 
+on-chip for long sequences, so K and V are processed in blocks K_j, V_j of size Bc × d, 
+one block per loop iteration j.
+
+Each iteration has two GEMMs with a softmax between them:
+
+GEMM0:    S_j = Q_i · K_jᵀ                 (Br × Bc)   tensor cores
+softmax:  P_j = exp(S_j − m) …             (Br × Bc)   exp unit + FP32 ALUs
+GEMM1:    O  += P_j · V_j                  (Br × d)    tensor cores
+
+Two questions follow: how to compute a softmax when we only see one block of a row at a time
+(Step 2), and how to keep the tensor cores busy while the softmax runs (Steps 3–6).
+
+Step 2: Online softmax, how a row can be processed block by block
+Softmax of a row needs the row’s maximum (for numerical stability) and the sum of 
+all exponentials, but you only see one block at a time. The fix is to keep three running 
+values per row, and correct them whenever a later block raises the maximum:
+
+m: the maximum seen so far
+l: the sum of exp(s − m) so far
+O: the unnormalized output so far, Σ exp(s − m) · v
+
+For each new block j:
+m_new = max(m, rowmax(S_j))
+P_j   = exp(S_j − m_new)                    elementwise
+scale = exp(m − m_new)                      correction for the old values
+l     = scale · l + rowsum(P_j)
+O     = scale · O + P_j · V_j               ← GEMM1
+m     = m_new
+
+And only once, after the last block:
+O_final = O / l
+A worked example: one row, two blocks of two scores
+
+Scores [1, 2 | 3, 0], value vectors v1, v2 | v3, v4.
+Block 1 [1, 2]: m = 2, P = [e⁻¹, e⁰], l = e⁻¹ + 1, O = e⁻¹·v1 + v2.
+Block 2 [3, 0]: m_new = 3, scale = e^(2−3) = e⁻¹, P = [e⁰, e⁻³]
+
+[1, 2] is the first block of the example row [1, 2 | 3, 0], and its maximum is 2.
+
+Strictly, with the Lesson 5 update rule, it’s the larger of the running maximum and the block’s
+maximum. For the first block, the running maximum is still the initial −∞:
+
+m_blk = max(1, 2)     = 2
+m_new = max(−∞, 2)    = 2
+
+For the first block these are always the same. They can differ from block 2 on. In that
+example, block 2 is [3, 0], so m_blk = 3 and m_new = max(2, 3) = 3. If block 2 had been [0, 1]
+instead, then m_blk = 1, but m_new = max(2, 1) = 2: the running maximum stays at 2 because the
+earlier block had a larger value.
+  
+l = e⁻¹·(e⁻¹ + 1) + 1 + e⁻³        = e⁻² + e⁻¹ + 1 + e⁻³
+O = e⁻¹·(e⁻¹·v1 + v2) + v3 + e⁻³·v4 = e⁻²·v1 + e⁻¹·v2 + v3 + e⁻³·v4
+
+Full softmax done in one pass (max = 3): weights e⁻², e⁻¹, e⁰, e⁻³ divided by their sum. 
+That’s exactly O / l. 
+
+The scale factor is what makes block-wise processing exact. Every earlier contribution gets 
+re-expressed relative to the new maximum.
+
+Step 3: The problem is a strict dependency chain
+Within one iteration, every step needs the previous one’s result:
+
+The loop runs over blocks of K and V. j is the block number (the loop iteration). 
+In each iteration:
+</pre>
+|Label	|Computes|	Runs|
+|:---|:---------|:------|
+|GEMM0 j|	S_j = Q · K_jᵀ / √d: scores for block j	|tensor cores|
+|softmax j	|online softmax update: m, l, scale, P_j = exp(S_j − m)	|exp unit + FP32 units|
+|GEMM1 j	|O = O · scale + P_j · V_j: accumulate the output	|tensor cores|
+<pre>
+The order is forced by the data:
+GEMM0 j  ──►  softmax j  ──►  GEMM1 j  ──►  GEMM0 j+1  ──►  softmax j+1  ──►  …
+ (makes S_j)   (needs S_j,      (needs P_j)
+               makes P_j)
+  
+The correct timeline
+The GPU has two different kinds of hardware involved, so the diagram has two lanes, one per
+kind. Time runs left to right. A box means “this hardware is working”; dots mean “this hardware
+is idle”.
+time ──────────────────────────────────────────────────────────────────►
+tensor cores:  [GEMM0 j]·········[GEMM1 j][GEMM0 j+1]···········[GEMM1 j+1]
+exp unit:      ·········[softmax j]·························[softmax j+1]···········
+
+Read it left to right:
+
+GEMM0 j: the tensor cores compute the scores. The exp unit has nothing to do yet → idle.
+softmax j: the exp unit works on those scores. The tensor cores must wait for P_j → idle.
+GEMM1 j, then GEMM0 j+1: the tensor cores work. The exp unit waits for the next scores → idle.
+softmax j+1: the exp unit works; the tensor cores wait again → idle.
+
+At every moment, one of the two lanes is idle. That’s the whole point of the diagram.
+
+A rough count (made-up durations)
+
+Suppose, only for illustration, each GEMM takes 2 time units and the softmax takes 2. (That matches the earlier estimate that the softmax costs about half as long as the two GEMMs together; the real ratio depends on the GPU and d.)
+
+one iteration:  GEMM0 (2) + softmax (2) + GEMM1 (2) = 6 time units
+tensor cores busy: 4 of 6  →  idle 33% of the time
+
+The tensor cores are the expensive, fast part of the GPU, so leaving them idle a third of the time is a big loss.
+
+What comes next
+
+FA3’s techniques (the pingpong and intra-warpgroup pipelining from the earlier discussion) are all about filling the dots: arranging the work so the exp unit runs a softmax at the same time as the tensor cores run a GEMM. That only works with independent work, such as the softmax of a different block, or a different warpgroup’s rows, because within one iteration the chain above can’t be reordered.
+
+We’ll come back to that once Lesson 6 (the FlashAttention loop itself) is clear, since you first need the loop before overlapping its pieces makes sense.
+
+Softmax is a math operation: max, exp, sum, divide. It doesn’t move data between memories. 
+In a FlashAttention kernel it runs on values already in registers (the scores from GEMM0),
+using the exp unit and FP32 ALUs, not the tensor cores.
+
+FlashAttention is the whole algorithm: the loop that does everything for one block of query
+rows. That includes loading data, both GEMMs, and the softmax.
+
+The three kinds of work inside FlashAttention:
+</pre>
+|Work	|What it does	|Hardware|
+|:----|:------------|:-------|
+|Loading|	copy blocks of Q, K, V from global memory (HBM)<br> into shared memory|	memory system:
+cp.async, or TMA on Hopper|
+|GEMM0, GEMM1|	S = Q · Kᵀ, O += P · V	|tensor cores|
+|Softmax (online)|	m, l, scale, exp(S − m)	|exp unit + FP32 units, on registers|
+</pre>
+
+So the correct general statement is:
+FlashAttention is one kernel that loads blocks of Q, K, V into shared memory, computes GEMMs 
+on the tensor cores, and computes softmax on the exp/FP32 units, all inside the same loop,
+without writing S or P to global memory.
+
+
+
+
+
+
+  
+
+
+
+
+  
+GEMM0 (S_j) ──► softmax (needs S_j) ──► GEMM1 (needs P_j)
+
+
+Run as written, by one group of threads, the hardware alternates:
+tensor cores:  [GEMM0 j][GEMM1 j]                 [GEMM0 j+1][GEMM1 j+1]
+exp / FP32:              ─ idle ─ [softmax j] … wait …        [softmax j+1]
+               (actually: GEMM0 → softmax → GEMM1 strictly in sequence)
+
+time ─►  [GEMM0 j] [softmax j] [GEMM1 j] [GEMM0 j+1] [softmax j+1] [GEMM1 j+1]
+          tensor      exp        tensor     tensor       exp          tensor
+  
+
+While the softmax runs, the tensor cores do nothing. While the GEMMs run, the exponential unit
+does nothing.
+
+Step 4: Why this hurts much more on Hopper
+
+The softmax is cheap in FLOPs, but the exponential runs on a much slower unit (the special-function unit, MUFU) than the matmul.
+
+[recall] The FA3 paper gives the H100 SXM5 as about 989 TFLOPS of FP16 matmul vs about 3.9 TFLOPS of special functions such as exp, a ratio of about 250×. Check the exact numbers in Section 3.
+[my arithmetic] Per score element, GEMM0 does 2d FLOPs and GEMM1 does 2d FLOPs, so 4d = 512 matmul FLOPs per exponential at d = 128.
+Time ratio: the exponential takes about 250 / 512 ≈ half as long as the two GEMMs. That’s before counting the other softmax work (row max, row sum, the scale multiplications), which runs on the FP32 units.
+
+So if the steps run strictly in sequence, the tensor cores sit idle for something like a third of the time. Hiding the softmax under the GEMMs is worth a large share of performance, which is why FA3 spends a whole section on it.
+
+Step 5: What makes overlap possible on Hopper
+
+Two hardware facts:
+
+The tensor cores and the exponential unit are separate hardware. They can work at the same time if both have instructions to execute.
+wgmma is asynchronous. A warpgroup issues wgmma.mma_async, closes the batch with wgmma.commit_group, and can then execute other instructions while the tensor cores work. It only blocks at wgmma.wait_group N.
+
+The link to your tutorial: wgmma_sm90.cu uses exactly these three steps (L238–243): warpgroup_arrive(), cute::gemm(...), warpgroup_commit_batch(), and then immediately warpgroup_wait<0>(). Nothing runs between commit and wait, so the asynchrony isn’t used. FA3’s techniques are about putting useful work, the softmax, between the commit and the wait.
+
+There are two ways to do it: across warpgroups (Step 6) and within one warpgroup (Step 7).
+
+Step 6: Technique 1, pingpong scheduling between two warpgroups [paper Section 3.1]
+
+Use two consumer warpgroups, each working on different query rows (its own Q block, its own m, l, O). Their computations are independent, so one can run its GEMMs while the other runs its softmax.
+
+Left alone, the two warpgroups would drift and both try to use the tensor cores at the same moment. FA3 uses named barriers (bar.sync with an ID other than 0) to enforce the order: warpgroup 1’s GEMMs, then warpgroup 2’s GEMMs, then warpgroup 1’s again:
+
+tensor cores:  [WG1 GEMMs][WG2 GEMMs][WG1 GEMMs][WG2 GEMMs] …
+exp unit:                 [WG1 softmax][WG2 softmax][WG1 softmax] …
+
+While WG2 uses the tensor cores, WG1 does its softmax, and vice versa. The tensor cores stay busy as long as one warpgroup’s softmax takes no longer than the other’s GEMMs.
+
+Reported effect (blog): FP16 forward at head dim 128 and sequence length 8K goes from about 570 to 620 TFLOPS.
+
+Step 7: Technique 2, two-stage pipelining inside one warpgroup [paper Section 3.2, Algorithm 2]
+
+Pingpong needs two warpgroups. Within one warpgroup, the dependency chain of Step 3 seems to block any overlap. The trick is to overlap the softmax of block j with GEMM1 of block j−1, which doesn’t depend on it.
+
+[recall: check the exact lines in Algorithm 2] One iteration j looks like this:
+
+1. issue   GEMM0:  S_cur = Q · K_jᵀ                 async  ─┐
+2. issue   GEMM1:  O    += P_prev · V_{j−1}         async  ─┤ tensor cores busy
+3. wait    for GEMM0 (S_cur ready)                           │
+4. softmax on S_cur → m, l, P_cur      ← runs on the exp unit while GEMM1 (step 2) is still on the tensor cores
+5. wait    for GEMM1                                          ┘
+6. rescale O with the new maximum
+7. P_prev = P_cur   (carry to the next iteration)
+Before the loop: compute S and the softmax for block 0 (the prologue).
+After the loop: one final GEMM1 with the last P (the epilogue), then O / l.
+
+The wgmma.wait_group N count is what makes step 3 possible. Waiting with N = 1 means “all but the most recent group are finished”, so GEMM0 can be complete while GEMM1 is still in flight.
+
+The cost: registers. The warpgroup must hold at the same time:
+
+the O accumulator (Br × d, FP32),
+the new S (Br × Bc, FP32) from GEMM0,
+the previous P (Br × Bc, FP16) still being consumed by GEMM1.
+
+That’s why FA3 tunes block sizes carefully and why the paper notes register pressure as the trade-off.
+
+Reported effect (blog): from about 620 to 640–660 TFLOPS, on top of pingpong. The paper also describes a 3-stage variant (Appendix B.3), which deepens the pipeline further at a higher register cost.
+
+Step 8: Where the _RS GEMM fits in
+
+In Step 7, P comes out of the softmax in registers: the softmax works element by element on GEMM0’s FP32 accumulator registers, then converts the results to FP16. GEMM1 takes P directly from those registers as the A operand, which is the RS-GEMM in the paper’s Algorithm 1 and the _RS atom from our earlier discussion. P is never written to shared memory.
+
+For that to work, the accumulator layout of GEMM0 (which thread holds which element of S) must line up with the A-operand register layout of GEMM1. For FP16 the two layouts are compatible after an in-register conversion. For FP8 they aren’t: the paper’s Section 2.2 says the FP32 accumulator and FP8 operand layouts clash. Section 3.3 describes the extra layout work needed for FP8.
+
+Step 9: Connecting this to what you’ve studied
+	wgmma_sm90.cu tutorial	FlashAttention-3
+GEMMs per iteration	1	2, with a softmax between them
+async wgmma used for overlap?	no: commit, then wait immediately (L241–243)	yes: softmax between commit and wait
+memory ↔ compute overlap	no: cp_async_wait<0>() (L235)	yes: TMA producer warps (warp specialization)
+A operand	_SS (shared)	GEMM0 _SS; GEMM1 _RS (P in registers)
+
+Both missing overlaps in the tutorial correspond to FA3’s two main techniques: data movement vs compute (warp specialization), and matmul vs softmax (pingpong and intra-warpgroup pipelining).
+
+On your SM120 GPUs: there’s no wgmma. mma.sync is synchronous per warp, so the explicit commit/wait overlap of Step 7 isn’t available. The overlap there comes implicitly from the warp scheduler interleaving instructions of different warps (the FlashAttention-2 style). The Step 6 and Step 7 timelines are specific to Hopper.
+
+How to check the [recall] parts
+Paper Section 3.2, Algorithm 2: the exact order of issue, wait and rescale in Step 7.
+Paper Section 3 introduction: the 989 vs 3.9 TFLOPS figures from Step 4.
+In the hopper/ code of the FlashAttention repository: find the consumer mainloop and look for warpgroup_wait<…> with a non-zero count between the two GEMMs. That’s Step 7 in real code.
+
+Paper: arXiv 2407.08608 (open it directly; my fetch timed out). Blog with the throughput numbers: tridao.me/blog/2024/flash3.
 </pre>
