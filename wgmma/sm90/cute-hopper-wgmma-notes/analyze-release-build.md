@@ -440,9 +440,10 @@ Mode 0 (rows, along M): 8 : 1024
 
 Result: (8,1024):(1024,1) → (8,64):(64,1).
 
-The rule: a contiguous mode (stride 1) has its shape divided. A strided mode (stride a multiple of 16) 
-has its stride divided. That’s why the 8 and the 1 stay the same: 8 is the shape of the strided mode, 
-and 1 is the stride of the contiguous mode.
+The rule: a contiguous mode (stride 1) has its shape divided. A strided mode (stride a multiple
+of 16) 
+has its stride divided. That’s why the 8 and the 1 stay the same: 8 is the shape of the strided
+mode, and 1 is the stride of the contiguous mode.
 
 Check: the same bits, counted two ways
 Take element (m, k), row m, the k-th half_t in that row:
@@ -879,7 +880,7 @@ on a rented H100.
 </pre>
 <sub>[FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision](https://arxiv.org/abs/2407.08608) (arXiv 2407.08608; also published at [NeurIPS 2024](https://proceedings.neurips.cc/paper_files/paper/2024/hash/7ede97c3e082c6df10a8d6103a2eebd2-Abstract.html)). This is the main reference for Hopper FlashAttention.</sub>
 <pre>
-The sections that matter for your question:
+The sections that matter for the question:
 • Section 3.1, Algorithm 1: the forward pass with warp specialization. The P·V product is explicitly labeled
 “RS-GEMM”, and the paper defines the SS/RS prefix as whether the first operand comes from shared memory or
 from the register file. So the second GEMM is exactly the _RS case we discussed. Section 3.1 also covers 
@@ -945,4 +946,90 @@ PTX ISA 8.2 (archived)
 CUTLASS Warpgroup MMA Programming Guide
 Dao-AILab/flash-attention on GitHub
 </pre>
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+<pre>
+Flash Attention and softmax :
+Start from zero, with small numbers we can check by hand or in a few lines of C++. I’ll go 
+in lessons, each building only on the ones before. This answer covers the foundation: softmax,
+then attention, then why the obvious implementation is slow. Online softmax and FlashAttention
+itself come next, once these are solid.
 
+All numbers below were computed and checked, not estimated.
+
+Lesson 1: What softmax does
+Softmax takes a list of arbitrary numbers and turns it into probabilities: all positive,
+summing to 1, with larger inputs getting larger shares.
+
+Formula for a list x = [x₀, x₁, …]:
+softmax(x)ᵢ = exp(xᵢ) / Σⱼ exp(xⱼ)
+
+Two steps: exponentiate every element, then divide each by the total.
+
+Example: x = [2, 1, 0]
+Step 1, exponentiate:
+exp(2) = 7.3891
+exp(1) = 2.7183
+exp(0) = 1.0000
+         ──────
+sum    = 11.1073
+
+Step 2, divide by the sum:
+
+7.3891 / 11.1073 = 0.6652
+2.7183 / 11.1073 = 0.2447
+1.0000 / 11.1073 = 0.0900
+                   ──────
+                   1.0000
+
+So softmax([2, 1, 0]) = [0.6652, 0.2447, 0.0900].
+
+Why exp?
+Always positive, even for negative inputs, so the results can be probabilities.
+Keeps the order: the largest input gets the largest probability.
+Exaggerates differences. The inputs 2, 1, 0 differ by 1 each, but the outputs differ a lot: 
+66% vs 24% vs 9%.
+Two properties you’ll need later
+
+(a) Adding the same constant to every input changes nothing. Add 1 to every element: [3, 2, 1]:
+softmax([3, 2, 1]) = [0.6652, 0.2447, 0.0900]      ← identical
+The reason: exp(x + c) = exp(x) · exp(c). The factor exp(c) appears in every numerator and in
+the sum, so it cancels.
+
+(b) Multiplying the inputs does change the result. Double them: [4, 2, 0]:
+softmax([4, 2, 0]) = [0.8668, 0.1173, 0.0159]      ← sharper
+
+Bigger differences make the distribution more peaked. This is why attention scales its scores,
+as you’ll see in Lesson 3.
+
+Lesson 2: Safe softmax, subtracting the maximum
+exp grows extremely fast, and floating-point numbers have a largest value:
+</pre>
+|Type|	Largest value	|exp(x) overflows to inf when x >|
+|:----|:--------------|:-------------------------------|
+|FP16 (half)|	65,504|	≈ 11.09|
+|FP32 (float)	|≈ 3.4 × 10³⁸|	≈ 88.72|
+<pre>
+So in FP16, exp(12) is already inf. Scores in attention can easily exceed that, and then softmax computes inf / inf = NaN.
+
+The fix uses property (a): subtract the row’s maximum m from every element before
+exponentiating. The result is identical, but now the largest exponent is exp(0) = 1, 
+and all others are between 0 and 1, so there’s no overflow:
+m = max(x)
+softmax(x)ᵢ = exp(xᵢ − m) / Σⱼ exp(xⱼ − m)
+Same example, the safe way: x = [2, 1, 0], m = 2
+x − m          = [ 0,      −1,     −2    ]
+exp(x − m)     = [ 1.0000,  0.3679, 0.1353]     sum = 1.5032
+divide by sum  = [ 0.6652,  0.2447, 0.0900]     ← same answer
+Every real softmax implementation, including FlashAttention, does this. It’s why FlashAttention
+tracks a running maximum, called m. Remember this: it’s the reason the next lessons need a
+“rescale” step.
+  
+Lesson 3: Attention, with a complete small example
+What goes in
+A sequence of N tokens (words or word pieces). For each token, the model has already computed
+three vectors of length d (the “head dimension”):
+Q (query): “what is this token looking for?”
+K (key): “what does this token offer?”
+V (value): “what information does this token carry?”
+
+</pre>
