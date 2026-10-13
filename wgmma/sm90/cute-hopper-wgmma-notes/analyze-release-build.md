@@ -1243,9 +1243,9 @@ the Lesson 3 example.
 
 The program
 Host-only C++. It runs on any machine, no GPU needed:
-#include \<cmath\>
-#include \<cstdio\>
-#include \<limits\>
+#include &lt;cmath&gt;
+#include &lt;cstdio&gt;
+#include &lt;limits&gt;
 
 // Reference: safe softmax over the whole row (Lesson 2) — three passes
 void safe_softmax(const float* x, float* p, int n) {
