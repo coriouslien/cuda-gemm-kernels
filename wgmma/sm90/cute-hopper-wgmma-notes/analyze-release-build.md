@@ -1607,3 +1607,36 @@ In the hopper/ code of the FlashAttention repository: find the consumer mainloop
 
 Paper: arXiv 2407.08608 (open it directly; my fetch timed out). Blog with the throughput numbers: tridao.me/blog/2024/flash3.
 </pre>
+<pre>
+===============================================================================================
+online_softmax: what online algorithms mean in computer science.
+“Online” is a computer-science term. It has nothing to do with the internet.
+
+What “online” means
+An online algorithm processes its input piece by piece, as it arrives, without seeing the whole input first. Between pieces, it keeps only a 
+small state, and after each piece its state is correct for everything seen so far.
+
+The opposite is an offline algorithm, which needs the entire input available before it can start or finish.
+A familiar example is a running average:
+
+float sum = 0; int count = 0;
+for (value : stream) { sum += value; ++count; }   // state: sum, count
+average = sum / count;
+
+We never need all the values at once. Two numbers of state are enough, however long the input is.
+</pre>
+Applied to softmax
+|Needs|	State between pieces|
+|Safe softmax (Lesson 2)|	the whole row before computing m, then l|	not designed to work piece by piece|
+|Online softmax (Lesson 5)|	one block at a time	just m and l|
+<pre>
+After each block, m and l are exactly right for all blocks seen so far, the defining property of an online algorithm. That’s what makes it
+fit FlashAttention, where a row of S arrives one block per loop iteration and old blocks are thrown away.
+
+Where the name comes from (online softmax)
+As far as I know, the technique was published under this name by two NVIDIA engineers, Maxim Milakov and Natalia Gimelshein, in “Online 
+normalizer calculation for softmax” (2018, arXiv 1805.02867). Their original goal was to compute m and l in one pass over memory instead of 
+two. FlashAttention later used the same idea for a different purpose: never storing the full row at all. Please check the paper itself 
+for details.
+
+</pre>
