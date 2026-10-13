@@ -1242,7 +1242,7 @@ and divide by l once at the very end. That’s Lesson 6: the full FlashAttention
 the Lesson 3 example.
 
 The program
-Host-only C++. It runs on any machine, no GPU needed:
+Host-only C++. It runs on any machine, no GPU needed - Reference the attached file online_softmax.cpp
 #include &lt;cmath&gt;
 #include &lt;cstdio&gt;
 #include &lt;limits&gt;
