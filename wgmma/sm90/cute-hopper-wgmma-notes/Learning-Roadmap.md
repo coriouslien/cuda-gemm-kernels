@@ -8,7 +8,7 @@ shown in the file I attached.
 |0	|whole file|	The big picture: what the program does, end to end (below)|
 |1	|L467–581, L446–464	|main and gemm: host data, which kernel runs|
 |2	|L352–380	|gemm_tn: problem shape, strides, CTA tile|
-3	L382–384	shared-memory layouts: tile_to_shape, the GMMA atom, swizzle
+|3	|L382–384	|shared-memory layouts: tile_to_shape, the GMMA atom, swizzle|
 4	L386–392	the copy: make_tiled_copy, the TV layout
 5	L394, L412–443	the MMA atom and the launch
 6	L18–26, L28–81	SharedStorage, the kernel signature, global and shared tensors
