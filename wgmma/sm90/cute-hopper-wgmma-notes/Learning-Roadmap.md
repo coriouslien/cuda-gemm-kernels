@@ -131,6 +131,37 @@ for (...) h_B[j] = ...;                               // random ±1
 for (...) h_C[j] = TC(0);
 A and B are filled with random +1 or −1; C with zeros. The arrays are flat: the 2-D layout comes from the leading dimensions in step 8.
 
+h_A is in host memory (CPU RAM), not on the GPU. In CUDA, global memory means the GPU’s DRAM. h_A isn’t in global memory; its GPU copy is:
+</pre>
+|Line	|Object	|Where it lives|
+|:----|:------|:-------------|
+|L515	|h_A (thrust::host_vector<TA>)|	host memory (CPU RAM)|
+|L524	|d_A (thrust::device_vector<TA>)|	global memory (GPU DRAM)|
+<pre>
+d_A = h_A (L524) allocates the GPU memory and copies the data over. The kernel only ever sees d_A, passed as the raw pointer d_A.data().get() 
+at L555. The matrix is stored as a flat 1-D array of m·k elements; its 2-D shape comes later from ldA and the strides.
+2. “TA is a type define”: L507: using TA = cute::half_t; is a type alias (the modern form of typedef), local to main. One detail: inside gemm,
+gemm_nt and gemm_tn, TA is a template parameter with the same name, deduced from the pointer type half_t const*. It’s a different TA that ends 
+up being the same type.
+
+3. “Shorter code instead of new or cudaMalloc, not for performance”: convenience and not performance, but the comparison needs splitting:
+</pre>
+|Thrust type|	Replaces|	Memory|
+|:----------|:--------|:------|
+|thrust::host_vector|	new[] / std::vector|	host|
+|thrust::device_vector|	cudaMalloc + cudaMemcpy + cudaFree|	GPU|
+<pre>
+host_vector has nothing to do with cudaMalloc; on the host side, a plain std::vector would work just as well. The real convenience is
+device_vector, plus the one-line copies d_A = h_A (host → GPU) and cute_result = d_C (GPU → host, L560).
+
+On performance: host_vector uses ordinary pageable memory, not pinned memory, so these copies aren’t the fastest possible. That doesn’t 
+matter here, because they happen outside the timed loop.
+
+4. “It is RAII”: Both types free their memory in their destructors (device_vector calls cudaFree), so main needs no cleanup code, even on 
+early returns.
+h_A is in host memory, not on the device. global memory means GPU memory, so h_A is simply in host memory, and its device copy d_A (L524) 
+is the one in global memory.
+  
 7. Copy to the GPU (L524–526)
 thrust::device_vector<TA> d_A = h_A;    // allocates GPU memory and copies
 These Thrust lines are why Thrust (and therefore CUB, and the EmptyKernel in the ptxas log) is included.
@@ -152,4 +183,51 @@ if (transB == 'N') ldB = k;  else if (transB == 'T') ldB = n;
 |transB = 'T'|	ldB = n|	N	|dB = (1, ldB) (L280)|
 |transB = 'N'|	ldB = k|	K	|dB = (ldB, 1) (L372)|
 |C           |	ldC = m	|M (column-major)	|dC = (1, ldC) in both|
+
+<pre>
+This is where the int in the demangled stride types (tuple<C<1>, int> / tuple<int, C<1>>) comes from: the leading dimension is only known 
+at runtime.
+
+Line 520:  for (int j = 0; j < m*k; ++j) h_A[j] = TA(int((rand() % 2) ? 1 : -1)); 
+• It’s initialization: every element of A gets either +1 or −1, at random.
+• It converts int to TA: (rand() % 2) ? 1 : -1 is an int, and TA(...) turns it into a half_t, using TA from L507 (using TA = cute::half_t;). The inner int(...) cast is redundant (the expression is already an int) but harmless.
+  
+9. Run once (L551–560)
+d_C = h_C;                                   // reset C to zeros
+gemm(transA, transB, m, n, k, alpha, d_A.data().get(), ldA, ..., d_C.data().get(), ldC);
+CUTE_CHECK_LAST();
+thrust::host_vector<TC> cute_result = d_C;   // copy back
+
+10. Time 100 runs (L562–574)
+timer.start();
+for (int i = 0; i < 100; ++i) gemm(...);
+double cute_time = timer.seconds() / 100;
+printf("CUTE_GEMM: [%6.1f]GFlop/s (%6.4f)ms\n", gflops / cute_time, cute_time*1000);
+GPU_Clock comes from cutlass/util/GPU_Clock.hpp (L13). As far as I know it uses CUDA events, so it measures GPU time between start and stop. 
+Each timed call goes through gemm_nt/gemm_tn again, including cudaFuncSetAttribute on every call, so a little host overhead is included in the 
+measurement.
+
+Part B: gemm, the dispatcher (L446–464)
+if (transA == 'N' && transB == 'T') return gemm_nt(...);
+else if (transA == 'T' && transB == 'N') return gemm_tn(...);
+assert(false && "Not implemented");
+Only two of the four combinations are implemented: NT and TN.
+
+A consequence of the Release build: with -DNDEBUG, assert(false) disappears. So if I run with N N or T T, no kernel is launched, 
+no error is shown, and the program still prints a timing, measuring nothing. In a Debug build, the same call would stop with an assertion 
+failure. Something to remembe when I run it on an H100.
+
+Also, gemm and both gemm_nt/gemm_tn accept a cudaStream_t stream parameter, but it’s never used in the launch (L338, L418), so everything runs 
+on the default stream.
+
+main
+ ├─ check GPU: major must be 9 (your SM120 → exits here)
+ ├─ M=N=5120, K=4096, transA='N', transB='T'  (default → NT kernel)
+ ├─ A, B random ±1; C zeros; all FP16; copied to GPU with Thrust
+ ├─ leading dimensions → become the runtime strides dA, dB, dC
+ ├─ gemm once (result not verified)
+ └─ gemm 100× timed → prints GFlop/s
+gemm
+ └─ NT → gemm_nt,  TN → gemm_tn,  anything else → nothing (in Release)
+
 </pre>
