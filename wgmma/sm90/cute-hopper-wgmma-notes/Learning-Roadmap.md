@@ -336,4 +336,15 @@ describe the same layout:
 |K-major	|CuTe/CUTLASS|
 |‘T’	|BLAS (transA = 'T')|
 <pre>
+Line 376: auto bM = Int<128>{};
+Line 377: auto bN = Int<128>{};
+Line 378:   auto bK = Int< 64>{};
+What the three numbers mean
+They’re the CTA tile sizes: how much work one thread block (CTA) handles.
+</pre>
+|Name|	Value|	Meaning|
+|:---|:------|:--------|
+|bM	|128|	the CTA computes 128 rows of C|
+|bN	|128|	… and 128 columns of C → a 128 × 128 tile of C per CTA|
+|bK	|64	|per main-loop iteration, it processes a 64-wide slice of K|
 </pre>
