@@ -77,5 +77,79 @@ Where I am
   6 SharedStorage/kernel tensors, 7 copy partition, 8 MMA partition, 9 main loop,
   10 epilogue, 11 print_layouts.cu + SASS.
 
+Chunk 1: main (L467–581) and gemm (L446–464), the host code that sets everything up and decides which kernel runs. All line numbers refer to my
+attached file.
+Part A: main, top to bottom
+1. Query the GPU (L469–477)
+cudaGetDevice(&current_device_id);
+cudaGetDeviceProperties(&props, current_device_id);
+cudaError_t error = cudaGetDeviceProperties(&props, 0);
+It asks for the properties of the current device, then again for device 0, overwriting the first result. With one GPU both are the same device, 
+so it doesn’t matter. It’s just redundant code,.
 
+2. Architecture check (L479–483)
+if (props.major != 9) { std::cout << "This example requires ... 90a"; return 0; }
+Only the major compute capability is checked. My RTX 5080/5050 report 12, so the program prints the message and exits here, before any kernel 
+or memory allocation. That’s the source-level reason it can’t run on my machines.
+It returns 0 (success) on purpose, per the comment at L481, so automated test suites don’t count it as a failure.
+
+3. Compile-time guard (L485, L576–578)
+#if defined(CUTLASS_ARCH_MMA_SM90_SUPPORTED)
+   ... the whole GEMM test ...
+#else
+   std::cout << "CUTLASS_ARCH_MMA_SM90_SUPPORTED must be enabled ...";
+#endif
+     
+This macro isn’t defined in this file. It comes from CUTLASS’s configuration header and, as far as I know, depends on the CUDA toolkit 
+version being new enough for SM90. My build compiled the GEMM path, so it’s defined in my setup. To see the exact condition:
+
+grep -n "CUTLASS_ARCH_MMA_SM90_SUPPORTED" -B3 -A3 ../cutlass/include/cutlass/arch/config.h
+     
+4. Problem size and transpose flags (L487–505)
+int m = 5120;  if (argc >= 2) sscanf(argv[1], "%d", &m);
+int n = 5120;  ...argv[2]
+int k = 4096;  ...argv[3]
+char transA = 'N';  ...argv[4]
+char transB = 'T';  ...argv[5]
+
+Defaults: M = N = 5120, K = 4096, transA = 'N', transB = 'T', so the default run is the NT kernel. Command-line arguments override them in 
+that order:
+./wgmma_sm90 5120 5120 4096 T N     # TN kernel
+5. Types and scalars (L507–513)
+using TA = cute::half_t;  using TB = ...;  using TC = ...;  using TI = ...;
+TI alpha = TI(1.0f);
+TI beta  = TI(0.0f);
+
+Everything is FP16, including alpha and beta. The kernel computes C = alpha · A·Bᵀ + beta · C; with alpha = 1, beta = 0, that’s simply C = A·Bᵀ.
+
+6. Host data (L515–522)
+thrust::host_vector<TA> h_A(m*k);    // 5120 × 4096 halfs = 40 MiB
+thrust::host_vector<TB> h_B(n*k);    // 40 MiB
+thrust::host_vector<TC> h_C(m*n);    // 5120 × 5120 halfs = 50 MiB
+for (...) h_A[j] = TA(int((rand() % 2) ? 1 : -1));   // random ±1
+for (...) h_B[j] = ...;                               // random ±1
+for (...) h_C[j] = TC(0);
+A and B are filled with random +1 or −1; C with zeros. The arrays are flat: the 2-D layout comes from the leading dimensions in step 8.
+
+7. Copy to the GPU (L524–526)
+thrust::device_vector<TA> d_A = h_A;    // allocates GPU memory and copies
+These Thrust lines are why Thrust (and therefore CUB, and the EmptyKernel in the ptxas log) is included.
+
+8. FLOP count and leading dimensions (L528–549)
+double gflops = (2.0*m*n*k) * 1e-9;
+
+Each of the m·n outputs needs k multiplies and k adds: 2·m·n·k floating-point operations. For the defaults that’s about 214.7 GFLOP per GEMM.
+
+The leading dimension is the distance in memory between consecutive columns (for column-major storage):
+int ldA = 0, ldB = 0, ldC = m;
+if (transA == 'N') ldA = m;  else if (transA == 'T') ldA = k;
+if (transB == 'N') ldB = k;  else if (transB == 'T') ldB = n;
+</pre>
+|Flag	|ld	|Contiguous dimension	|Becomes stride (in gemm_nt/gemm_tn)|
+|:----|:--|:--------------------|:----------------------------------|
+|transA = 'N'|	ldA = m|	M	|dA = (1, ldA) (L279)|
+|transA = 'T'|	ldA = k	|K	|dA = (ldA, 1) (L371)|
+|transB = 'T'|	ldB = n|	N	|dB = (1, ldB) (L280)|
+|transB = 'N'|	ldB = k|	K	|dB = (ldB, 1) (L372)|
+|C           |	ldC = m	|M |(column-major)	|dC = (1, ldC) in both|
 </pre>
