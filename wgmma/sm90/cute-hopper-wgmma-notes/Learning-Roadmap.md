@@ -54,4 +54,28 @@ main (L467)                     host: make A, B, C; call gemm once; then time 10
 The host functions (gemm_nt, gemm_tn) do nothing but describe: sizes, layouts, the copy pattern and the MMA instruction, all as CuTe types. 
 The kernel uses those descriptions. Since almost everything is a compile-time type, the description is what appears in the long demangled 
 kernel names in your build log.
+
+I'm continuing my study of CUTLASS's Hopper tutorial wgmma_sm90.cu (second pass, chunk by chunk).
+
+Setup
+- Compiling (not running) for sm_90a on my RTX 5080/5050 (SM120), CUDA 12.9, Release build
+  (-O3 -DNDEBUG via CMAKE_BUILD_TYPE). No C7510 warning in Release.
+- ptxas: TN kernel 112 regs, NT kernel 114 regs, 1 barrier, 0 spills; also cub::EmptyKernel (from Thrust).
+
+Confirmed facts so far
+- Loads use cp.async (SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, LDGSTS), NOT TMA.
+- CTA tile 128x128x64, 3 pipeline stages, 128 threads (1 warpgroup), 98,304 B dynamic smem.
+- TN: Layout_K_SW128_Atom -> ((8,16),(64,1),(1,3)):((64,512),(1,0),(0,8192)), Swizzle<3,4,3>.
+- Atom in bits (8,1024):(1024,1) -> upcast to half_t (8,64):(64,1).
+- TN copy TV layout ((8,16),8):((128,1),16), tile (16,64): thread t copies row t/8, K = 8*(t%8)..+7.
+- MMA: MMA_64x64x16_F16F16F16_SS, 16 wgmma per k-tile; tCrA/tCrB hold smem descriptors.
+- Default run uses the NT kernel (transA='N', transB='T').
+- Main loop: cp_async_wait<0>() and warpgroup_wait<0>() -> no overlap of load and compute.
+
+Where I am
+- Plan: 1 main/gemm, 2 gemm_tn shapes/strides, 3 smem layouts, 4 copy, 5 MMA+launch,
+  6 SharedStorage/kernel tensors, 7 copy partition, 8 MMA partition, 9 main loop,
+  10 epilogue, 11 print_layouts.cu + SASS.
+
+
 </pre>
