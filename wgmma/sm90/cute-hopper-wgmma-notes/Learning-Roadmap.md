@@ -12,11 +12,11 @@ shown in the file I attached.
 |4|	L386–392	|the copy: make_tiled_copy, the TV layout|
 |5	|L394, L412–443|	the MMA atom and the launch|
 |6	|L18–26, L28–81	|SharedStorage, the kernel signature, global and shared tensors|
-7	L83–100	copy partitioning
-8	L123–143	MMA partitioning, descriptors, accumulators
-9	L178–251	the main loop
-10	L253–258	the epilogue
-11	—	verify: print_layouts.cu, then the SASS
+|7	|L83–100	|copy partitioning|
+|8	L123–143	|MMA partitioning, descriptors, accumulators|
+|9	|L178–251	|the main loop|
+|10	|L253–258	|the epilogue|
+|11	|—	|verify: print_layouts.cu, then the SASS|
 
 A checkpoint for each chunk: after a chunk, write 3–5 sentences in your own words about what it does. If you can’t, that’s exactly the question to ask. These notes also become the raw material for your GitHub write-up.
 
