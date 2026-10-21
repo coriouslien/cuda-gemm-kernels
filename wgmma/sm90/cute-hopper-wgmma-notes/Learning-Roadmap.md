@@ -17,9 +17,7 @@ shown in the file I attached.
 |9	|L178–251	|the main loop|
 |10	|L253–258	|the epilogue|
 |11	|—	|verify: print_layouts.cu, then the SASS|
-
-A checkpoint for each chunk: after a chunk, write 3–5 sentences in your own words about what it does. If you can’t, that’s exactly the question to ask. These notes also become the raw material for your GitHub write-up.
-
+<pre>
 Chunk 0: The big picture
 What the program computes
 
@@ -27,7 +25,8 @@ A matrix multiplication in FP16:
 
 C = A · Bᵀ          A is M × K,  B is N × K,  C is M × N
 
-In CuTe’s convention, both A and B are stored with K as their second mode, which is why the product is written with Bᵀ. Default sizes (L487–497): M = N = 5120, K = 4096.
+In CuTe’s convention, both A and B are stored with K as their second mode, which is why the product is written with Bᵀ. 
+Default sizes (L487–497): M = N = 5120, K = 4096.
 
 How the work is split
 
@@ -52,6 +51,7 @@ main (L467)                     host: make A, B, C; call gemm once; then time 10
      └─ gemm_tn (L356)          host: same, TN variant
          └─ gemm_device (L36)   device: the kernel — one CTA computes one 128×128 tile of C
 
-The host functions (gemm_nt, gemm_tn) do nothing but describe: sizes, layouts, the copy pattern and the MMA instruction, all as CuTe types. The kernel uses those descriptions. Since almost everything is a compile-time type, the description is what appears in the long demangled kernel names in your build log.
-
-Checkpoint for Chunk 0: in your own words, what does one CTA compute, and which three memories does the data pass through? When that’s clear, ask for Chunk 1 (main and gemm).
+The host functions (gemm_nt, gemm_tn) do nothing but describe: sizes, layouts, the copy pattern and the MMA instruction, all as CuTe types. 
+The kernel uses those descriptions. Since almost everything is a compile-time type, the description is what appears in the long demangled 
+kernel names in your build log.
+</pre>
