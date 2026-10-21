@@ -151,5 +151,5 @@ if (transB == 'N') ldB = k;  else if (transB == 'T') ldB = n;
 |transA = 'T'|	ldA = k	|K	|dA = (ldA, 1) (L371)|
 |transB = 'T'|	ldB = n|	N	|dB = (1, ldB) (L280)|
 |transB = 'N'|	ldB = k|	K	|dB = (ldB, 1) (L372)|
-|C           |	ldC = m	|M |(column-major)	|dC = (1, ldC) in both|
+|C           |	ldC = m	|M (column-major)	|dC = (1, ldC) in both|
 </pre>
