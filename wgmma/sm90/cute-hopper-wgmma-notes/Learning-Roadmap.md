@@ -537,11 +537,97 @@ That alias is built from the bit-level atom on line 84.
 |GMMA::Layout_MN_SW128_Atom<TA> (used in gemm_nt)|	MN version|	64 × 8 (MN-majo)|
 <pre>
 
-Two precisions:
-
-1. The file defines it in bits. The 8 × 64 comes from your <TA>. Line 84 says 8 × 1024 bits. The 8 × 64 only appears because TA = half_t (16 bits), and upcast<16> turns 1024 bits into 64 elements. With a different TA, the same name gives a different shape (8 × 128 for FP8, for example).
+1. The file defines it in bits. The 8 × 64 comes from your <TA>. Line 84 says 8 × 1024 bits. 
+The 8 × 64 only appears because TA = half_t (16 bits), and upcast<16> turns 1024 bits into 64
+elements. With a different TA, the same name gives a different shape (8 × 128 for FP8, for
+example).
 
 2. A different atom name gives a different definition from the same file. For example:
+The last row matters because the default run is NT, which uses the MN version. Its bits are 
+laid out the other way around: 1024 bits along M (or N) by 8 along K. For half that’s 64 × 8,
+with M contiguous. I inferred that from lines 75–77, where the INTER/SW32/SW64 MN atoms are 
+(128 / 256 / 512, 8). Check the SW128 MN line in your copy; it should read Shape<_1024,_8>,
+Stride<_1,_1024>.
+
+GMMA:: is the namespace SM90::GMMA. That’s why it’s in the Hopper (sm90) traits file.
+
+Is SW128 a better choice?
+Usually yes, when the tile is wide enough to use it. SW128 isn’t better unconditionally. 
+It’s the widest pattern, and it only fits when the tile’s contiguous dimension is at least 
+128 bytes.
+
+What the number means
+The number is how many bytes one swizzle row covers, and therefore how many 16-byte chunks 
+the XOR can shuffle:
+</pre>
+|Mode|	Row width|	16 B chunks shuffled|	Swizzle<B,4,3>|	Pattern repeats every|
+|:---|:----------|:---------------------|:--------------|:---------------------|
+|SW32	|32 B	|2|	Swizzle<1,4,3>|	256 B|
+|SW64|	64 B	|4|	Swizzle<2,4,3>|	512 B|
+|SW128|	128 B|	8|	Swizzle<3,4,3>|	1,024 B|
+<prd>
+The Swizzle<1/2/3,4,3> values are from lines 81–84 of the traits file. The “repeats every” 
+column is 2^(B+4+3) bytes, the same rule we used for SW128.
+Why SW128 is usually the best
+
+Shared memory has 32 banks of 4 bytes, so 128 bytes covers every bank once. When 8 rows are 
+read at the same column:
+
+• SW128: the XOR moves each of the 8 rows’ chunks to a different position among 8. The 8 reads
+spread across all 32 banks, with no conflict.
+• SW64 / SW32: there are only 4 or 2 positions to spread across, so some rows land on the same
+banks. That can cause conflicts, depending on the access pattern.
+
+So a wider swizzle spreads accesses across more banks. Whether a particular wgmma access pattern
+actually conflicts with SW64 is something I haven’t verified. That’s an ncu measurement on the
+H100.
+
+When SW128 doesn’t fit
+The tile must be at least 128 B wide in its contiguous dimension. For K-major half, bK must be a
+multiple of 64 (64 × 2 B = 128 B). This kernel has bK = 64, so SW128 fits exactly. With bK = 32 
+(64 B) you’d need SW64, and with bK = 16 you’d need SW32.
+Stricter alignment: the buffer must be 1,024-byte aligned for SW128, versus 512 or 256 for the
+smaller modes.
+TMA (next file): I believe the TMA box’s inner dimension can’t exceed the swizzle width, so the 
+swizzle mode and the TMA box size must agree. Check that when you get to wgmma_tma_sm90.cu.
+How CUTLASS chooses
+
+CUTLASS’s Hopper GEMM builders choose automatically, as far as I remember: they pick the 
+widest swizzle atom that evenly divides the tile’s contiguous dimension (SW128 if it fits,
+otherwise SW64, then SW32, then INTER). The helper is called ss_smem_selector. Verify with:
+grep -rn "ss_smem_selector" -A25 ../cutlass/include/cutlass/gemm/collective/builders/ | head -60
+
+That preference order is the practical answer: SW128 is the default choice when the tile allows 
+it.
+
+Summary
+</pre>
+|Question|	Answer|
+|:-------|:--------|
+|Is SW128 better?|	Usually: it spreads 8 rows across all 32 banks|
+|Always?	|No: it needs a ≥ 128 B contiguous tile dimension and 1,024 B alignment|
+|This kernel|	bK = 64 halfs = 128 B → SW128 fits exactly|
+|How production code chooses|	the widest swizzle that fits the tile<br> (ss_smem_selector, to verify)|
+|How to confirm the benefit|	ncu shared-memory bank-conflict metrics on the H100|
+</pre>
+
+ auto sA = tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, make_shape(bM,bK,bP));
+shape : ( (8,16) , (64,1) , (1,3) ) 
+stride: ( (64,512) , (1,0) , (0,8192) ) 
+mode :    M               K           PIPE
+Above is not for atom piece, it is the whole shared-memory layout sA, the result after
+tile_to_shape, covering all three
+128 × 64 stages. The atom is much smaller:
+atom:   shape (8, 64) : stride (64, 1)        ← 8 rows × 64 elements = 1 KB
+The atom is still visible inside the full layout: in each mode, the first number of the pair
+comes from the atom, and the second is how many times the atom is repeated:
+</pre>
+|Mode	|Full shape|	Full stride|	From the atom|	Repeats of the atom|
+|:----|:---------|:------------|:--------------|:---------------------|
+|M	|(8, 16)|	(64, 512)|	8 : 64 (atom’s rows)|	16 : 512 (16 atoms,<br> each 512 elements later)|
+|K	|(64, 1)|	(1, 0)|	64 : 1 (atom’s columns)|	1 : 0 (only one atom along K)|
+|PIPE	|(1, 3)|	(0, 8192)|	1 : 0 (the atom has no PIPE mode;<vr> added as size 1)|	3 : 8192 (3 stages)|
+<pre>
 
   
 Step 1: the definition, in bits (line 84)
@@ -549,10 +635,13 @@ The same as a table:
 </pre>
 |Mode|	Shape|	Stride|	Meaning|
 |:---|:------|:-------|:-------|
-|M	(8,16)	|(64,512)|	8 rows within an atom (64 elements apart) × 16 atoms<br> (512 elements apart) = 128 rows|
+|M	|(8,16)	|(64,512)|	8 rows within an atom (64 elements apart) × 16 atoms<br> (512 elements apart) = 128 rows|
 |K	|(64,1)	|(1,0)	|64 contiguous elements × 1 atom <br>(size 1, so its stride doesn’t matter) = 64|
 |PIPE	|(1,3)|	(0,8192)|	size-1 placeholder × 3 stages, 8192 elements apart|
 <pre>
+Shape and stride pair up by position: the first group of the shape goes with the first group 
+of the stride, and so on, both at the outer level (M, K, PIPE) and inside each group.
+  
 GMMA:: atom is for Hopper (SM90), but “Blackwell” covers two different GPU families with
 different instructions, and “MMA” is a general term, not a Blackwell-specific one.
 </pre>
@@ -580,6 +669,9 @@ uses neither: it uses the ordinary warp-level mma.sync atoms.
 • “MMA” alone is the general term, used for every architecture (MMA_Atom, TiledMMA).
 
 
+
+
+  
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
 K is a contiguous dimension. The elements alone the K-dimension, sit right next to each other in physical memory, moving contiguous across column which means matrix A is store a row-major format in shared memory.    
