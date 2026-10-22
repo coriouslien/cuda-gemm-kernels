@@ -384,9 +384,9 @@ Step that picks which two modes to use (kernel, L72–74):
 </pre>
 |Line|	Matrix|	Step|	Modes used	|Tile cut out|
 |:---|:-------|:----|:------------|:-----------|
-|L72	|A (M × K)	|<_1, X, _1>	M, K|	128 × 64|
-|L73	|B (N × K)	|<X, _1, _1>	N, K	|128 × 64|
-|L74	|C (M × N)	|<_1, _1, X>	M, N	|128 × 128|
+|L72	|A (M × K)	|<_1, X, _1>	|M, K|	128 × 64|
+|L73	|B (N × K)	|<X, _1, _1>	|N, K	|128 × 64|
+|L74	|C (M × N)	|<_1, _1, X>	|M, N	|128 × 128|
 <pre>
   
   
