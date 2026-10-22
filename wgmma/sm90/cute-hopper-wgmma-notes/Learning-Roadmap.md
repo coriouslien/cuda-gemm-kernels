@@ -469,6 +469,66 @@ swizzle: Sw<3,4,3>
 shape : ( (8,16)    , (64,1)    , (1,3)     )
 stride: ( (64,512)  , (1,0)     , (0,8192)  )
 mode  :   M           K           PIPE
+Line 383: auto sA = tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, make_shape(bM,bK,bP));
+The atom is 8 × 64. See below:
+The atom is defined in bits, and the 8 × 64 comes from converting it to half (16 bits). 
+I checked this in CuTe’s current cute/atom/mma_traits_sm90_gmma.hpp on main. It’s the same line
+84 we looked at before.
+using Layout_K_SW128_Atom_Bits =
+  ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag,
+                 Layout<Shape<_8,_1024>, Stride<_1024,_1>>>;
+The plain layout part is (8, 1024) : (1024, 1):
+• 8 rows
+• 1024 bits per row = 128 bytes, contiguous (stride 1 along the row)
+Step 2: convert to your element type (line 104)
+template <class Type>
+using Layout_K_SW128_Atom =
+  decltype(upcast<sizeof_bits<Type>::value>(Layout_K_SW128_Atom_Bits{}));
+    
+upcast<N> regroups every N bits into one element. Here TA = half_t, so N = sizeof_bits<half_t> =
+16:
+row:    1024 bits / 16 = 64 halfs
+rows:   8 (unchanged)
+→ (8, 64) : (64, 1)
+That’s the 8 × 64: 8 rows, each 64 halfs = 128 bytes, contiguous along K. That’s why it’s 
+called K-major.
+The same atom gives different element counts for other types, but always 128 bytes per row:
+</pre>
+|Type|	Bits|	Atom|
+|:---|:-----|:----|
+|half_t (this kernel)|	16|	8 × 64|
+|FP8	|8	|8 × 128|
+|float/TF32|	32|	8 × 32|
+<pre>
+Why 128 bytes and 8 rows
+128 bytes per row: this is the “SW128” in the name, the 128-byte swizzle mode, the widest of 
+the swizzle modes that wgmma descriptors support (the neighbouring lines 81–83 define the INTER,
+SW32 and SW64 versions: 128, 256 and 512 bits per row). With bK = 64 halfs, one row of the A
+tile is exactly 128 bytes, so one atom row spans the full bK.
+
+8 rows: Swizzle<3,4,3> XORs 3 bits of the row number into the chunk bits. 3 bits means 2³ = 8
+different patterns, so the pattern repeats every 8 rows:
+8 rows × 128 bytes = 1,024 bytes = one full swizzle pattern
+That’s the 1,024 bytes we found before, and the reason the buffers must be 1,024-aligned.
+How tile_to_shape uses it (L383)
+atom 8 × 64 → repeat 128 / 8 = 16 times along M → 128 × 64 (one stage)
+                                                  → 3 stages: (128, 64, 3)
+
+Along K, 64 / 64 = 1, so no repetition is needed.
+
+Summary
+</pre>
+|Question|	Answer	|Source|
+|:------|:---------|:------|
+|Where is 8 × 64 defined?|	as (8, 1024) bits, line 84|	mma_traits_sm90_gmma.hpp|
+|Why 64?|	1024 bits/16 bits per half = 64	|upcast, line 104|
+|Why 128 B per row?|	the 128-byte swizzle mode (SW128)	|atom name, lines 81–84|
+|Why 8 rows?|	Swizzle<3,…> uses 3 row bits → <br>8 patterns → 1,024 B|	Swizzle<3,4,3>|
+<pre>
+
+
+  
+Step 1: the definition, in bits (line 84)
 The same as a table:
 </pre>
 |Mode|	Shape|	Stride|	Meaning|
