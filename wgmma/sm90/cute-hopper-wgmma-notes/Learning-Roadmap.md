@@ -347,4 +347,48 @@ They’re the CTA tile sizes: how much work one thread block (CTA) handles.
 |bM	|128|	the CTA computes 128 rows of C|
 |bN	|128|	… and 128 columns of C → a 128 × 128 tile of C per CTA|
 |bK	|64	|per main-loop iteration, it processes a 64-wide slice of K|
+<pre>
+So each CTA loops K / bK = 4096 / 64 = 64 times, each time multiplying a 128 × 64 piece of A by
+a 64 × 128 piece of Bᵀ.
+
+A possible confusion to avoid: bM = 128 is not the number of threads. The thread count is set
+separately, by the MMA (L414: dim3 dimBlock(size(tiled_mma)), one warpgroup = 128 threads). 
+Both happen to be 128, but they’re unrelated: the tile is 128 × 128 = 16,384 elements of C,
+shared among 128 threads.
+•  Static, integer: Int<128> is CuTe’s compile-time integer (the same as cute::C<128>). 
+•  The value 128 is part of the type itself, which is why the build log shows 
+tuple<C<128>, C<128>, C<64>> for cta_tiler. The object has no runtime storage at all; it’s an
+empty type.
+
+Line 376: auto bM = Int<128>{};
+Line 377: auto bN = Int<128>{};
+Line 378:   auto bK = Int< 64>{};
+Their values are simply known to the compiler. 
+The practical effect is that every calculation involving them is done 
+by the compiler: tile shapes, layout sizes, the 16 wgmma per k-tile, the 8 copies per thread,
+the loop bounds of the inner loops. None of that costs instructions or registers at runtime.
+
+Compare with M, N, K (L365–367): runtime ints, unknown until the program runs. When both meet,
+the result is a runtime value. For example, the grid size ceil_div(m, bM) (L416) is computed at
+runtime, because m is runtime, even though bM is static.
+
+Line 379: auto cta_tiler = make_shape(bM, bN, bK);     
+•  CTA = Cooperative Thread Array, CUDA’s formal name for a thread block.
+•  bM, bN, bK are static integers, and make_shape combines them into one shape: (128, 128, 64).
+(The variable is named cta_tiler)
+•  Elements, not threads: 128, 128 and 64 count matrix elements.
+•  The object cta_tiler like a cookie cutter. A shape that’s used to cut a bigger tensor into
+tiles is called a tiler in CuTe. (M, N, K) isn’t one 3-D matrix. It describes three 2-D
+matrices, and each uses only two of the three sizes. The same tiler is applied to each, with a
+Step that picks which two modes to use (kernel, L72–74):
+</pre>
+|Line|	Matrix|	Step|	Modes used	|Tile cut out|
+|:---|:-------|:----|:------------|:-----------|
+|L72	|A (M × K)	|<_1, X, _1>	M, K|	128 × 64|
+|L73	|B (N × K)	|<X, _1, _1>	N, K	|128 × 64|
+|L74	|C (M × N)	|<_1, _1, X>	M, N	|128 × 128|
+<pre>
+  
+  
+  carve out form global matrix MxNxK. slice exactly 128x128x64 chunk of elements which we will load into shared memory and compute later. 128x128x64 are not threads, they are elements.
 </pre>
