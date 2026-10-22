@@ -387,8 +387,99 @@ Step that picks which two modes to use (kernel, L72–74):
 |L72	|A (M × K)	|<_1, X, _1>	|M, K|	128 × 64|
 |L73	|B (N × K)	|<X, _1, _1>	|N, K	|128 × 64|
 |L74	|C (M × N)	|<_1, _1, X>	|M, N	|128 × 128|
+<pre>  
+X means “skip this mode”. So (128, 128, 64) is three tile sizes packed into one object, 
+not one chunk of 128·128·64 elements.
+only A and B go to shared memory, and C never does
+• The A and B tiles (128 × 64 each) are copied into shared memory with cp.async, one k-tile per
+loop iteration.
+• The C tile (128 × 128) is never loaded into shared memory. Its values are accumulated in
+registers (tCrC), and at the end they’re written directly from registers to global memory
+(axpby, L257).
+L379 auto cta_tiler = make_shape(bM, bN, bK): only describes; the cutting happens in the kernel
+At L379, cta_tiler is just a description, three static sizes with no data. It’s passed to the
+kernel (L434), and the actual cutting happens there in local_tile (L72–74). For A, the 
+coordinate cta_coord = (blockIdx.x, blockIdx.y, _) (L71) picks which tile along M (blockIdx.x),
+and the _ keeps all tiles along K. So gA has shape (128, 64, k): this CTA’s 128-row strip of A,
+cut into k = 4096/64 = 64 pieces, one per main-loop iteration.
+Summary:
+cta_tiler is a static shape (128, 128, 64), used like a cookie cutter. In the kernel, local_tile
+uses it to cut a 128 × 64 tile of A and of B (for each k-step) and one 128 × 128 tile of C for
+each CTA. The A and B tiles are loaded into shared memory one k-step at a time; the C tile is
+accumulated in registers and written directly to global memory. All sizes count elements, not
+threads.
+• The atom is 8 × 64, not 128 × 64. For half_t it’s 8 rows × 64 elements, each row 64 × 2 B =
+128 bytes, so the atom is 1024 bytes. tile_to_shape then repeats it to fill the target shape
+(Step 3 below).
+• K is the contiguous dimension: In the atom (8,64):(64,1), K has stride 1. Viewed as an M × K
+tile, that’s row-major (K-major, as discussed for dA).
+• bM, bK, bP are static: so the whole resulting layout is a compile-time object. The kernel 
+even requires that, at L49: static_assert(is_static<ASmemLayout>::value).
+  
+Line 383: auto sA = tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, make_shape(bM,bK,bP));
+On the host, sA is a layout not a matrix: a mapping from coordinates (m, k, stage) to offsets.
+It holds no memory and no data. It’s passed to the kernel as sA_layout (L37). Inside the kernel,
+the name sA is reused for a different thing: a tensor = shared-memory pointer + this layout
+(L80). Same name, two different objects.
+L383 builds its own shape from bM, bK and bP: make_shape(bM, bK, bP) = (128, 64, 3). It doesn’t
+use cta_tiler, which has no bP at all. The values only agree because both use the same bM and
+bK, and the kernel checks that they do (L52, L54).
+
+bP = 3 (L380) is the number of pipeline stages: three 128 × 64 slots for A in shared memory, 
+so loads for future k-tiles can be in flight while one is being used. It’s the third mode of the
+layout.
+
+The layout fixes the size and arrangement at compile time, but no shared memory is set aside 
+at L383. The actual reservation happens at launch:
+
+• the size comes from SharedStorage (L413), via cosize_v of this layout (L24): 3 × 8192 halfs = 
+48 KB for A;
+• smem_size is passed as dynamic shared memory at launch (L418), after cudaFuncSetAttribute 
+(L427–430).
+it’s a software description of a hardware format
+
+GMMA::Layout_K_SW128_Atom<TA> isn’t a hardware configuration. It’s a CuTe type that describes,
+in software, one of the few shared-memory formats the Hopper wgmma instruction can read 
+(K-major, 128-byte swizzle). Both sides must agree on it: CuTe applies the swizzle when the copy
+writes shared memory, and the hardware applies the same swizzle when wgmma reads it.
+
+About Blackwell: this GMMA:: atom is for Hopper (SM90). Datacenter Blackwell (SM100) uses its
+own MMA instruction with its own atom types in CUTLASS (as far as I know, similar swizzle modes
+under a different namespace). My RTX Blackwell SM120 GPUs have neither wgmma nor that
+instruction, so these atoms don’t apply there.
+
+• Contiguity: before the swizzle, each 128-byte row is fully contiguous along K. After the
+swizzle, the row’s eight 16-byte chunks are permuted (physical chunk = logical chunk XOR (row
+mod 8), as in the swizzle table from earlier). So elements are physically adjacent only within
+each 16-byte chunk (8 halfs). That’s exactly why the copy moves 16 bytes per cp.async: one chunk
+always stays intact.
+Bank conflicts: the 128-byte swizzle is designed to spread the 8 rows of an atom across all
+shared-memory banks. Whether this kernel is actually conflict-free can only be measured: on an
+H100, ncu’s shared-memory bank-conflict counters would show it. Until then, say “designed to
+avoid bank conflicts”.
+Summary the whole line in one sentence
+tile_to_shape takes the Hopper K-major 128-byte-swizzle atom (8 × 64 halfs = 1 KB) and repeats
+it 16× along M, 1× along K and 3× along the pipeline mode, producing the static layout (128, 64,
+3): three swizzled 128 × 64 stages for A in shared memory. The memory itself is reserved at
+launch, as dynamic shared memory.
+
+Resulting type, from your build log:
+Sw<3,4,3> ∘ ((8,16),(64,1),(1,3)) : ((64,512),(1,0),(0,8192))
+             └M:8×16┘ └K┘ └PIPE┘
+
+GMMA:: atom is for Hopper (SM90), but “Blackwell” covers two different GPU families with
+different instructions, and “MMA” is a general term, not a Blackwell-specific one.
+</pre>
+|GPU	|Compute capability|	Tensor-core instruction|	CuTe namespace / atoms|
+|:----|:-----------------|:------------------------|:-----------------------|
+|Hopper (H100)|	SM90|	wgmma.mma_async	|GMMA:: (this tutorial)|
+|Datacenter Blackwell (B200)|	SM100|	tcgen05.mma|	UMMA::|
+|Consumer Blackwell (my RTX 5080/5050)|	SM120|	mma.sync (warp-level)|	ordinary warp-level MMA<br> atoms, the SM80_…-style ones you used in sgemm_sm80.cu|
 <pre>
   
-  
-  carve out form global matrix MxNxK. slice exactly 128x128x64 chunk of elements which we will load into shared memory and compute later. 128x128x64 are not threads, they are elements.
+
+sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
+128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
+K is a contiguous dimension. The elements alone the K-dimension, sit right next to each other in physical memory, moving contiguous across column which means matrix A is store a row-major format in shared memory.    
+The Layout_K_SW128_Atom is not 128x64, it is an atom 8x64, a tiny atom.
 </pre>
