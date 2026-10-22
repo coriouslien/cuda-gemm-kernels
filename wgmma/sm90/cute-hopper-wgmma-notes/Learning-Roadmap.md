@@ -463,10 +463,20 @@ it 16× along M, 1× along K and 3× along the pipeline mode, producing the stat
 3): three swizzled 128 × 64 stages for A in shared memory. The memory itself is reserved at
 launch, as dynamic shared memory.
 
-Resulting type, from your build log:
-Sw<3,4,3> ∘ ((8,16),(64,1),(1,3)) : ((64,512),(1,0),(0,8192))
-             └M:8×16┘ └K┘ └PIPE┘
+Resulting type, from my build log:
+swizzle: Sw<3,4,3>
 
+shape : ( (8,16)    , (64,1)    , (1,3)     )
+stride: ( (64,512)  , (1,0)     , (0,8192)  )
+mode  :   M           K           PIPE
+The same as a table:
+</pre>
+|Mode|	Shape|	Stride|	Meaning|
+|:---|:------|:-------|:-------|
+|M	(8,16)	|(64,512)|	8 rows within an atom (64 elements apart) × 16 atoms<br> (512 elements apart) = 128 rows|
+|K	|(64,1)	|(1,0)	|64 contiguous elements × 1 atom <br>(size 1, so its stride doesn’t matter) = 64|
+|PIPE	|(1,3)|	(0,8192)|	size-1 placeholder × 3 stages, 8192 elements apart|
+<pre>
 GMMA:: atom is for Hopper (SM90), but “Blackwell” covers two different GPU families with
 different instructions, and “MMA” is a general term, not a Blackwell-specific one.
 </pre>
@@ -487,6 +497,12 @@ inside is GMMA, UMMA or mma.sync. Only the atom changes.
 
 To see the namespaces in your checkout:
 grep -rln "namespace GMMA\|namespace UMMA" ../cutlass/include/cute/ 
+
+• GMMA:: = Hopper (SM90)
+• Datacenter Blackwell (SM100) uses UMMA::. Consumer Blackwell, like my RTX 5080 (SM120), 
+uses neither: it uses the ordinary warp-level mma.sync atoms.
+• “MMA” alone is the general term, used for every architecture (MMA_Atom, TiledMMA).
+
 
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
