@@ -626,8 +626,11 @@ comes from the atom, and the second is how many times the atom is repeated:
 |:----|:---------|:------------|:--------------|:---------------------|
 |M	|(8, 16)|	(64, 512)|	8 : 64 (atom’s rows)|	16 : 512 (16 atoms,<br> each 512 elements later)|
 |K	|(64, 1)|	(1, 0)|	64 : 1 (atom’s columns)|	1 : 0 (only one atom along K)|
-|PIPE	|(1, 3)|	(0, 8192)|	1 : 0 (the atom has no PIPE mode;<vr> added as size 1)|	3 : 8192 (3 stages)|
+|PIPE	|(1, 3)|	(0, 8192)|	1 : 0 (the atom has no PIPE mode;<br> added as size 1)|	3 : 8192 (3 stages)|
 <pre>
+Reading only the first number of each pair gives back the atom: (8, 64) : (64, 1). 
+The second numbers describe how tile_to_shape stacked copies of it to reach (128, 64, 3).
+
 
   
 Step 1: the definition, in bits (line 84)
@@ -669,8 +672,81 @@ uses neither: it uses the ordinary warp-level mma.sync atoms.
 • “MMA” alone is the general term, used for every architecture (MMA_Atom, TiledMMA).
 
 
+Undersanding the following statement.
+auto sA = tile_to_shape(
+    GMMA::Layout_K_SW128_Atom<TA>{},
+    make_shape(bM, bK, bP)
+);
+tile_to_shape does not allocate memory or load matrix data. It constructs a CuTe layout that
+describes how shared-memory storage should be organized.
+gemm_tn: bM = 128, bK = 64, bP = 3 → shape (128, 64, 3)
+bM, bK, and bP
+In the example, these values are:
+auto bM = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};  // Pipeline stages
+Then: make_shape(bM, bK, bP)
+constructs a three-dimensional shape:
+(128,64,3)
+
+P 3 pipeline stages
+Three storage slots allow the kernel to pipeline loading and computation.
+Conceptually, the layout describes three A tiles:
+sA(:,:,0), sA(:,:,1), sA(:,:,2)
+Each stage can hold a tile of (128 x 64) elements. These are three storage regions, not three
+different matrix dimensions in the mathematical GEMM problem.
+
+TA is FP16, the storage required for all three tiles is:
+128 x 64 x 3 x 2 = 49,152 bytes
+That is 48 KB for operand A, excluding other shared-memory storage.
+
+Layout_K_SW128_Atom
+This is a predefined shared-memory layout atom.
+- K means the layout is K-major: the K dimension is contiguous in memory.
+- SW128 means it uses a 128-byte shared-memory swizzle.
+- Atom means a small, reusable layout pattern that can be tiled to construct a larger layout.
+
+GMMA::Layout_K_SW128_Atom<TA>{}
+The {} constructs an instance of the layout atom. Because the type is known at compile time, 
+the compiler can resolve much of the layout structure during compilation.
+fully static here: every value is an Int<>
+
+What layout does the atom describe:
+For the FP16 example with a 128-byte swizzle, the K-major layout atom can be understood as 
+the two-dimensional layout: (8,64):(64,1)
+This notation means:
+- Shape (8,64): 8 elements in the M-like direction and 64 elements in K.
+- Stride (64,1): advancing one position along the first dimension advances 64 elements; advancing one position along K advances one element.
+The atom covers 8 rows and 64 columns. For FP16, its contiguous K extent occupies:
+64 x 2=128 bytes
+That matches the 128-byte swizzle mode.
+
+The first dimension requires:
+128/8=16
+So the atom repeats 16 times along M. It already spans all 64 elements along K, so it does not
+need to repeat along K.
+Finally, it extends the result over the P dimension of size 3.
+
+The text says CuTe prints (_128,_64,_3):(_64,_1,_8192). Your actual output was hierarchical. 
+Per mode it was:
+
+((_8,_16), (_64,_1), _3) : ((_64,_512), (_1,_0), _8192)
+For a logical coordinate (m,k,p), the unswizzled element offset is:
+offset(m,k,p) = 64m+k+8192p
+For example:
+-(0,0,0) has an unswizzled offset of 0.
+-(0,1,0) has an unswizzled offset of 1.
+-(1,0,0) has an unswizzled offset of 64.
+-(0,0,1) has an unswizzled offset of 8192.
+These offsets are in elements, not bytes. For FP16, multiply by 2 to obtain the corresponding
+byte offset before considering the swizzle transformation.
+
+The swizzle modifies the physical address mapping, so these expressions describe the underlying 
+stride structure, not the final swizzled address for every element.
 
 
+
+  
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
