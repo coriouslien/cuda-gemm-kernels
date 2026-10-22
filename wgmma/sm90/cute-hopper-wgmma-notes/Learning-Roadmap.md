@@ -523,9 +523,25 @@ Summary
 |Where is 8 × 64 defined?|	as (8, 1024) bits, line 84|	mma_traits_sm90_gmma.hpp|
 |Why 64?|	1024 bits/16 bits per half = 64	|upcast, line 104|
 |Why 128 B per row?|	the 128-byte swizzle mode (SW128)	|atom name, lines 81–84|
-|Why 8 rows?|	Swizzle<3,…> uses 3 row bits → <br>8 patterns → 1,024 B|	Swizzle<3,4,3>|
+|Why 8 rows?|	Swizzle<3,…> uses 3 row bits → 8 patterns → 1,024 B|	Swizzle<3,4,3>|
+<pre>
+The 8 × 64 defined in cute/atom/mma_traits_sm90_gmma.hpp because I use
+GMMA::Layout_K_SW128_Atom<TA>{}.
+By writing GMMA::Layout_K_SW128_Atom<TA>, I choose the alias defined in that file (line 104).
+That alias is built from the bit-level atom on line 84.
+</pre>
+|I write|	Line|	Shape for half_t|
+|:------|:----|:----------------|
+|GMMA::Layout_K_SW128_Atom<TA> (gemm_tn, L383)|	84 → 104|	8 × 64 (K-major)|
+|GMMA::Layout_K_SW64_Atom<TA>	|83 → 102	|8 × 32|
+|GMMA::Layout_MN_SW128_Atom<TA> (used in gemm_nt)|	MN version|	64 × 8 (MN-majo)|
 <pre>
 
+Two precisions:
+
+1. The file defines it in bits. The 8 × 64 comes from your <TA>. Line 84 says 8 × 1024 bits. The 8 × 64 only appears because TA = half_t (16 bits), and upcast<16> turns 1024 bits into 64 elements. With a different TA, the same name gives a different shape (8 × 128 for FP8, for example).
+
+2. A different atom name gives a different definition from the same file. For example:
 
   
 Step 1: the definition, in bits (line 84)
