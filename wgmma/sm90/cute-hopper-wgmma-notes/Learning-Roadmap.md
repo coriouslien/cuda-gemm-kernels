@@ -474,9 +474,19 @@ different instructions, and “MMA” is a general term, not a Blackwell-specifi
 |:----|:-----------------|:------------------------|:-----------------------|
 |Hopper (H100)|	SM90|	wgmma.mma_async	|GMMA:: (this tutorial)|
 |Datacenter Blackwell (B200)|	SM100|	tcgen05.mma|	UMMA::|
-|Consumer Blackwell (my RTX 5080/5050)|	SM120|	mma.sync (warp-level)|	ordinary warp-level MMA<br> atoms, the SM80_…-style ones you used in sgemm_sm80.cu|
+|Consumer Blackwell (my RTX 5080)|	SM120|	mma.sync (warp-level)|	ordinary warp-level MMA<br> atoms, the SM80_…-style ones you used in sgemm_sm80.cu|
 <pre>
-  
+GMMA:: = Hopper, SM90. 
+UMMA:: (not MMA::) = datacenter Blackwell, SM100, with UMMA::ScaleOut::Zeroin the Blackwell 
+tutorial concepts.
+My SM120 GPUs have neither wgmma nor tcgen05. They use the warp-level mma.sync path.
+
+“MMA” by itself just means matrix multiply-accumulate. CuTe uses it generically for all
+architectures: MMA_Atom, TiledMMA, make_tiled_mma (L394) work the same way whether the atom
+inside is GMMA, UMMA or mma.sync. Only the atom changes.
+
+To see the namespaces in your checkout:
+grep -rln "namespace GMMA\|namespace UMMA" ../cutlass/include/cute/ 
 
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
