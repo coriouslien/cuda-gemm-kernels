@@ -498,6 +498,11 @@ The hardware doesn’t specify GMMA::Layout_K_SW128_Atom<TA>. The roles split th
 |CuTe|	describes each supported format as<br> a layout atom; GMMA::Layout_K_SW128_Atom<br> is the one for K-major,<br> 128-byte swizzle|
 |The programmer<br> (here, the tutorial’s authors at L383)|	chooses which atom to use|
 <pre>
+Summary:
+Hopper’s wgmma supports a few swizzled shared-memory formats; the tutorial chooses the K-major
+128-byte one, described in CuTe by GMMA::Layout_K_SW128_Atom<TA>. SW128 is intended to avoid
+bank conflicts, but that isn’t guaranteed; it has to be measured with ncu.
+  
 This is the same verification-first pattern as my C7510 investigation: a reasoned prediction,
 then evidence from the tools. 
 
@@ -832,7 +837,84 @@ byte offset before considering the swizzle transformation.
 The swizzle modifies the physical address mapping, so these expressions describe the underlying 
 stride structure, not the final swizzled address for every element.
 
+Line: 387 TiledCopy copyA = make_tiled_copy(Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, TA>{},  Layout<Shape<_16,_8>,Stride<_8,_1>>{},   Layout<Shape< _1,_8>>{});  
 
+Create a tile copy object copyA base on the layout (shape and stride). It is not copied over
+yet. this is an object.
+SM80_CP_ASYNC, SM80 is Ampere architectural. The compiler uses Ampere architectural asynchronous
+copy from global memory to shared memory without private registers.
+uint128_t: each thread move 128 bit.
+TA is a type, here we use half_t, FP16.
+Share<_16,_8>, 16x8 threads. They are static.
+Layout<Shape< _1,_8>>{}): value layout. Each thread contains 8 elements alone row.
+
+• An object, not a copy yet: copyA only describes how to copy. The actual copies happen inside
+the kernel, when copy(copy_a, …) is called (L193, L222).
+• SM80 = Ampere: cp.async was introduced with Ampere (SM80) and is still available on Hopper,
+which is why a Hopper kernel can use an “SM80” atom.
+• Global → shared without going through registers: right. That’s the key property of cp.async:
+the data never passes through the thread’s registers. In SASS it’s the LDGSTS instruction.
+CACHEALWAYS selects the .ca variant, which caches in L1 and L2.
+• uint128_t: 128 bits per thread, per instruction: each cp.async moves 16 bytes. (For a whole
+128 × 64 A tile, each thread issues 8 of them.)
+• TA = half_t, FP16. Its role here: it tells CuTe the element size, so it knows 128 bits = 8
+halfs.
+• Value layout Shape<_1,_8>: 8 elements along a row: right. Each thread owns 1 element 
+along M × 8 consecutive elements along K: one row, 8 contiguous halfs, exactly one 16-byte chunk.
+
+Stride<_8,_1> is row-major, not column-major
+The thread layout (16,8):(8,1) maps a thread’s grid position (tm, tk) to its index:
+t = 8·tm + 1·tk
+The second mode (tk, along K) has stride 1: consecutive thread numbers go along a row. 
+That’s row-major (CuTe’s LayoutRight). The source comment at L388 says the same: “16x8 k-major”.
+</pre>
+|Thread|	(tm, tk)|
+|:-----|:---------|
+|0, 1, 2, …, 7	|(0,0), (0,1), …, (0,7) → across row 0|
+|8|	(1,0) → start of row 1|
+<pre>
+Column-major would be the default stride for this shape, (1,16): then thread 1 would sit below
+thread 0, in row 1. That’s what the NT version uses (L296, no stride given).
+
+_16, _8 are static, not const
+_16 is CuTe’s short name for Int<16>: a compile-time integer, like bM. So “static” or 
+“compile-time” is the right word. const in C++ means something different (a variable that 
+can’t be modified at runtime).
+
+Shape<_16,_8> = 16 × 8 = 128 threads, the whole warpgroup. It must match the MMA’s thread count,
+which the kernel checks at L46: size(copy_a) == size(mma).
+
+What it all produces
+
+Combining the three pieces gives what you saw in the build log: one copy step covers a 16 × 64
+piece of A:
+thread t copies row t/8, K elements 8·(t mod 8) … +7     (one 16-byte cp.async)
+128 threads × 8 halfs = 1024 elements = 16 rows × 64
+
+A full 128 × 64 tile of A needs 128 / 16 = 8 copy steps, so each thread issues 8 cp.async per 
+k-tile for A (and 8 more for B).
+
+Line 394: TiledMMA tiled_mma = make_tiled_mma(SM90_64x64x16_F16F16F16_SS<GMMA::Major::K,GMMA::Major::K>{});
+It create an object tiled_mma for math layout. It uses Hopper engine SM90. the m,n,k is
+64x64x16. The type is half_t, FP16, half precision. It is shared and shared memory. Matrix A and
+B are from shared memory. K-dimension, k-major.
+
+1. It describes; it doesn’t compute yet. Like copyA, tiled_mma is only a description. The actual
+MMAs are issued in the kernel, at cute::gemm(mma, …) (L240).
+2. “Hopper engine”: more precisely, the wgmma.mma_async instruction on Hopper’s tensor cores.
+It’s issued by a warpgroup (4 warps = 128 threads) together, not by a single warp. That’s why
+size(tiled_mma) = 128, and why it sets the block size at L414 (dim3 dimBlock(size(tiled_mma))).
+3. 64 × 64 × 16 is one instruction, not the whole tile. One wgmma computes a 64 × 64 piece of C
+with K = 16. The CTA tile (128 × 128 × 64) needs:
+(128/64) × (128/64) × (64/16) = 2 × 2 × 4 = 16 wgmma instructions per k-tile
+4. F16F16F16 means three types, including the accumulator. The order is D, A, B:
+</pre>
+|Form	|Text|	Where it comes from|
+|:----|:---|:--------------------|
+|hierarchical	|((8,16),(64,1),3):((64,512),(1,0),8192)|	what tile_to_shape built and<br> print showed you|
+|flat|	(128,64,3):(64,1,8192)	|the same layout after merging modes (coalesce)|
+|read it as|	offset = 64m + k + 8192p	|shape gives ranges, stride gives steps|
+<pre>
 
   
   
