@@ -463,6 +463,44 @@ it 16× along M, 1× along K and 3× along the pipeline mode, producing the stat
 3): three swizzled 128 × 64 stages for A in shared memory. The memory itself is reserved at
 launch, as dynamic shared memory.
 
+Bank conflicts: the 128-byte swizzle is designed to spread the 8 rows of an atom across all
+shared-memory banks. Whether this kernel is actually conflict-free can only be measured: on an
+H100, ncu’s shared-memory bank-conflict counters would show it. Until then, say “designed to
+avoid bank conflicts”
+Conclusion: until I have ncu data from a real H100 run, “designed to avoid bank conflicts” is
+the accurate statement. “Bank-conflict-free” is a claim about measured behavior.
+
+I can predict before you measure. There are two separate shared-memory accesses here, 
+and they differ in how well they can be predicted:
+I cannot say it is bank conflict until I look up the NCU data, then I can know whether it 
+is bank conflict free or not.
+</pre>
+|Access|	Who does it|	Predict by hand|
+|:-----|:------------|:----------------|
+|Writes by cp.async (L222–223)|	each thread writes its own 16 bytes|Yes. You know which thread<BR> writes which element (the copy TV layout)<br> and where it lands (layout + swizzle),<br> so you can work out each thread’s<br> bank and check for collisions|
+|Reads by wgmma|the tensor-core hardware,<br> through the descriptor|	Not really. The hardware’s<br> internal access order isn’t documented in<br> enough detail. The swizzle mode is<br> chosen to match what it expects,<br> but only measurement confirms the result|
+<pre>
+So the full method is:
+1. Predict: compute the banks for the cp.async writes of one warp, by hand or with a small host
+program like print_layouts.cu.
+2. Measure: on the H100, profile with ncu and check the shared-memory bank-conflict counts. 
+The Memory Workload Analysis section reports them per access type. Exact metric names vary
+between ncu versions, so check what the version lists rather than relying on a name developer
+give from memory.
+3. Compare: if prediction and measurement agree, developer understand the kernel; if they don’t,
+that’s worth investigating, and worth writing about.
+SW128 is intended to avoid bank conflicts, and only measurement confirms it for a given kernel.
+The hardware doesn’t specify GMMA::Layout_K_SW128_Atom<TA>. The roles split three ways:
+</pre>
+|Who	|What|
+|:----|:---|
+|Hopper hardware|	supports a few shared-memory formats<br> for wgmma: no swizzle, 32-, 64- and 128-byte<br> swizzle, K-major or MN-major|
+|CuTe|	describes each supported format as<br> a layout atom; GMMA::Layout_K_SW128_Atom<br> is the one for K-major,<br> 128-byte swizzle|
+|The programmer<br> (here, the tutorial’s authors at L383)|	chooses which atom to use|
+<pre>
+This is the same verification-first pattern as my C7510 investigation: a reasoned prediction,
+then evidence from the tools. 
+
 Resulting type, from my build log:
 swizzle: Sw<3,4,3>
 
@@ -630,6 +668,56 @@ comes from the atom, and the second is how many times the atom is repeated:
 <pre>
 Reading only the first number of each pair gives back the atom: (8, 64) : (64, 1). 
 The second numbers describe how tile_to_shape stacked copies of it to reach (128, 64, 3).
+
+The atom is one level smaller still.
+There are three levels, from smallest to largest:
+</pre>
+|Level|	Shape|	Stride|	Size|
+|:----|:-----|:-------|:-----|
+|Atom	|(8, 64)|	(64, 1)|	8 × 64 = 512 elements (1 KB)|
+|One stage|	((8,16), (64,1))	|((64,512), (1,0))|	128 × 64 = 8192 elements (16 KB)|
+|Full sA	|((8,16), (64,1), (1,3))	|((64,512), (1,0), (0,8192))|	3 stages = 24,576 elements<br> (48 KB)|
+<pre>
+The atom, aligned by mode:
+shape : ( 8  , 64 )
+stride: ( 64 , 1  )
+mode  :   M    K
+
+M: 8 rows, each 64 elements after the previous one.
+K: 64 elements, contiguous.
+
+one stage:   shape ( (8,16) , (64,1) )      → 8×16 = 128 rows,  64×1 = 64 columns
+                       M        K
+
+atom:        shape (   8    ,   64   )      → 8 rows, 64 columns
+                       M        K
+
+The atom has one number per mode: 8 for M and 64 for K. Its full description is:
+
+atom:   shape ( 8  , 64 )
+        stride( 64 , 1  )
+                M    K
+
+The pairs (8,16) and (64,1) only appear after tile_to_shape has repeated the atom: the first
+number of each pair is the atom’s size (8, 64), and the second is the number of 
+repeats (16, 1).
+One atom 8x64 is a tiny chunk of 128 x 64.
+One atom (8 × 64) is a small piece of one 128 × 64 stage. It takes 16 atoms, stacked along M, 
+to make one stage:
+128 × 64 stage
+┌──────────── 64 (K) ────────────┐
+│ atom 0   rows   0 –   7         │
+│ atom 1   rows   8 –  15         │
+│ atom 2   rows  16 –  23         │
+│   …                             │   16 atoms × 8 rows = 128 rows (M)
+│ atom 15  rows 120 – 127         │
+└─────────────────────────────────┘
+
+• Each atom is 8 × 64 halfs = 1 KB, with its own 128-byte swizzle applied inside.
+• 16 atoms make one stage: 16 KB.
+• sA has 3 stages: 48 KB in total.
+
+
 
 
   
