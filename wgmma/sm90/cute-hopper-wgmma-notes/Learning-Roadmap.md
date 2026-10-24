@@ -1234,9 +1234,94 @@ Here K is skipped, both in the tiler and in the coordinate, so the _ is dropped 
 k mode: it’s a single 128 × 128 tile, the output this CTA writes once, at the end.
 Summary
 </pre>
+|Tensor	|Uses	|Shape	|For CTA (3, 5)|
+|:------|:----|:------|:--------------|
+|gA|	blockIdx.x, all K|	(128, 64, 64)	|A rows 384–511, 64 k-tiles|
+|gB|	blockIdx.y, all K|	(128, 64, 64)	|B rows 640–767, 64 k-tiles|
+|gC|	both	|(128, 128)|	C rows 384–511 × columns 640–767|
+<pre>  
+Each main-loop iteration takes k-tile k of gA and of gB. Over 64 iterations, they cover the 
+full K = 4096 needed for this C tile.
+Over 64 iterations, they cover the full K = 4096 needed for this C tile:
+It means we need to loop 64 times, 4096/64=64.
+Each CTA runs the main loop K / bK = 4096 / 64 = 64 times, one k-tile per iteration.
+I can see it in the code:
+L181: auto K_TILE_MAX = size<3>(tAgA);, the size of the k mode, i.e. 64. (tAgA is gA
+partitioned for one thread, so its last mode is still the k-tile count.)
+L213: for (int k_tile = 0; k_tile < K_TILE_MAX; ++k_tile): the loop over those 64 k-tiles.
+Two details:
+• The count is a runtime value. K comes from the command line (L495–497), so 64 is only the
+result for the default K = 4096. That’s also why the main loop isn’t unrolled (CUTE_NO_UNROLL,
+L212), while everything inside it, with its static counts, is.
+• K should be a multiple of 64. The tutorial has no handling for a partial last tile, so with K
+= 4100, for example, the last k-tile would read past the end of each row. I believe nothing in
+this file guards against that; the same goes for M and N not being multiples of 128. Production
+CUTLASS kernels handle it with predication (masking out-of-bounds elements), which is the topic
+of the 0y_predication tutorial in your CuTe reading list.
+
+tAgA naming convention from CuTe’s GEMM tutorials, where each letter has a meaning. Read as four parts:
+
+t   A   g   A
+│   │   │   └─ which tensor:        A (the matrix)
+│   │   └───── where it lives:      g = global memory
+│   └───────── partitioned by:      A = the copy pattern for A (copy_a)
+└───────────── "thread": this thread's share of the data
 
 
-  
+So tAgA reads as: this thread’s partition, according to the A-copy pattern, of the global-
+memory tile gA. It’s created at L88: tAgA = thr_copy_a.partition_S(gA).
+The same convention covers every partitioned tensor in this file: 
+</pre>
+|Name|	Partitioned by|	Memory|	Tensor|	Line|
+|:---|:---------------|:------|:------|:----|
+|tAgA|	A copy|	global|	A|	L88|
+|tAsA|	A copy|	shared|	A	|L90|
+|tBgB|	B copy|	global|	B	|L93|
+|tBsB|	B copy|	shared|	B|	L95|
+|tCsA|	MMA|	shared|	A|	L128|
+|tCsB|	MMA|	shared|	B|	L129|
+|tCgC|	MMA	|global	|C	|L130|
+|tCrA|	MMA	|register|	A|	L133|
+|tCrC|	MMA	|register	|C	|L136|
+<pre>
+Two things that commonly confuse readers:
+• The MMA partition is marked C, even when it partitions A or B (tCsA). The C refers to the MMA
+partitioning pattern (named after the accumulator C it produces), not the matrix being
+partitioned. The last letter says which matrix.
+• r means register only by naming. As we found earlier, for this _SS MMA, tCrA and tCrB actually
+hold shared-memory descriptors, not A and B values. The name follows the convention even where
+the contents are unusual.
+
+partitioned by: A = the copy pattern for A (copy_a) which means the way how to copy, a 
+plan or recipe.
+copy_a is the TiledCopy object built on the host at L387, and it fixes two things:
+• Which instruction: cp.async moving 16 bytes (8 halfs) at a time.
+• Which thread copies which elements: the thread layout (16,8):(8,1) plus the value layout
+(1,8). Together they say that thread t copies row t/8, K elements 8·(t mod 8) … +7, in each 16
+× 64 copy step.
+“Partitioned by A” then means: take the tile gA and cut out only the elements that this 
+thread copies, following that plan. That’s what L87–88 do:
+ThrCopy thr_copy_a = copy_a.get_slice(threadIdx.x);   // the plan, for this one thread
+Tensor tAgA = thr_copy_a.partition_S(gA);              // this thread's elements of gA
+
+For example, thread 13 (row 13/8 = 1 of the thread grid, column 13 mod 8 = 5) gets, in every
+k-tile:
+rows 1, 17, 33, …, 113 (8 copy steps, 16 rows apart) × K elements 40 … 47
+That’s 8 × 8 = 64 halfs per k-tile, as 8 cp.async instructions of 16 bytes each.
+The same plan is applied to the destination too: tAsA = thr_copy_a.partition_D(sA_) (L90). 
+So each thread’s source elements in global memory and destination elements in shared memory
+line up one-to-one, and copy(copy_a, tAgA(…), tAsA(…)) just moves them.
+
+What the plan(recipe) decides is how a tile is divided among the 128 threads:
+</pre>
+|Already fixed before partitioning	|Decided by the copy plan(recipe) (copy_a)|
+|:----------------------------------|:----------------------------------------|
+|A’s shape and strides (gA: 128 × 64 tiles, K-major)|	which elements of a tile each thread gets
+||	which instruction moves them (cp.async, 16 bytes)|
+<pre>
+
+
+
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
