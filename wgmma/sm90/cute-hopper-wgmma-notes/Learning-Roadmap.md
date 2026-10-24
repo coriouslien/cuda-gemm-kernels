@@ -1319,9 +1319,109 @@ What the plan(recipe) decides is how a tile is divided among the 128 threads:
 |A’s shape and strides (gA: 128 × 64 tiles, K-major)|	which elements of a tile each thread gets
 ||	which instruction moves them (cp.async, 16 bytes)|
 <pre>
+A more accurate phrasing:
+“Partitioned by A” = divided among the threads according to the copy plan for A: which elements
+of each tile every thread copies, and with which instruction.
+The result of the partitioning, tAgA, does have its own shape and strides. They’re derived by
+combining gA’s layout with the plan, rather than planned directly. For example, tAgA has shape
+(CPY, CPY_M, CPY_K, k) = (8, 8, 1, 64) for each thread: 8 halfs per cp.async, 8 copy steps
+along M, 1 along K, 64 k-tiles.
+A description of tAgA: A thread view in global matrix A, the thread responsible for copying,
+and the thread need to following the copy plan(recipe) for A. it’s a view of this CTA’s tiles
+gA, not of the whole matrix A, and it contains only the elements this thread copies.
+tAgA is one thread’s view of the global-memory tiles gA: exactly the elements of A that this
+thread is responsible for copying, chosen according to the copy plan for A (copy_a). 
+It’s the source side of the copy; tAsA is the matching destination in shared memory.
+
+Like every CuTe tensor here, it’s only a view: no data is moved until copy(copy_a, tAgA(…),
+tAsA(…)) runs (L193, L222).
+gA isn’t the entire matrix, and tAgA covers more than one tile.
+</pre>
+|Tensor	|Line	|What it covers|
+|:------|:----|:-------------|
+|mA	|L66	|the entire matrix A (M × K = 5120 × 4096)|
+|gA|	L72	|this CTA’s strip of A: 128 rows × all of K,<br> cut into 64 k-tiles of<br> 128 × 64 → shape (128, 64, 64)|
+|tAgA|	L8	|this thread’s elements of gA,<br> in all 64 k-tiles → shape (8, 8, 1, 64)|
+<pre>
+So the chain narrows step by step:
+mA   (whole matrix)
+ └─ gA    (one CTA's 128-row strip, as 64 k-tiles)
+     └─ tAgA  (one thread's 64 elements in each of those 64 k-tiles)
+  
+The last mode of tAgA is still the k-tile index (64), the same as gA’s. The main loop picks 
+one k-tile per iteration from it: tAgA(_,_,_,k_tile_next) (L222). That slice is “one thread’s
+view of one tile”.
+gA holds 64 tiles, all from one row of tiles: the 128-row strip belonging to this CTA.
+Matrix A as a whole is divided into many more:
+A (5120 × 4096) in 128 × 64 tiles:
+   along M: 5120 / 128 = 40 rows of tiles
+   along K: 4096 /  64 = 64 tiles per row
+   total:   40 × 64 = 2560 tiles
+            k-tile 0   1   2  …  63
+tile-row  0 [  ][  ][  ] … [  ]
+tile-row  1 [  ][  ][  ] … [  ]
+   …
+tile-row  b [■■][■■][■■] … [■■]   ← gA for the CTA with blockIdx.x = b: 64 tiles
+   …
+tile-row 39 [  ][  ][  ] … [  ]
+
+So: gA = the 64 tiles in this CTA’s row of tiles (selected by blockIdx.x), out of 2560 tiles 
+in total. The other 39 tile-rows belong to CTAs with different blockIdx.x values.
+
+One gA has 64 tiles.
+gA shape: (128, 64, 64)
+            │    │   └─ 64 tiles   (K / bK = 4096 / 64)
+            │    └───── each tile is 64 columns wide (bK)
+            └────────── and 128 rows tall (bM)
+That’s 64 tiles × (128 × 64) = 524,288 elements: this CTA’s full 128-row strip of A, across all
+of K.
+
+Across the whole grid, there are 40 different gAs, one per tile-row of A (blockIdx.x = 0 … 39).
+Each is used by 40 CTAs, the ones with the same blockIdx.x but different blockIdx.y, because
+every C tile in the same row needs the same strip of A:
+
+40 different gA strips × 64 tiles = 2560 tiles = all of A 
+A has 2560 tiles of 128 × 64:
+40 tiles along M (5120 / 128) × 64 tiles along K (4096 / 64) = 2560
+Each gA is one row of 64 of them.
+B is divided the same way: B is N × K = 5120 × 4096, also 40 × 64 = 2560 tiles. C is divided
+into 40 × 40 = 1600 tiles of 128 × 128, one per CTA.  
+40 tiles along M (5120 / 128). We have 5120 because A's M = 5120.
+A is M × K, and M = 5120 is the default set in main (L487: int m = 5120;), so:
+tiles along M = M / bM = 5120 / 128 = 40
+Since M is a runtime value, this changes if you pass a different M on the command line 
+(e.g. ./wgmma_sm90 2560 … gives 2560 / 128 = 20). It’s the same number as the grid’s x
+dimension (L416, ceil_div(m, bM)), because there’s one CTA per tile-row along M.
+gA is 64 tiles, 2560 is the number of tiles in all of A. gA is one CTA’s row of tiles:
+</pre>
+||Tiles|
+||:----|
+|matrix A (mA)	|2560|
+|gA (one CTA)	|64|
+<pre>
+one thread copies a part of each tile, not a whole tile
+A thread doesn’t belong to a tile. It belongs to a CTA (128 threads). All 128 threads copy
+each tile together: 
+one tile = 128 × 64 = 8192 elements
+8192 elements / 128 threads = 64 elements per thread per tile
+For each of the CTA’s 64 tiles, thread t copies its 64 elements (8 cp.async × 8 halfs), and 
+the other 127 threads copy the rest.
+The full picture  
+A                 2560 tiles
+ └─ gA            64 tiles        (one CTA, picked by blockIdx.x)
+     └─ one tile  8192 elements   (copied by all 128 threads together)
+         └─ tAgA  64 elements     (this thread's share of each tile)
+A has 2560 tiles; gA is one CTA’s row of 64 of them. In tAgA, t is one of the CTA’s 128
+threads. For every tile in gA, that thread copies its own 64 elements, chosen by the copy 
+plan for A; the 128 threads together copy the whole tile.
 
 
 
+
+
+
+
+  
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
