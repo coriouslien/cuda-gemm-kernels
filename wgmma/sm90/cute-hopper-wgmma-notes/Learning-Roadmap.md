@@ -2093,5 +2093,145 @@ Position-dependent	the full shared-memory address, including the buffer’s star
 
 And the key consequence: both give the same result only when the buffer starts at a multiple of 1024 bytes, which this kernel guarantees.
 
+The three numbers of Sw<B, M, S> aren’t three bit-fields read left to right. Your diagram puts 4 bits in the middle (6–3) and 3 at the bottom (2–0); the actual split is:
+
+bit:     9   8   7  │  6   5   4  │  3   2   1   0
+         └── B=3 ──┘  └── B=3 ──┘  └──── M=4 ────┘
+          source        target        untouched
+         (row)         (chunk)       (byte in chunk)
+                ↑______S=3______↑
+          source is shifted down by S = 3 onto target
+
+What each number really is:
+
+Parameter	Value	Meaning	Bits
+M	4	how many low bits stay untouched	0 – 3 (4 bits = 16-byte chunk)
+B	3	how many bits in each of the two groups	target 4–6, source 7–9
+S	3	the distance between the groups: the shift	source starts at M + S = 7
+
+So:
+
+M gives the bottom group, 4 bits wide (0–3).
+B gives the width of both the target (4–6) and the source (7–9) groups.
+S isn’t a group of bits at all; it says how far apart the two B-bit groups are.
+
+The operation: take bits 7–9, shift them down by S = 3 onto bits 4–6, and XOR them there. Bits 0–3 and 7–9 come out unchanged.
+CuTe’s own names for the template parameters are:
+
+cpp
+template <int BBits, int MBase, int SShift = BBits>
+struct Swizzle;
+Letter	CuTe name	Meaning
+B	BBits	number of bits in the mask (the width of each group: 3)
+M	MBase	the base: number of low bits kept unchanged (4)
+S	SShift	the shift: distance between the source and target groups (3)
+
+So M is the base, and B gives the size of the mask (its number of bits). “Mask” isn’t a parameter name itself: the mask (0x380 here) is built from B, M and S together.
+
+The header also has a comment with a bit diagram of exactly this. To check it in your checkout:
+
+bash
+grep -n "BBits\|MBase\|SShift" ../cutlass/include/cute/swizzle.hpp | head -20
+
+Line 127: ThrMMA thr_mma = mma.get_slice(threadIdx.x);
+Line 128: Tensor tCsA = thr_mma.partition_A(sA);
+Line 130: Tensor tCgC = thr_mma.partition_C(gC); 
+L127: mma.get_slice(threadIdx.x)
+
+Correct: get_slice records which thread this is, and thr_mma is the MMA plan specialized to that thread. Like get_slice for the copy, it doesn’t touch any data yet.
+
+One precision: “which matrix” → which parts of A, B and C. As your print_layouts output showed, those parts are very different for A/B and for C (see L128 below).
+
+L128: thr_mma.partition_A(sA)
+
+The name: C means “partitioned by the MMA”, not “compute”. It follows the same convention as before: t = this thread, C = the MMA partitioning pattern (named after the accumulator C it produces), s = shared memory, A = matrix A. “Compute” is a handy mnemonic, but the convention letter is C because of the MMA’s output matrix, which is also why tCgC ends in C twice.
+
+The “carving”: here, every thread gets the same whole A tile. For a normal MMA, partition_A cuts out each thread’s own piece. But this is an _SS MMA, and your print_layouts output showed:
+
+LayoutA_TV: (_128,(_64,_16)):(_0,(_1,_64))
+                  └ thread stride 0
+
+The thread mode has stride 0: all 128 threads map to the same 64 × 16 block of A. So tCsA isn’t a per-thread share. Every thread sees the whole shared-memory A tile, arranged for the MMA:
+
+tCsA:  (MMA, MMA_M, MMA_K, PIPE)
+          │     │      │     └─ 3 stages
+          │     │      └─ 64/16 = 4 atoms along K
+          │     └─ 128/64 = 2 atoms along M
+          └─ one atom's 64 × 16 block of A
+
+That’s what lets L133 (make_fragment_A) turn it into descriptors, one per (MMA_M, MMA_K, stage), which the hardware uses to read A from shared memory directly.
+
+L129 (tCsB) does exactly the same for B.
+
+L130: thr_mma.partition_C(gC)
+
+Correct: a view of global C, partitioned by the MMA, used as the destination for the result.
+
+Here the partitioning is a real split among threads, unlike A and B. From LayoutC_TV, each thread owns 32 elements per 64 × 64 atom, and the CTA tile has 2 × 2 atoms:
+
+tCgC:  (MMA, MMA_M, MMA_N) = (32, 2, 2)   → 128 elements of C per thread
+
+Two steps keep C in its proper places:
+
+the MMA accumulates into tCrC (L136), the same shape but in registers;
+only at the very end does the epilogue write tCrC into tCgC (L257, axpby). During the main loop, global C is never touched.
+Summary
+Tensor	Line	Per thread	Where
+tCsA	L128	the whole A tile (stride-0 thread mode, _SS)	shared
+tCsB	L129	the whole B tile	shared
+tCgC	L130	its own 128 elements of C	global (written only at the end)
+
+If you’d like to see these shapes printed, you can build them on the host in print_layouts.cu: make a tensor with a null shared-memory pointer and sA_tn, then call mma_tn.get_slice(0).partition_A(…) and print it. I expect that to work on the host, since we’re only computing layouts, but I haven’t tried it.
+
+The CTA’s block was already chosen earlier, at L71–74 (local_tile with cta_coord). By “which parts” I meant which individual elements inside that block this thread is tied to. For C, those elements are scattered, not a contiguous sub-block.
+
+For C, you can read this directly from the LayoutC_TV in your print_layouts output:
+
+((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
+   thread modes            value modes
+
+The index is into the 64 × 64 atom, column-major (index = m + 64·n). For thread 0, only the value strides matter: 64 → next column, 8 → 8 rows down, 512 → 8 columns over. That gives thread 0 these 32 (m, n) positions:
+
+m = 0, 8
+n = 0,1,  8,9,  16,17,  24,25,  32,33,  40,41,  48,49,  56,57
+
+Those are pairs of neighbours along N, spread across the whole atom. Other threads are shifted: thread 1 starts at n = 2 (thread stride 128 = 2 columns), thread 4 at m = 1 (stride 1), thread 32 at m = 16 (stride 16).
+
+The CTA tile has 2 × 2 such atoms, so thread 0 owns this same pattern 4 times, which makes its 128 elements.
+
+For A and B, the thread stride is 0, so there is no “which part”: every thread is tied to all of the A and B tiles.
+
+So “which parts” means which positions (m, n) within the CTA’s tile. For C each thread gets its own scattered set. For A and B every thread gets the whole tile.
+
+Variant	A from	B from	D (accumulator)
+_SS	shared memory (descriptor)	shared memory (descriptor)	registers
+_RS	registers	shared memory (descriptor)	registers
+B always comes from shared memory, so there is no _SR or _RR.
+The accumulator C/D is always in registers, in both variants. That’s why tCrC (L136) is a register fragment even though this kernel is _SS.
+
+This comes from the PTX ISA’s wgmma.mma_async operand rules: A can be a register operand or a matrix descriptor, B must be a descriptor, and D is registers. CuTe mirrors that with its op names in cute/arch/mma_sm90_gmma.hpp.
+
+What changes with _RS: A then really is split across threads, unlike the stride-0 LayoutA_TV you saw for _SS. Each thread holds its own slice of A in registers, as with C. I also believe the CuTe _RS ops static_assert that A is K-major, since registers can’t be transposed the way a descriptor can. I haven’t checked that line in your copy, so you can confirm it with:
+
+grep -n "static_assert" ../cutlass/include/cute/arch/mma_sm90_gmma.hpp | head -20
+
+This kernel uses _SS (L394: SM90_64x64x16_F16F16F16_SS).
+
+1. Calling make_fragment_A / make_fragment_B doesn’t say anything about where A and B come from. Every CuTe MMA kernel calls them, whatever its source path. What they produce depends on the MMA atom’s traits: specifically FrgTypeA / FrgTypeB in MMA_Traits (for Hopper, in cute/atom/mma_traits_sm90_gmma.hpp).
+
+_SS (this kernel, L394): FrgTypeA and FrgTypeB are GMMA shared-memory descriptor types. So make_fragment_A(tCsA) (L133) builds a tensor of descriptors, one per (MMA_M, MMA_K, PIPE), not a tensor of A values in registers. Same for B at L134.
+_RS: make_fragment_A builds a real register fragment of A values. B is still a tensor of descriptors.
+
+2. There’s no “Register-Register” path for wgmma. As above, B must come from shared memory. The only choices are _SS and _RS, and this kernel is _SS.
+
+A correct version of the description:
+
+make_fragment_A / make_fragment_B build the MMA’s operand fragments in the form the atom requires. For this kernel’s _SS atom, those are shared-memory descriptors. Only the accumulator fragment from make_fragment_C (L136) is register data.
+
+To confirm in your copy:
+
+grep -n "FrgType\|smem_desc" ../cutlass/include/cute/atom/mma_traits_sm90_gmma.hpp | head -30
+
+You should see the _SS traits using a smem_desc type for both A and B, and the _RS traits using it only for B. I haven’t seen your exact copy, so check that the names match.
 
 </pre>
