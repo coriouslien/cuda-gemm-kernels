@@ -2234,4 +2234,115 @@ grep -n "FrgType\|smem_desc" ../cutlass/include/cute/atom/mma_traits_sm90_gmma.h
 
 You should see the _SS traits using a smem_desc type for both A and B, and the _RS traits using it only for B. I haven’t seen your exact copy, so check that the names match.
 
+I would like to know if the following description is correct.
+
+The Golden Path: _SS (Shared-Shared)
+This is Hopper's superpower and the default choice for a standard matrix multiplication.
+
+The Math: $C = A_{\text{shared}} \times B_{\text{shared}} + C_{\text{registers}}$
+Why it exists: On Ampere, the GPU had to waste massive amounts of power and clock cycles using ldmatrix to copy A and B from Shared Memory into private thread registers before the math could happen. By allowing the Tensor Cores to reach directly into Shared Memory for both operands, _SS frees up hundreds of registers per SM. This prevents register spilling and allows you to run far more threads simultaneously.
+
+The Chained Math Escape Hatch: _RS (Register-Shared)
+If _SS is so good, why did NVIDIA spend millions of dollars in R&D to keep the _RS circuit on the chip? Back-to-back GEMMs.
+
+The Math: $C_{\text{new}} = A_{\text{registers}} \times B_{\text{shared}} + C_{\text{registers}}$
+Why it exists: Think about the math inside FlashAttention or Transformer multi-layer perceptrons (MLPs). You often do a GEMM, and the result (Matrix C) lands in the hardware registers. Immediately after, you need to multiply that result against a brand new matrix.
+If Hopper only had _SS, you would be forced to waste cycles copying your register results back out to Shared Memory just so the Tensor Cores could read them again. _RS allows you to take the accumulator registers from GEMM 1, instantly relabel them as Matrix A (tCrA), and pipe them directly into GEMM 2, while the new Matrix B streams in from Shared Memory.
+The Death of _RR
+For context on how big of a shift this is: the older Ampere mma.sync instructions were strictly Register-Register (_RR). The complete removal of _RR in Hopper forces developers to rethink their entire memory pipeline, which is exactly why CuTe was invented—to make building these complex _SS and _RS Shared Memory blueprints mathematically foolproof.
+
+Explaining fixed-size array templates without shuffling operations.
+Explaining fixed-size array templates without shuffling operations.
+Here is that line piece by piece, without the swizzle details.
+
+cpp
+alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
+1. cute::ArrayEngine<T, N>: a fixed-size array
+ArrayEngine<T, N> is CuTe’s wrapper around a plain array of N elements of type T. It behaves like:
+
+cpp
+T A[N];
+2. ElementA: the element type
+It’s the template parameter of SharedStorage, and here it’s TA = half_t (FP16, 2 bytes).
+
+3. cosize_v<SmemLayoutA>: how many elements the array needs
+SmemLayoutA is the type of the sA layout built on the host (L383): shape (128, 64, 3).
+cosize_v<…> is a compile-time number: how many elements of storage that layout reaches. The _v means “value”.
+The layout covers 128 rows × 64 columns × 3 stages with no gaps, so:
+
+cosize_v<SmemLayoutA> = 128 × 64 × 3 = 24,576 elements
+Your print_layouts output showed 24,576.
+
+So the line is equivalent to:
+
+cpp
+alignas(128) half_t A[24576];      // 24,576 × 2 B = 49,152 B = 48 KB
+On the swizzle: it rearranges where elements sit inside this array. It doesn’t need extra space, so the size is still 24,576. That’s all the previous explanation meant.
+
+4. alignas(128): where the array may start
+The array’s start address must be a multiple of 128 bytes.
+
+There’s one thing to remember from earlier: the 128-byte swizzle pattern repeats every 1,024 bytes, and we noted that the buffers need to be 1,024-aligned for CuTe’s swizzle and the hardware’s to agree. alignas(128) alone only guarantees 128. Whether the A buffer actually starts at a multiple of 1,024 depends on the base address of dynamic shared memory. That’s the open hypothesis we listed, still to verify (for example, by printing the address of smem.A on the H100).
+
+5. A: the member name
+It’s a member of the SharedStorage struct (L18–26). The kernel places that struct on the dynamic shared memory:
+
+cpp
+extern __shared__ char shared_memory[];
+SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
+Then L80 wraps it as a tensor: make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{}). That’s the pointer plus layout view.
+
+Summary
+Part	Meaning	Value here
+ArrayEngine<T, N>	fixed array of N elements of T	like T A[N]
+ElementA	element type	half_t, 2 B
+cosize_v<SmemLayoutA>	elements the layout needs	128 × 64 × 3 = 24,576
+total size	N × 2 B	49,152 B = 48 KB
+alignas(128)	start address multiple of 128 B	the swizzle needs 1,024 (open item)
+used by	sA = make_tensor(smem_ptr(smem.A.begin()), layout)	L80
+In the snippet from the previous post, it says:
+alignas(128) alone doesn’t guarantee 1024-byte alignment. It works here because A starts at the beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48 × 1024) puts B on a 1024-byte boundary too.
+
+Does it mean if we use dynamic shared memory, it will work?
+
+Ran 3 commands
+Not by itself. The quoted sentence depends on three conditions together, and “using dynamic shared memory” covers only part of the first.
+
+The three conditions
+#	Condition	In this kernel
+1	the dynamic shared memory base address is 1,024-aligned	assumed, not guaranteed by alignas(128)
+2	A is at offset 0 of SharedStorage	✓ A is the first member
+3	A’s size is a multiple of 1,024 B, so B starts on a 1,024 boundary	✓ 49,152 = 48 × 1,024
+If any one fails, B (or A) may no longer start on a 1,024-byte boundary. Some ways it could fail:
+
+Condition 2: a buffer placed before A in the struct, for example barriers. In wgmma_tma_sm90.cu they come after A and B, at L61–62.
+Condition 3: a different tile size. bM = 96 gives 96 × 64 × 3 × 2 = 36,864 B = 36 × 1,024, which is still fine. But a size that isn’t a multiple of 1,024 would break B’s alignment.
+Condition 1: static __shared__ variables in the same kernel. I believe dynamic shared memory is placed after them, which would shift its base.
+Is condition 1 guaranteed?
+As far as I know, CUDA doesn’t document a 1,024-byte alignment guarantee for the start of extern __shared__ memory. I’m not certain, so don’t put that in your write-up as fact.
+
+There’s evidence that it holds in practice: CUTLASS’s own code doesn’t ask for 1,024 either. I checked on main:
+
+wgmma_tma_sm90.cu, L59–60: alignas(128) for A and B, the same as your kernel
+blackwell/01_mma_sm100.cu, L123–124: alignas(128)
+the production Hopper mainloop (sm90_mma_tma_gmma_ss_warpspecialized.hpp, L155–157): aligned_struct<128> with array_aligned, whose default alignment is 16 (array_aligned.hpp, L39)
+So CUTLASS relies on the same assumption. That suggests the base is suitably aligned on these GPUs, but it’s an inference, not a documented guarantee.
+
+How to verify it
+Print the shared-memory address of A and B, modulo 1,024:
+
+cpp
+if (thread0()) {
+  printf("A %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.A.begin()) % 1024));
+  printf("B %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.B.begin()) % 1024));
+}
+You can run this part locally on SM120: write a small kernel with the same SharedStorage and dynamic shared-memory size, without the wgmma. That tells you how your GPU places dynamic shared memory. The H100 could place it differently, so repeat the check there.
+
+Summary
+Question	Answer
+Does dynamic shared memory alone make it work?	No: three conditions are needed (base aligned, A first, A’s size a multiple of 1,024)
+Is the base 1,024-aligned?	Not documented as far as I know; CUTLASS relies on it in practice
+Evidence	CUTLASS tutorials and the production mainloop also use only 128-byte (or 16-byte) alignment
+How to confirm	print __cvta_generic_to_shared(...) % 1024 for A and B: locally on SM120, then on the H100
+
 </pre>
