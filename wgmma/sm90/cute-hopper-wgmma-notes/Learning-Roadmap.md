@@ -1414,13 +1414,123 @@ A                 2560 tiles
 A has 2560 tiles; gA is one CTA’s row of 64 of them. In tAgA, t is one of the CTA’s 128
 threads. For every tile in gA, that thread copies its own 64 elements, chosen by the copy 
 plan for A; the 128 threads together copy the whole tile.
+The g means global memory, but gA isn’t the whole global matrix. It’s this CTA’s tiles of A 
+(64 of them), which live in global memory.
+The prefixes in this file follow a convention:
+</pre>
+|Name|	Prefix meaning|	What it is|
+|:---|:---------------|:-----------|
+|mA|	m = full matrix|	all of A (2560 tiles)|
+|gA|	g = global-memory tile(s) for this CTA	|64 tiles of A|
+|sA|	s = shared memory|	the 3 pipeline stages of A|
+|tCrA|	r = register (by convention)|	per-thread MMA fragment|
+<pre>
+Both mA and gA are in global memory. The difference is the extent: mA covers the entire matrix,
+gA only the part one CTA works on.
+gA is one array of tiles, its total tiles is 64. 
+gA is a sequence of 64 tiles, each 128 × 64, indexed by its last mode:
+gA(_, _, 0)   → tile 0
+gA(_, _, 1)   → tile 1
+…
+gA(_, _, 63)  → tile 63
+it’s a view into A in global memory, not a separate array with its own copy of the data.
+Indexing it just computes addresses inside matrix A.
+1. A thread isn’t “in the tiles”. t is one of the 128 threads of this CTA. The threads belong
+to the CTA; the tiles are data.
+2. One thread doesn’t copy whole tiles. For each of the 64 tiles, thread t copies only its own
+part. All 128 threads together copy each complete tile.
+In tAgA, t is one of the CTA’s 128 threads. For each of the 64 tiles in gA, this thread copies
+its own small part of the tile, chosen by the copy plan for A. The 128 threads together copy
+each whole tile.
+t is one of the 128 threads, following the copy plan for A. 
+1. A thread doesn’t own a tile; it owns a part of every tile. All 128 threads share each tile.
+No thread copies a whole tile by itself.
+2. A thread works on all 64 tiles, one per loop iteration. In iteration 0 it copies its part o
+tile 0, in iteration 1 its part of tile 1, and so on (tAgA(_,_,_,k_tile_next), L222).
+
+               tile 0     tile 1     tile 2   …   tile 63
+thread 0     [part 0]   [part 0]   [part 0]  …  [part 0]
+thread 1     [part 1]   [part 1]   [part 1]  …  [part 1]
+  …
+thread 127   [part 127] [part 127] [part 127] … [part 127]
+
+tAgA for thread t is one row of this picture: its part of every tile. One column is a whole
+tile, copied by all 128 threads together in one loop iteration.
+In tAgA, t is one of the CTA’s 128 threads. Following the copy plan for A, it is responsible
+for its own part of each of the 64 tiles in gA, one tile per loop iteration. All 128 threads
+together copy each complete tile.  
+
+• CTA = one thread block. “Array” refers to its threads, indexed by threadIdx.x = 0 … 127. 
+Here one CTA = 128 threads (L414, dimBlock(size(tiled_mma))).
+“Cooperative”: those threads work together. They share the CTA’s shared memory (the 96 KB 
+holding sA and sB) and can synchronize with each other (__syncthreads(), L201).
+• There are many CTAs: the grid has 40 × 40 = 1600 of them. Each is one array of 128 threads
+computing one 128 × 128 tile of C.
+
+extern __shared__ char shared_memory[];
+using SharedStorage = SharedStorage<TA, TB, ASmemLayout, BSmemLayout>;
+SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
+Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});
+using SharedStorage = SharedStorage<TA, TB, ASmemLayout, BSmemLayout>;
+  
+extern __shared__ char shared_memory[]; (L77)
+dynamic shared memory, seen as a flat array of bytes. Three details:
+• No size is written. extern with an empty [] means the size is supplied at launch: 
+smem_size = 98,304 bytes (L413, L418). That’s what makes it dynamic.
+• One copy per CTA. Each of the 1600 CTAs gets its own 98,304 bytes, shared by its 128 threads.
+CTAs can’t see each other’s shared memory.
+• char is just the unit for addressing. The real types come from the next two lines.
+  
+using SharedStorage = SharedStorage<…>; (L78)
+a shorthand alias.
+• The alias reuses the template’s name. From here on, inside this function, SharedStorage means
+the concrete struct SharedStorage<half_t, half_t, ASmemLayout, BSmemLayout>. It’s legal C++, 
+but easy to misread.
+• ASmemLayout and BSmemLayout here are the kernel’s template parameters (L29–30), the same types
+the host produced with decltype(sA). So the struct is the same on both sides, and its size 
+matches the smem_size passed at launch.
+
+SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory); (L79)
+a reference to the struct. What makes this line work:
+Nothing is created or copied. reinterpret_cast just tells the compiler: treat these bytes as a
+SharedStorage. It’s a typed view onto the raw shared memory.
+After this line, smem.A and smem.B name the two regions:
+byte      0 … 49,151   smem.A   (24,576 halfs: 3 stages of A)
+byte 49,152 … 98,303   smem.B   (24,576 halfs: 3 stages of B)
+
+Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{}); (L80)
+a shared-memory tensor view of A. Three details:
+smem.A.begin() returns a half_t* pointing to the first element of A’s array: byte 0 of shared
+memory.
+make_smem_ptr wraps it and tags it as shared memory, like make_gmem_ptr did for global memory. 
+CuTe uses the tag to choose valid operations (for example, cp.async needs a shared-memory 
+destination).
+ASmemLayout{} creates the layout from its type alone. That works because the layout is fully
+static: every number is part of the type, so default-constructing it gives the complete
+swizzled (128, 64, 3) layout. The kernel also received it as an argument (sA_layout, L37), 
+but doesn’t need that value.
+Summary
+shared_memory (98,304 raw bytes, size set at launch)
+   └─ reinterpret_cast → smem (struct view: A array, B array)
+        └─ smem.A.begin() + ASmemLayout → sA (tensor: 128 × 64 × 3, swizzled, in shared memory)
+
+sB (L81) is the same, built from smem.B.
 
 
+The resulting sA covers all 3 pipeline stages. One stage is selected later, for example with tAsA(_,_,_,k_pipe_write) (L222).
 
 
+  
+extern __shared__ char shared_memory[];
+It is a dynamic shared memory.  It is a char array, it is a 1-bypte flat sequence flat array.
+For shorthand, we write using SharedStorage = ... to alias the struct
+SharedStorage.
+ SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
+Creating a reference smem to  the struct SharedStorage.
 
-
-
+Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});
+Creating a shared memory matrix A tensor view sA. Using smem reference  to beginning of matrix A. using ASmemLayout{} to layout the tensor view.
+  
   
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
