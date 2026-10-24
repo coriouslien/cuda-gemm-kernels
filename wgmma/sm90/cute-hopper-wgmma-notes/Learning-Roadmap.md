@@ -1025,7 +1025,54 @@ doesn’t.
 As I found earlier, alignas(128) alone doesn’t guarantee 1024-byte alignment. It works here
 because A starts at the beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48
 × 1024) puts B on a 1024-byte boundary too. 
+The three conditions"
+</pre>
+|#	|Condition|	In this kernel|
+|:--|:--------|:--------------|
+|1|	the dynamic shared memory base<br> address is 1,024-aligned| assumed, not guaranteed by alignas(128)|
+|2|	A is at offset 0 of SharedStorage	| A is the first member|
+|3|	A’s size is a multiple of 1,024 B,<br> so B starts on a 1,024 boundary| 49,152 = 48 × 1,024|
+<pre>
+If any one fails, B (or A) may no longer start on a 1,024-byte boundary. Some ways it could
+fail:
+• Condition 2: a buffer placed before A in the struct, for example barriers. In
+wgmma_tma_sm90.cu they come after A and B, at L61–62.
+• Condition 3: a different tile size. bM = 96 gives 96 × 64 × 3 × 2 = 36,864 B = 36 × 1,024,
+which is still fine. But a size that isn’t a multiple of 1,024 would break B’s alignment.
+• Condition 1: static __shared__ variables in the same kernel. I believe dynamic shared memory
+is placed after them, which would shift its base.
+Is condition 1 guaranteed?
+As far as I know, CUDA doesn’t document a 1,024-byte alignment guarantee for the start of
+extern __shared__ memory. I’m not certain, so don’t put conclusion in the write-up as fact.
 
+There’s evidence that it holds in practice: CUTLASS’s own code doesn’t ask for 1,024 either. 
+I checked on main:
+• wgmma_tma_sm90.cu, L59–60: alignas(128) for A and B, the same as your kernel
+• blackwell/01_mma_sm100.cu, L123–124: alignas(128)
+• the production Hopper mainloop (sm90_mma_tma_gmma_ss_warpspecialized.hpp, L155–157):
+aligned_struct<128> with array_aligned, whose default alignment is 16 (array_aligned.hpp, L39)
+
+So CUTLASS relies on the same assumption. That suggests the base is suitably aligned on these
+GPUs, but it’s an inference, not a documented guarantee.
+How to verify it
+Print the shared-memory address of A and B, modulo 1,024:
+if (thread0()) {
+  printf("A %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.A.begin()) % 1024));
+  printf("B %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.B.begin()) % 1024));
+}
+I can run this part locally on my SM120: write a small kernel with the same SharedStorage and
+dynamic shared-memory size, without the wgmma. That tells me how your GPU places dynamic 
+shared memory. The H100 could place it differently, so repeat the check there.
+Summary:
+</pre>
+|Question|	Answer|
+|:-------|:-------|
+|Does dynamic shared memory alone<br> make it work?|	No: three conditions are<br> needed (base aligned, A first, A’s size<br> a multiple of 1,024)|
+|Is the base 1,024-aligned?|	Not documented as far as I know;<br> CUTLASS relies on it in<br> practice|
+|Evidence|	CUTLASS tutorials and the production<br> mainloop also use only 128-byte<br> (or 16-byte) alignment|
+|How to confirm|	print __cvta_generic_to_shared(...) % 1024<br> for A and B: locally on SM120,<br> then on the H100|
+
+<pre> 
 Here is that line piece by piece, without the swizzle details.
 alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
 1. cute::ArrayEngine<T, N>: a fixed-size array
@@ -1072,7 +1119,9 @@ Summary
 |alignas(128)|	start address multiple of 128 B|	the swizzle needs<br> 1,024 (open item)|
 |used by|	sA = make_tensor(smem_ptr(smem.A.begin()),<br> layout)|	L80|
 
+<pre>
 
+</pre>
 
 
 
@@ -1082,7 +1131,97 @@ Summary
 |flat|	(128,64,3):(64,1,8192)	|the same layout after merging modes (coalesce)|
 |read it as|	offset = 64m + k + 8192p	|shape gives ranges, stride gives steps|
 <pre>
+Line 66: Tensor mA = make_tensor(make_gmem_ptr(A), select<0,2>(shape_MNK), dA); 
+Line 67:  Tensor mB = make_tensor(make_gmem_ptr(B), select<1,2>(shape_MNK), dB); 
+Line 68:  Tensor mC = make_tensor(make_gmem_ptr(C), select<0,1>(shape_MNK), dC); 
+make_gemem_ptr(A), a pointer point to Matrix A.
+  We use select<0,2> select<1,2>, and select<0,1> instead of make_shape(M,N), make_shape<N,K>, and make_shape<M,N>. It quarantee the K-dimenstion in Matrix A is indentically matched to the K-dimenstion in Matrix B. 
+  dA, dB, and dC are strides, we use make_stride(..) before.
+  mA, mB, and mC tensor object that required by GPU needs to read and write the 
+  physical bytes of the Matrices.
 
+make_gmem_ptr(A): a pointer tagged as global memory
+A (L37) is already a plain pointer to matrix A in GPU global memory: d_A.data().get() from main
+(L555). make_gmem_ptr(A) wraps it and tags it as global memory. The tag matters later: it tells
+CuTe which memory space it’s dealing with, so it can pick valid copy operations (here, cp.async
+from global to shared).
+select<…>: correct idea; here’s exactly why
+select<0,2>(shape_MNK) takes modes 0 and 2 of (M, N, K), giving (M, K):
+</pre>
+|Line|select|	Result|	Matrix|
+|:---|:-----|:------|:------|
+|L66|	<0,2>|	(M, K)	A|
+|L67	|<1,2>	|(N, K)	|B|
+|L68|	<0,1>|	(M, N)|	C|
+<pre>
+The benefit: all three shapes come from one source, shape_MNK, so the K of A and the K of B are
+the same value by construction. The same holds for M (shared by A and C) and N (shared by B and
+C).
+There’s also a practical reason: inside the kernel, M, N and K don’t exist as separate
+variables. The kernel received only shape_MNK (L36), so select is the natural way to get the
+pieces.
+  
+dA, dB, dC: from make_stride on the host
+They were created on the host (L371–373) and passed as kernel arguments. The kernel checks at
+compile time (L57–59, congruent) that each stride has the same structure as its shape: two
+modes for a 2-D shape.
+mA, mB, mC: views, not data
+
+This is the part to sharpen. A CuTe Tensor is just:
+Tensor = pointer (engine) + layout (shape + stride)
+• No memory is allocated and no data is copied. mA is a view of matrix A that already exists in
+global memory.
+• It covers the whole matrix (M × K), not a tile. Tiles come next, with local_tile (L72–74).
+• It doesn’t “read or write bytes” by itself. It lets the code compute addresses from 
+coordinates: mA(m, k) → A + m·dA[0] + k·dA[1].
+• After compilation, the abstraction disappears: what’s left is a pointer and a few integers in
+registers, plus the address arithmetic. The GPU only executes the resulting loads and stores.
+
+Who reads and who writes: mA and mB are only read (as sources for the copies); mC is only
+written, in the epilogue (L257).
+
+Summary:
+make_gmem_ptr tags the raw device pointer as global memory. select derives each matrix’s shape
+from the single shape_MNK, so shared dimensions (K for A and B, M for A and C, N for B and C)
+stay consistent by construction. Combined with the strides from the host, make_tensor builds 
+mA, mB, mC: views (pointer + layout) of the full matrices in global memory, with no allocation
+or copying. They’re used to compute addresses; the actual reads and writes happen later, in the
+copies and the epilogue.
+
+auto cta_coord = make_coord(blockIdx.x, blockIdx.y, _);             
+Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{}); 
+
+make_coord(blockIdx.x, blockIdx.y, _)
+Correction: blockIdx.x and blockIdx.y are tile numbers, not rows and columns. They say which
+128 × 128 tile of C this CTA computes: 
+</pre>
+||Meaning	|Range (defaults)|
+|:-|:-----|:---------------|
+|blockIdx.x	|tile index along M|	0 … 39 (5120 / 128 = 40)|
+|blockIdx.y	|tile index along N	|0 … 39|
+<pre>
+The grid is 40 × 40 (L416–417). For example, the CTA with blockIdx = (3, 5) computes C rows
+3·128 … 3·128+127 = 384 … 511 and columns 5·128 … 5·128+127 = 640 … 767.  
+_, keep the whole K mode: correct. _ (cute::Underscore) means “don’t pick one tile along K;
+keep all of them”. That’s why gA gets an extra mode holding all the k-tiles of this CTA’s strip
+of A.
+
+local_tile(mA, cta_tiler, cta_coord, Step<_1, X, _1>{})
+Correct: cta_tiler is 3-D (bM, bN, bK), but A has only M and K, so the Step says which modes
+apply: _1 = use this mode, X = skip it. Your reading of each position is right: M used, N
+skipped, K used.
+One detail to add: the Step applies to both the tiler and the coordinate:
+tiler: (bM, bN, bK) = (128, 128, 64)          coord: (blockIdx.x, blockIdx.y, _)
+Step:  ( _1,  X,  _1)                          Step:  (    _1,        X,     _1)
+  ⇒   (128,       64)                            ⇒   (blockIdx.x,         _)
+</pre>
+
+Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{}); 
+cta_tiler is 3D <bM, bN, bK>. so we have the Step<_1,X,_1>
+Creating tensor gA vidw in global, Step<_1,X_1>{}, eliminate X. it is only <M,K> 2D for mA. The firs _1 is M coordinate, ignore X which is N coordinate, the second _1 is K coordinate.  
+
+Tensor gB = local_tile(mB, cta_tiler, cta_coord, Step< X,_1,_1>{})
+Creating a tensor gB view in global, we ignore X which M coordinate, the first _1 is N coordinate, the second _1 is K coordinate.
   
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
