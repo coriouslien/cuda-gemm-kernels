@@ -1751,4 +1751,347 @@ So the swizzle is simply:
 
 physical chunk = logical chunk XOR (row mod 8)
 Step 5: Each of the three numbers
+Parameter	Value	Meaning here
+M = 4	2⁴ = 16 bytes	the unit that moves as a whole: a 16-byte chunk = 8 halfs. It’s never split
+B = 3	2³ = 8	8 chunks per row get permuted: 8 × 16 = 128 bytes, hence “SW128”
+S = 3	shift of 3	the source bits are 3 positions above the target bits: bits 7–9 = the row index
+
+The whole pattern spans 2^(M+S+B) = 2¹⁰ = 1024 bytes: exactly one atom. That’s why it repeats identically in every atom, and why the buffer’s 1024-byte alignment matters.
+
+Step 6: One worked example
+
+Element (m = 3, k = 17) of a stage:
+
+byte offset = 2 · (64·3 + 17) = 2 · 209 = 418
+418 in binary:  0 1 1 │ 0 1 0 │ 0 0 1 0
+                 row 3 │ chunk 2 │ byte 2
+
+Swizzle: chunk 010 XOR row 011 = 001 → chunk 1
+
+result:         0 1 1 │ 0 0 1 │ 0 0 1 0   =  384 + 16 + 2 = 402
+
+Element (3, 17) is logically in chunk 2 (K = 16 … 23) but physically stored in chunk 1 of row 3: byte 402 instead of 418. It stays in the same row, and its position inside the chunk doesn’t change.
+
+Step 7: The full pattern and why it removes the conflict
+
+Applying chunk XOR row to all 8 rows gives the table from your print_layouts output (row = rows, entries = physical chunk for logical chunks 0 … 7):
+
+row 0:  0 1 2 3 4 5 6 7
+row 1:  1 0 3 2 5 4 7 6
+row 2:  2 3 0 1 6 7 4 5
+row 3:  3 2 1 0 7 6 5 4
+row 4:  4 5 6 7 0 1 2 3
+row 5:  5 4 7 6 1 0 3 2
+row 6:  6 7 4 5 2 3 0 1
+row 7:  7 6 5 4 3 2 1 0
+
+Each column (one logical chunk across the 8 rows) now lands on 8 different physical chunks. For logical chunk 7:
+
+Row	Physical chunk	First bank before swizzle	First bank after
+0	7	28	28
+1	6	28	24
+2	5	28	20
+3	4	28	16
+4	3	28	12
+5	2	28	8
+6	1	28	4
+7	0	28	0
+
+Before: all 8 rows start at bank 28. After: they start at banks 0, 4, 8, …, 28. Each chunk occupies 4 banks, so the 8 chunks together cover all 32 banks exactly once. Reading one chunk column across 8 rows no longer conflicts.
+
+As far as I know, the hardware serves 16-byte-per-thread accesses in groups of 8 threads at a time, which is why spreading one column of 8 chunks matters. That detail comes from my knowledge, not from this code.
+
+Step 8: What the swizzle does not change
+The 16 bytes inside a chunk stay together and in order, so a 16-byte cp.async always reads/writes one intact chunk.
+Rows stay rows: only bits 4–6 change, so every element stays in its own 128-byte row.
+The total size stays the same: it’s a permutation within each 1024-byte atom, so cosize is still 24,576.
+Which banks are used overall stays the same; only when each row uses which bank changes.
+Step 9: Why you also see Swizzle<3,3,3> elsewhere
+
+That’s the same pattern written for element offsets instead of byte offsets. A half is 2 bytes, so every bit position is one lower:
+
+Form	Unit	Chunk bits	Row bits
+Swizzle<3,4,3>	bytes	4–6	7–9
+Swizzle<3,3,3>	half elements	3–5	6–8
+
+I checked that both give the same physical location for all 512 elements of an atom. This kernel uses the byte form because the layout is composed with smem_ptr[16b] (Step 1).
+
+Step 10: Who applies it
+CuTe, in software, when the cp.async copies write shared memory, through the layout sA (with the extra as_position_independent_swizzle_tensor step still open from L89).
+The wgmma hardware, when it reads A and B through the descriptor, which names the SW128 mode.
+
+Both must apply the identical pattern; otherwise the MMA would read the wrong elements. That’s why the shared-memory layout must be built from GMMA::Layout_K_SW128_Atom, the CuTe description of exactly the pattern the hardware uses.
+
+Summary
+
+Sw<3,4,3> keeps each 16-byte chunk intact (M = 4), permutes the 8 chunks of each 128-byte row (B = 3), and uses the row number inside the 1024-byte atom (bits 7–9, reached with a shift of S = 3) to choose the permutation: physical chunk = logical chunk XOR (row mod 8). This spreads any column of chunks across all 32 banks, so 8 rows can be accessed without bank conflicts. It’s the 128-byte swizzle mode that Hopper’s wgmma expects.
+
+Sw<3,4,3> makes sense here. Each of its three numbers matches something in this kernel, and the analysis turned up one point worth knowing: the swizzle is there mainly for the wgmma reads, not the cp.async writes.
+
+1. It’s the format the MMA requires
+
+The MMA at L394 is SM90_64x64x16_F16F16F16_SS<Major::K, Major::K>: A and B are read from shared memory by wgmma, through a descriptor. The hardware accepts only a few shared-memory formats, so the tutorial must pick one of them. It picks K-major, 128-byte swizzle (Layout_K_SW128_Atom, L383–384), which is exactly Sw<3,4,3>.
+
+2. Its size matches the tile
+Swizzle part	Requires	In this kernel
+B = 3 → 8 chunks × 16 B = 128-byte rows	each row of the tile is ≥ 128 bytes along the contiguous dimension	bK = 64 halfs × 2 bytes = exactly 128 bytes (L378)
+M = 4 → 16-byte units stay intact	the copy moves whole 16-byte chunks	cp.async with uint128_t = 16 bytes (L387)
+pattern = 1024 bytes	each atom (8 rows) starts on a 1024-byte boundary	atoms are 1024 bytes, and A starts at the beginning of dynamic shared memory
+
+The choice depends on bK. With bK = 32 halfs (64-byte rows), a 128-byte swizzle wouldn’t fit, and the 64-byte mode (Swizzle<2,4,3>, Layout_K_SW64_Atom) would be the natural choice. With bK = 64, SW128 is the widest mode that fits, and the widest swizzle spreads accesses most evenly.
+
+3. It’s consistent with the rest of the code
+The atom (Layout_K_…) and the MMA (Major::K) agree that K is contiguous.
+The NT version is consistent too: Layout_MN_SW128_Atom with Major::MN (L291, L302), where the 128-byte rows run along M (64 M elements).
+4. The nuance: the cp.async writes don’t need it
+
+I checked the bank usage of the TN copy writes (each group of 8 threads writes at the same time):
+
+Threads	Banks used, no swizzle	Banks used, with Sw<3,4,3>
+0 – 7	32	32
+8 – 15	32	32
+16 – 23	32	32
+24 – 31	32	32
+
+All 32 banks either way. The copy plan already has 8 threads write one complete 128-byte row together (thread t writes chunk t mod 8 of row t/8), and a complete row always covers all 32 banks. The swizzle only permutes chunks within a row, so it can’t make this better or worse.
+
+So the swizzle’s job in this kernel is on the read side: wgmma reads the same chunk positions across 8 rows, the column access from the earlier explanation, which would hit the same banks 8 times without the swizzle. How exactly the hardware reads isn’t documented in detail, so whether those reads end up fully conflict-free can only be confirmed with ncu on an H100.
+
+Summary
+
+Sw<3,4,3> fits this kernel: it’s the 128-byte K-major format wgmma requires, it matches bK = 64 halfs = 128-byte rows and the 16-byte cp.async unit, and it agrees with Major::K in the MMA. The cp.async writes are conflict-free with or without it (8 threads write a whole row); its purpose is the wgmma reads across rows, which can be verified with ncu on Hopper hardware.
+
+It is because we have Layout_K_SW128_Atom in wgmma_sm90.cu, thus we have Sw<3,4,3>
+The swizzle comes directly from the atom the code chooses. The chain, with the source of each step:
+
+L383  tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, …)      ← wgmma_sm90.cu: the choice
+            │
+            ▼
+mma_traits_sm90_gmma.hpp, line 84 (your grep output):
+      Layout_K_SW128_Atom_Bits = ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag, Layout<…>>
+            │                                   └──── the swizzle is part of the atom's definition
+            ▼
+tile_to_shape repeats the atom but keeps its swizzle unchanged
+            │
+            ▼
+build log / print_layouts:  Sw<3,4,3> o smem_ptr[16b] o ((_8,_16),(_64,_1),(_1,_3)):…
+
+So the direction is: the tutorial chooses Layout_K_SW128_Atom, and Sw<3,4,3> comes with it. The swizzle isn’t specified anywhere else in the file.
+
+Two related points:
+
+The NT kernel uses a different atom with the same swizzle. Layout_MN_SW128_Atom (L291) also carries Sw<3,4,3>; your print_layouts output shows it for sA_nt. Only the arrangement of the rows differs (M-contiguous instead of K-contiguous).
+Choosing a different atom would change the swizzle. For example, Layout_K_SW64_Atom would bring Swizzle<2,4,3> (only 4 chunks permuted, for 64-byte rows), and Layout_K_INTER_Atom would bring Swizzle<0,4,3>, meaning no swizzle at all.
+
+In the snippet from the previous post, it says:
+pattern = 1024 bytes    each atom (8 rows) starts on a 1024-byte boundary    atoms are 1024 bytes, and A starts at the beginning of dynamic shared memory
+
+Why do we know the pattern = 1024?
+
+Untangling which bits a bit-swizzle operation affects.
+
+Because the swizzle only uses address bits 0 to 9, and 2¹⁰ = 1024. Here’s the reasoning step by step.
+
+Step 1: Which bits the swizzle touches
+
+From the definition of Swizzle<3,4,3>:
+
+reads  bits 7, 8, 9    (B = 3 bits starting at M + S = 4 + 3 = 7)
+changes bits 4, 5, 6   (B = 3 bits starting at M = 4)
+keeps  bits 0 – 3      (below M)
+
+The highest bit involved is bit 9. Bits 10 and above are never read and never changed.
+
+Step 2: Why that makes it repeat every 1024 bytes
+
+Adding a multiple of 1024 (= 2¹⁰) to an address changes only bits 10 and above. Bits 0–9 stay identical, so the swizzle does exactly the same thing to them.
+
+Example, using byte 418 from before:
+Address	Bits 9–7 (row)	Bits 6–4 (chunk)	After swizzle
+418	011	010	402 (chunk 001)
+418 + 1024 = 1442	011	010	1426 = 402 + 1024 (chunk 001)
+
+Same row bits, same chunk bits, same result, just shifted by 1024. So the pattern repeats every 1024 bytes.
+
+The general formula is:
+
+pattern size = 2^(M + S + B) = 2^(4 + 3 + 3) = 2^10 = 1024 bytes
+Step 3: The atom is built to exactly that size
+
+The atom is 8 rows × 128 bytes = 1024 bytes, not by coincidence:
+
+128-byte rows → 8 chunks of 16 bytes → bits 4–6 (B = 3 chunk bits);
+8 rows → bits 7–9 (3 row bits).
+
+So one atom covers exactly one full repetition of the pattern.
+
+Step 4: Why the starting address must be a multiple of 1024
+
+The swizzle reads bits 7–9 of the actual address and assumes they’re the row number within an atom. That’s only true if the atom starts at a multiple of 1024.
+
+If the buffer started at byte 128 instead, row 0 of the atom would have address bits 7–9 = 001, so the swizzle would treat it as row 1 and permute it with the wrong pattern. CuTe’s writes and the hardware’s reads could then disagree, and the GEMM would compute wrong results.
+
+In this kernel the condition holds because, as discussed for SharedStorage, A starts at the beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48 × 1024) puts B on a 1024-byte boundary too.
+Bit 9 is the highest of the three bits the swizzle reads (7, 8, 9).
+
+In terms of the template parameters:
+
+lowest read bit  = M + S         = 4 + 3     = 7
+highest read bit = M + S + B − 1 = 4 + 3 + 3 − 1 = 9
+
+So bits 0 through 9 are involved, 10 bits in total, and 2¹⁰ = 1024 is the length of the repeating pattern.
+010 XOR 011 = 001, which is 1. 101 = 5 is the sum, 2 + 3, not the XOR.
+
+XOR compares the bits one position at a time: the result is 1 where the two bits differ, and 0 where they’re the same:
+
+          bit 2  bit 1  bit 0
+  010:      0      1      0
+  011:      0      1      1
+  ─────────────────────────────
+  XOR:      0      0      1     (same, same, different)   = 001 = 1
+
+Addition is different because it carries: bit 0 is 0 + 1 = 1, but bit 1 is 1 + 1 = 10 (write 0, carry 1 into bit 2), so 010 + 011 = 101 = 5. XOR is like addition without the carries, which is why the two results differ.
+
+The XOR table for single bits:
+
+a	b	a XOR b
+0	0	0
+0	1	1
+1	0	1
+1	1	0 (addition would give 10)
+
+You can check against the swizzle table: row 3, logical chunk 2 → physical chunk 1 (row 3 of the table is 3 2 1 0 7 6 5 4, and its entry at position 2 is 1).
+
+The pattern must be identical in both; what can differ is who computes it and what it’s applied to. If the result differed, the GEMM would read the wrong data.
+
+What must be the same
+
+The XOR pattern itself: physical chunk = logical chunk XOR row, i.e. Sw<3,4,3> / SW128. CuTe writes the data with this pattern, and the hardware reads it back with the same pattern. Any mismatch means wgmma reads the wrong elements and the result is silently wrong.
+
+What differs
+	Software (CuTe, cp.async writes)	Hardware (wgmma reads)
+Who computes the swizzle	the kernel’s own instructions: address arithmetic (XORs, shifts) compiled from the layout	the tensor-core hardware, internally
+How it’s told the pattern	the layout type Sw<3,4,3> o smem_ptr[16b] o …	the SW128 mode field in the matrix descriptor
+What it’s applied to	depends on the tensor form: the offset within the buffer (position-independent form, L89) or the absolute address	as far as I know, the absolute shared-memory address bits
+Why both still agree here
+
+They give the same result only if the offset within the buffer and the absolute address have the same bits 7–9 (the row bits). That’s true exactly when the buffer starts at a multiple of 1024 bytes:
+
+absolute address = buffer start + offset
+buffer start = multiple of 1024   →   bits 0–9 of address = bits 0–9 of offset
+                                  →   same row bits, same swizzle
+
+In this kernel the A and B buffers start on 1024-byte boundaries (as discussed for SharedStorage), so the software and hardware swizzles land on the same physical bytes.
+
+I’m not fully certain how the hardware handles a buffer that isn’t 1024-aligned. As far as I know, the descriptor has a base-offset field for such cases, but I haven’t verified that against the PTX documentation, and this kernel doesn’t need it.
+
+So a precise version of your sentence:
+
+Software (CuTe) and hardware (wgmma) compute the swizzle separately and in different ways, but they must produce the same pattern. They agree here because the shared-memory buffers are aligned to 1024 bytes, so the offset CuTe swizzles and the address the hardware swizzles share the same low 10 bits.
+
+How do we get the following table?
+row 0: 0 1 2 3 4 5 6 7 
+row 1: 1 0 3 2 5 4 7 6 
+row 2: 2 3 0 1 6 7 4 5 
+row 3: 3 2 1 0 7 6 5 4 
+row 4: 4 5 6 7 0 1 2 3 
+row 5: 5 4 7 6 1 0 3 2 
+row 6: 6 7 4 5 2 3 0 1 
+row 7: 7 6 5 4 3 2 1 0
+
+Every entry is one XOR: row number XOR column number.
+
+the row r (0 … 7) is the row inside the atom;
+the column position c (0 … 7) is the logical chunk;
+the entry is the physical chunk: r XOR c.
+That rule comes from the swizzle: bits 7–9 of the address (the row) are XORed into bits 4–6 (the chunk), as derived in the Sw<3,4,3> explanation.
+
+Row by row, in binary
+Row 0 (000): XOR with 000 changes nothing:
+
+c:      000 001 010 011 100 101 110 111
+r XOR c: 000 001 010 011 100 101 110 111   → 0 1 2 3 4 5 6 7
+Row 1 (001): flips the last bit, so neighbors swap in pairs:
+
+c:      000 001 010 011 100 101 110 111
+r XOR c: 001 000 011 010 101 100 111 110   → 1 0 3 2 5 4 7 6
+Row 2 (010): flips the middle bit, so pairs of two swap:
+
+c:      000 001 010 011 100 101 110 111
+r XOR c: 010 011 000 001 110 111 100 101   → 2 3 0 1 6 7 4 5
+Row 3 (011): flips both lower bits:
+
+c:      000 001 010 011 100 101 110 111
+r XOR c: 011 010 001 000 111 110 101 100   → 3 2 1 0 7 6 5 4
+Row 4 (100): flips the top bit, so the two halves swap:
+
+r XOR c: 100 101 110 111 000 001 010 011   → 4 5 6 7 0 1 2 3
+Rows 5, 6, 7 (101, 110, 111) follow the same way:
+
+row 5: 5 4 7 6 1 0 3 2
+row 6: 6 7 4 5 2 3 0 1
+row 7: 7 6 5 4 3 2 1 0     (111 flips every bit: 7−c)
+Two checks you can do by eye
+Each row contains 0 … 7 exactly once: XOR with a fixed r is a permutation, so no two chunks of a row collide.
+Each column contains 0 … 7 exactly once: the same logical chunk lands in a different physical position in every row. That’s the property that removes the bank conflicts.
+How your print_layouts.cu produced it
+The program did the same thing via real addresses. For each row m and logical chunk c, it took the byte address of element (m, 8·c), applied Swizzle<3,4,3>, and printed bits 4–6 of the result:
+
+cpp
+int byte = 2 * sA_tn.layout_b()(m, 8 * c, 0);   // = 128·m + 16·c
+int phys = Swizzle<3,4,3>{}(byte);
+printf("%d ", (phys >> 4) & 7);                 // physical chunk
+(phys >> 4) & 7 extracts bits 4–6, and those bits are exactly m XOR c after the swizzle.
+
+First, a small correction to how the name splits. It’s not “independent_swizzle_tensor” but:
+
+as_  position_independent  swizzle_tensor
+ │          │                    └─ a tensor whose layout contains a swizzle (here Sw<3,4,3>)
+ │          └─ whose result doesn't depend on the position (address) of the buffer
+ └─ "convert to this form"
+
+So: convert sA into a swizzled tensor whose addressing doesn’t depend on where the buffer sits in memory.
+
+What “position” means here
+
+“Position” is the buffer’s starting address in shared memory. There are two ways to apply a swizzle to an element at some offset inside the buffer:
+
+Form	Swizzle applied to	Result
+Position-independent	the offset inside the buffer	base + swizzle(offset)
+Position-dependent	the absolute address	swizzle(base + offset)
+
+In the first form, the base address only gets added at the end, so the swizzle doesn’t depend on the position. Hence the name.
+
+Concrete example (computed)
+
+Element at offset 418 (row 3, chunk 2, as in the earlier example):
+
+Buffer starts at	Position-independent: base + swizzle(418)	Position-dependent: swizzle(base + 418)
+2048 (multiple of 1024)	2048 + 402 = 2450	swizzle(2466) = 2450 ✓ same
+2176 (not a multiple of 1024)	2176 + 402 = 2578	swizzle(2594) = 2658 ✗ different
+When the buffer is 1024-aligned, both forms give the same address: the base doesn’t change bits 0–9, so the swizzle sees the same row and chunk bits either way.
+When it isn’t aligned, they disagree: adding 128 changed the row bits, so the position-dependent form permutes with a different row’s pattern.
+Connection to “identical pattern in CuTe and wgmma”
+
+This is exactly the requirement you mentioned:
+
+CuTe’s copy uses the position-independent form (after L89): base + swizzle(offset).
+As far as I know, the wgmma hardware works like the position-dependent form: it swizzles the actual shared-memory address.
+
+They agree only when the buffer starts at a multiple of 1024 bytes, which this kernel guarantees through its SharedStorage placement, as discussed before. So the function doesn’t make the alignment unnecessary; it relies on it.
+
+Still open: why the tutorial converts to this form for the copy, but uses plain sA for the MMA side (L128). That depends on CuTe’s internal representation, which we’ll read from the source with your grep output when you’re home.
+
+Position-independent: does not depend on physical address.
+Position-dependent: depend on physical address.
+
+Yes, correct. One precision: it’s the swizzle that does or doesn’t depend on the address. The final address always includes the buffer’s starting address in both forms:
+
+Form	Swizzle computed from	Final address
+Position-independent	the offset inside the buffer only, not the buffer’s address	base + swizzle(offset)
+Position-dependent	the full shared-memory address, including the buffer’s start	swizzle(base + offset)
+
+And the key consequence: both give the same result only when the buffer starts at a multiple of 1024 bytes, which this kernel guarantees.
+
+
 </pre>
