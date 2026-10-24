@@ -1395,7 +1395,7 @@ dimension (L416, ceil_div(m, bM)), because there’s one CTA per tile-row along 
 gA is 64 tiles, 2560 is the number of tiles in all of A. gA is one CTA’s row of tiles:
 </pre>
 ||Tiles|
-||:----|
+|:--|:----|
 |matrix A (mA)	|2560|
 |gA (one CTA)	|64|
 <pre>
