@@ -909,6 +909,58 @@ with K = 16. The CTA tile (128 × 128 × 64) needs:
 (128/64) × (128/64) × (64/16) = 2 × 2 × 4 = 16 wgmma instructions per k-tile
 4. F16F16F16 means three types, including the accumulator. The order is D, A, B:
 </pre>
+|Position|	Matrix|	Type|
+|:-------|:-------|:----|
+|1st F16|	D (accumulator/result)|	FP16|
+|2nd F16|	A|	FP16|
+|3rd F16|	B	FP16|
+<pre>
+So this GEMM also accumulates in FP16, not FP32. That’s why the inputs are kept to ±1 (I
+discussed this with rand()): sums of 4096 products must fit in FP16.
+5. The two Major::K arguments: first for A, second for B. Both say “K is the contiguous
+dimension in shared memory”. They must match the shared-memory layouts: L383–384 use
+Layout_K_SW128_Atom for both A and B. If the layout and the Major disagreed, the hardware would
+read the data wrongly. The NT version uses Major::MN at L302, together with Layout_MN_SW128_Atom
+at L291–292.
+SS: A and B both from shared memory: The other option, RS, takes A from registers.
+The build log shows the full type, including two default arguments not written in the source:
+MMA_64x64x16_F16F16F16_SS<Major::K (0), Major::K (0), ScaleIn::One (1), ScaleIn::One (1)>
+ScaleIn::One means A and B are used as-is; the alternative, Neg, negates them.
+
+Line 413: int smem_size = int(sizeof(SharedStorage<TA, TB, decltype(sA), decltype(sB)>));
+To receive shared memory size sA and SB in integer. The type TA, TB is half_t, FP16.
+decltype checkthe shape of sA/sB, calculate the number of elements, pass the number into the
+struct.
+SharedStorage is a C++ struct, calculate physical tiles. It does not just calculate one tile for A and one for B. SharedStorage multiple the tiles by pipeline stage. If we have 3 pipeline, the SharedStorage would create an array large enough to hold three 128x64 of A and three 128x64 of B. 
+The finaly smem_size would be 32 bit integer.
+
+  
+1. decltype(sA) gives the layout’s type, not its shape at runtime.
+sA (L383) is a fully static layout, so everything about it (shape, stride, swizzle) is encoded
+in its type. decltype(sA) takes that type, and it’s passed to SharedStorage as the template
+parameter SmemLayoutA (L20). decltype itself doesn’t check or calculate anything.
+2. The element count is computed inside the struct, by cosize_v (L24–25):
+alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
+alignas(128) cute::ArrayEngine<ElementB, cosize_v<SmemLayoutB>> B;
+
+cosize_v<Layout> is the number of elements the layout spans in memory: its largest offset + 1.
+(size would be the number of coordinates. For this compact layout they’re equal, but cosize is
+the one that matters for allocating memory.)
+
+3. The pipeline stages are already in the layout. sA was built with make_shape(bM, bK, bP) =
+(128, 64, 3) (L383), so its PIPE mode (1,3):(0,8192) already covers 3 stages:
+cosize_v<SmemLayoutA> = 3 stages × 8192 = 24,576 halfs
+SharedStorage does no multiplication of its own. It just declares arrays as large as the 
+layouts need.
+
+4. sizeof gives the total in bytes, at compile time:
+</pre>
+|Member|	Elements|	Bytes|
+|:-----|:---------|:-----|
+|A	|24,576 halfs|	49,152|
+|B	|24,576 halfs|	49,152|
+Total		98,304 = 96 KB
+
 |Form	|Text|	Where it comes from|
 |:----|:---|:--------------------|
 |hierarchical	|((8,16),(64,1),3):((64,512),(1,0),8192)|	what tile_to_shape built and<br> print showed you|
