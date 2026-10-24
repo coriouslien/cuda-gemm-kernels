@@ -1509,6 +1509,8 @@ ASmemLayout{} creates the layout from its type alone. That works because the lay
 static: every number is part of the type, so default-constructing it gives the complete
 swizzled (128, 64, 3) layout. The kernel also received it as an argument (sA_layout, L37), 
 but doesn’t need that value.
+The resulting sA covers all 3 pipeline stages. One stage is selected later, for example with
+tAsA(_,_,_,k_pipe_write) (L222).
 Summary
 shared_memory (98,304 raw bytes, size set at launch)
    └─ reinterpret_cast → smem (struct view: A array, B array)
@@ -1516,25 +1518,237 @@ shared_memory (98,304 raw bytes, size set at launch)
 
 sB (L81) is the same, built from smem.B.
 
+Lien 87: ThrCopy thr_copy_a = copy_a.get_slice(threadIdx.x);
+Lien 88: Tensor tAgA = thr_copy_a.partition_S(gA); 
+Lien 89: Tensor sA_ = as_position_independent_swizzle_tensor(sA);
+Lien 90: Tensor tAsA = thr_copy_a.partition_D(sA_);
+L87: copy_a.get_slice(threadIdx.x)
 
-The resulting sA covers all 3 pipeline stages. One stage is selected later, for example with tAsA(_,_,_,k_pipe_write) (L222).
+copy_a is the plan for the whole team of 128 threads, and get_slice(threadIdx.x) returns
+thr_copy_a, the same plan specialized to this one thread.
+get_slice doesn’t cut out any elements yet. It only records which thread this is. The cutting
+happens on the next lines, when the plan is applied to a tensor with partition_S / partition_D.
+  
+L88: thr_copy_a.partition_S(gA)
+each tile is 8192 elements, the 128 threads share the work, each thread is responsible for 64
+elements per tile, and partition_S means “partition the Source”.
+thr_copy_a doesn’t read anything, and neither does partition_S. Both only build views:
+</pre>
+|Step	|What it does|
+|:----|:-----------|
+|get_slice (L87)|	records which thread|
+|partition_S (L88)|	builds the view tAgA: this thread’s elements of gA|
+|copy(copy_a, tAgA(…), tAsA(…))<br> (L193, L222)|	this is where the cp.async <br>instructions run and data actually moves|
+<pre>
+gA holds 64 tiles, so tAgA covers this thread’s 64 elements in each of the 64 tiles: shape 
+(8, 8, 1, 64). One tile is selected later, in the loop.
 
+L89: as_position_independent_swizzle_tensor(sA)
+1. The swizzle here is Swizzle<3,4,3>. In this kernel’s layout (and the build log), the swizzle
+is written in byte-address bits: Swizzle<3,4,3>.
+2. An XOR swizzle doesn’t survive simple shifting. Ordinary layouts are linear: if I move to a
+thread’s starting point, I can just add an offset. An XOR swizzle isn’t linear:
 
-  
-extern __shared__ char shared_memory[];
-It is a dynamic shared memory.  It is a char array, it is a 1-bypte flat sequence flat array.
-For shorthand, we write using SharedStorage = ... to alias the struct
-SharedStorage.
- SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
-Creating a reference smem to  the struct SharedStorage.
+swizzle(base + offset)  ≠  base + swizzle(offset)        in general
 
-Tensor sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});
-Creating a shared memory matrix A tensor view sA. Using smem reference  to beginning of matrix A. using ASmemLayout{} to layout the tensor view.
+So when a swizzled tensor is partitioned (split into a per-thread starting point plus a 
+remaining layout), CuTe must be careful about which address the swizzle is applied to. 
+That’s the problem this function deals with.
+
+3. The consequence would be wrong addresses, not just wrong banks. If the swizzle were applied
+to the wrong value, data would land in the wrong place in shared memory. The wgmma would then
+read the wrong elements and the GEMM would compute wrong results, silently, as discussed with
+alignment. Bank conflicts only affect speed; this would affect correctness.
+
+4. “Locks the swizzle to the physical pointer” is the opposite of what the name says. 
+“Position-independent” means the result does not depend on where the buffer sits in memory: 
+the swizzle is applied to the offset within the buffer. That’s only valid if the buffer starts
+at a multiple of the swizzle period (1024 bytes here), which is why the alignment of 
+SharedStorage matters.
+
+What I’m not certain of: CuTe’s exact internal representation. As far as I know, a swizzled
+shared-memory tensor can keep the swizzle either in the layout or folded into a special
+swizzled pointer, and this function converts between those forms. Why the tutorial applies it
+to the copy side only (L89, L94) but not to the MMA side (L128 uses plain sA) is something I
+can’t explain with confidence from memory. Rather than guess, let’s read the actual code:
+
+grep -rn "as_position_independent_swizzle_tensor" -A20 ../cutlass/include/cute/ | head -60
   
-  
-  
-sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
+L90: thr_copy_a.partition_D(sA_)
+it returns the view tAsA, this thread’s partition of the shared-memory tile, using the same 
+A-copy plan, and D means Destination.
+thr_copy_a doesn’t write. Writing happens in copy().
+One difference from tAgA worth noticing:
+</pre>
+||Shape	|Last mode|
+|:--|:--|:--------|
+|tAgA (source, global)|	(8, 8, 1, 64)|	64 k-tiles|
+|tAsA (destination, shared)|	(8, 8, 1, 3)	|3 pipeline stages|
+<pre>
+The first three modes match exactly (the kernel checks this at L97–98), so each thread’s source
+elements pair one-to-one with its destination elements. The loop then pairs one k-tile with one
+stage in each copy: copy(copy_a, tAgA(_,_,_,k_tile_next), tAsA(_,_,_,k_pipe_write)) (L222).
+
+Summary
+get_slice specializes the A-copy plan to this thread. partition_S and partition_D apply it to
+the source gA and the destination sA_, producing two views of this thread’s elements: tAgA (64 
+elements in each of 64 k-tiles) and tAsA (the matching 64 elements in each of 3 stages).
+Nothing is read or written yet; that happens in copy(). as_position_independent_swizzle_tensor
+rewrites the swizzled shared-memory tensor so partitioning still produces correct swizzled
+addresses; this relies on the buffer being aligned to the swizzle period.
+
+Swizzle<3,4,3> is right because it’s what the build log shows, which is the most reliable
+source for what this kernel actually uses.
+these three commands give the full picture. Paste all three outputs:
+# 1. The function itself
+grep -rn "as_position_independent_swizzle_tensor" -A20 ../cutlass/include/cute/ | head -60
+
+# 2. Where CuTe turns a swizzled layout + smem pointer into a "swizzle pointer"
+grep -rn "swizzle_ptr" ../cutlass/include/cute/ | head -20
+
+# 3. The files involved, so we know where to read further
+grep -rln "as_position_independent_swizzle" ../cutlass/include/cute/
+
+Optionally, a fourth check makes the difference visible: in the print_layouts.cu, build a small
+shared-memory-style tensor from sA_tn and print it before and after
+as_position_independent_swizzle_tensor. Comparing the two printed types shows directly where
+the swizzle sits in each form. I can write that together once I’ve read the function.
+
+print_layouts.cu output confirms most of the earlier analysis with real data from my machine,
+and it adds two new facts. Line by line:
+The warning (first line)
+nvcc warning : Support for offline compilation for architectures prior to '_75' will be
+removed …
+
+I compiled without -arch, so nvcc used its default target, an old architecture that’s being
+phased out. It’s harmless for this host-only program. To silence it, compile for my own GPU:
+
+nvcc -std=c++17 --expt-relaxed-constexpr -arch=sm_120 -I … print_layouts.cu -o print_layouts
+Shared-memory layouts: 
+sA_tn : Sw<3,4,3> o smem_ptr[16b](unset) o ((_8,_16),(_64,_1),(_1,_3)):((_64,_512),(_1,_0),(_0,_8192))
+sA_nt : Sw<3,4,3> o smem_ptr[16b](unset) o ((_64,_2),(_8,_8),(_1,_3)):((_1,_512),(_64,_1024),(_0,_8192))
+cosize: _24576
+Both layouts match the types in your build log exactly, and the TN one matches the hand
+derivation.
+The three parts appear in order: swizzle Sw<3,4,3> ∘ 16-bit element flag smem_ptr[16b] ∘ layout.
+(unset) means no actual pointer is attached yet: this is only a layout, as expected on the host.
+cosize = 24,576 halfs = 3 stages × 8192, the size of SharedStorage::A.
+The _ prefix on every number marks it as static (_8 = Int<8>).
+Tiler_MN:       (_16,_64)
+TiledLayout_TV: ((_8,_16),_8):((_128,_1),_16)
+
+Exactly the 16 × 64 copy step and the TV layout derived earlier: thread t copies row t/8, K =
+8·(t mod 8) … +7.
+
+Copy_Atom  ThrID: _1:_0   ValLayoutSrc/Dst: (_1,_8):(_0,_1)   ValueType: 16b
+ThrID: _1:_0: one copy atom is executed by one thread. cp.async is a per-thread instruction.
+(_1,_8):(_0,_1): each atom moves 8 contiguous values, and ValueType: 16b makes them halfs: 
+8 × 2 bytes = the 16-byte cp.async.
+ThrLayoutVMNK: (_128,_1,_1,_1)     ThrID: _128:_1     Shape_MNK: (_64,_64,_16)
+
+128 threads (one warpgroup), one MMA atom of 64 × 64 × 16. This confirms dimBlock =
+size(tiled_mma) = 128.
+
+New finding 1: A and B aren’t distributed among threads
+LayoutA_TV: (_128,(_64,_16)):(_0,(_1,_64))
+LayoutB_TV: (_128,(_64,_16)):(_0,(_1,_64))
+
+The thread mode has stride 0. All 128 threads map to the same 64 × 16 block of A: no thread
+owns a separate piece. That’s how CuTe expresses the _SS case: the operand is read from shared
+memory by the hardware, through a descriptor, not split among threads’ registers.
+
+This is direct evidence for the earlier claim that tCrA and tCrB hold descriptors, not A and B
+values, now from your own printout rather than my explanation.
+
+New finding 2: who holds which accumulator element
+LayoutC_TV: ((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
+
+This maps (thread, value) to a position in the 64 × 64 C tile (column-major: index = m + 64·n).
+I decoded it and checked that it covers all 4096 elements exactly once:
+</pre>
+|Thread	|Its first values (m, n)|
+|:------|:-----------------------|
+|0|	(0,0) (0,1) (8,0) (8,1) (0,8) (0,9) …|
+|1|	(0,2) (0,3) (8,2) (8,3) (0,10) (0,11) …|
+|4|	(1,0) (1,1) (9,0) (9,1) (1,8) (1,9) …|
+|32	|(16,0) (16,1) (24,0) (24,1) …|
+<pre>
+Each thread holds 32 values per atom (2 × 2 × 8). The CTA uses 2 × 2 atoms, so 128 values per
+thread: the 64 accumulator registers (FP16 packed two per register) from the analysis.
+Each warp covers 16 rows (thread 32 = warp 1 starts at row 16).
+A thread’s values come in pairs adjacent along N: (0,0) and (0,1).
+
+That last point supports the earlier epilogue hypothesis. C is stored M-contiguous (dC = (1,
+ldC)), but each thread’s adjacent values run along N, so the final stores to C probably aren’t 
+well coalesced. It’s still a hypothesis until the SASS (store instruction widths) or ncu 
+confirms it, but now it’s based on the actual layout.
+
+The 8 × 8 table matches the one computed earlier exactly: physical chunk = logical chunk XOR
+(row mod 8).
+
+What this run settled  
+sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared
+memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension 
+carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a 
+configuration of specification hardware  for Hopper/Blackwell shared memory.
 128 byte hardware swizzle, tell the CuTe to apply 128 byte swizzle. We get bank conflict free.
-K is a contiguous dimension. The elements alone the K-dimension, sit right next to each other in physical memory, moving contiguous across column which means matrix A is store a row-major format in shared memory.    
+K is a contiguous dimension. The elements alone the K-dimension, sit right next to each other
+in physical memory, moving contiguous across column which means matrix A is store a row-major
+format in shared memory.    
 The Layout_K_SW128_Atom is not 128x64, it is an atom 8x64, a tiny atom.
+
+Sw<3,4,3> from the beginning, one step at a time. I checked every number below by running it.
+Step 1: Where it appears and what it acts on
+The build log and print_layouts output show:
+Sw<3,4,3> o smem_ptr[16b] o ((_8,_16),(_64,_1),(_1,_3)):((_64,_512),(_1,_0),(_0,_8192))
+The o means “composed with”, applied right to left:
+the layout turns a coordinate (m, k, stage) into an element offset;
+smem_ptr[16b] says elements are 16 bits, so element offset × 2 = byte offset;
+Sw<3,4,3> rearranges that byte offset.
+So the swizzle works on byte addresses within shared memory.
+  
+Step 2: The problem it solves, shared-memory banks
+Shared memory is divided into 32 banks, each 4 bytes wide. A byte address belongs to bank:
+bank = (byte_address / 4) mod 32
+32 banks × 4 bytes = 128 bytes: one 128-byte row covers each bank exactly once. If several
+threads access different addresses in the same bank at the same time, those accesses are 
+served one after another: a bank conflict.
+
+Without a swizzle, one atom is 8 rows × 128 bytes, row-major. The 16-byte chunk c of row r is
+at byte 128·r + 16·c, so its first bank is:
+
+(128·r + 16·c) / 4 mod 32 = (32·r + 4·c) mod 32 = 4·c        ← independent of r!
+
+Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
+
+Step 3: The definition of Swizzle<B, M, S>
+
+A swizzle takes some bits of the address and XORs them into other bits:
+
+Take B bits starting at bit M + S, and XOR them into the B bits starting at bit M.
+
+As a formula, for Swizzle<3,4,3>:
+
+source bits: B = 3 bits starting at M + S = 7  → bits 7, 8, 9   (mask 0b1110000000 = 0x380)
+target bits: B = 3 bits starting at M = 4      → bits 4, 5, 6
+
+swizzle(x) = x XOR ((x AND 0x380) >> 3)
+
+The >> 3 is the S: it shifts bits 7–9 down by 3 onto bits 4–6.
+
+Step 4: What those bits mean in this atom
+
+Lay out the byte offset within one 1024-byte atom (8 rows × 128 bytes):
+
+bit:      9  8  7 │ 6  5  4 │ 3  2  1  0
+          ─ row ─ │ ─chunk─ │ ─ byte within chunk ─
+         (0 … 7)  │ (0 … 7) │       (0 … 15)
+bits 0–3: byte within a 16-byte chunk. Untouched by the swizzle (they’re below M = 4).
+bits 4–6: which 16-byte chunk in the row (0 … 7). These are changed.
+bits 7–9: which row in the atom (0 … 7), since each row is 128 = 2⁷ bytes. These are the source, not changed.
+
+So the swizzle is simply:
+
+physical chunk = logical chunk XOR (row mod 8)
+Step 5: Each of the three numbers
 </pre>
