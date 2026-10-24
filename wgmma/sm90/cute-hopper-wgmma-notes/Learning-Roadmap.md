@@ -1214,14 +1214,28 @@ One detail to add: the Step applies to both the tiler and the coordinate:
 tiler: (bM, bN, bK) = (128, 128, 64)          coord: (blockIdx.x, blockIdx.y, _)
 Step:  ( _1,  X,  _1)                          Step:  (    _1,        X,     _1)
   ⇒   (128,       64)                            ⇒   (blockIdx.x,         _)
+So blockIdx.y is not used for A. That makes sense: A doesn’t depend on which column-tile of C
+is being computed.
+What gA is, exactly: a view (no copy) of this CTA’s strip of A, cut into k-tiles:
+gA shape:  (BLK_M, BLK_K, k) = (128, 64, 64)       k = K / bK = 4096 / 64 = 64
+• modes 0 and 1: one 128 × 64 tile;
+• mode 2: which k-tile, 0 … 63. The main loop walks this mode, one k-tile per iteration
+(tAgA(_,_,_,k_tile_next), L222).
+For blockIdx.x = 3, gA covers rows 384 … 511 of A, all 4096 columns, split into 64 tiles of 64
+columns.
+
+gB: Step<X, _1, _1>
+Skip M, use N and K. Here, blockIdx.x is the one not used, and gB is built from blockIdx.y:
+gB shape: (BLK_N, BLK_K, k) = (128, 64, 64)
+For blockIdx.y = 5, gB covers rows 640 … 767 of B (B is N × K), split into 64 k-tiles.
+Completing the picture: gC (L74), for comparison
+Tensor gC = local_tile(mC, cta_tiler, cta_coord, Step<_1, _1, X>{});   // (BLK_M, BLK_N)
+Here K is skipped, both in the tiler and in the coordinate, so the _ is dropped too. gC has no
+k mode: it’s a single 128 × 128 tile, the output this CTA writes once, at the end.
+Summary
 </pre>
 
-Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{}); 
-cta_tiler is 3D <bM, bN, bK>. so we have the Step<_1,X,_1>
-Creating tensor gA vidw in global, Step<_1,X_1>{}, eliminate X. it is only <M,K> 2D for mA. The firs _1 is M coordinate, ignore X which is N coordinate, the second _1 is K coordinate.  
 
-Tensor gB = local_tile(mB, cta_tiler, cta_coord, Step< X,_1,_1>{})
-Creating a tensor gB view in global, we ignore X which M coordinate, the first _1 is N coordinate, the second _1 is K coordinate.
   
   
 sA indicates it is shared memory Matrix A. We use cta_tile object to make shape in shared memory. bM, bK, and bP is integer, static, evaluate in compile-time, bM, bK, bP dimension carve out physical bound of shared memory in compile-time . GMMA::Layout_K_SW128_Atom<TA> is a configuration of specification hardware  for Hopper/Blackwell shared memory.
