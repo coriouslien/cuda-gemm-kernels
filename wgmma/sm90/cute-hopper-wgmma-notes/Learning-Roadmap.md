@@ -928,12 +928,6 @@ MMA_64x64x16_F16F16F16_SS<Major::K (0), Major::K (0), ScaleIn::One (1), ScaleIn:
 ScaleIn::One means A and B are used as-is; the alternative, Neg, negates them.
 
 Line 413: int smem_size = int(sizeof(SharedStorage<TA, TB, decltype(sA), decltype(sB)>));
-To receive shared memory size sA and SB in integer. The type TA, TB is half_t, FP16.
-decltype checkthe shape of sA/sB, calculate the number of elements, pass the number into the
-struct.
-SharedStorage is a C++ struct, calculate physical tiles. It does not just calculate one tile for A and one for B. SharedStorage multiple the tiles by pipeline stage. If we have 3 pipeline, the SharedStorage would create an array large enough to hold three 128x64 of A and three 128x64 of B. 
-The finaly smem_size would be 32 bit integer.
-
   
 1. decltype(sA) gives the layout’s type, not its shape at runtime.
 sA (L383) is a fully static layout, so everything about it (shape, stride, swizzle) is encoded
@@ -959,7 +953,128 @@ layouts need.
 |:-----|:---------|:-----|
 |A	|24,576 halfs|	49,152|
 |B	|24,576 halfs|	49,152|
-Total		98,304 = 96 KB
+|Total||		98,304 = 96 KB| 
+<pre>
+alignas(128) could add padding between A and B, but 49,152 is a multiple of 128, so none is
+needed here.
+5. No SharedStorage object is created on the host. Only its type is used, to get its size. 
+The struct is used for real inside the kernel, where it’s laid over the dynamic shared memory
+(L77–79: reinterpret_cast<SharedStorage*>(shared_memory)).
+
+6. smem_size is an int: 32 bits on your platform. sizeof returns a size_t (64 bits), and
+int(...) converts it. Its value is 98,304, which is then passed as the dynamic shared-memory
+size at launch (L418) and to cudaFuncSetAttribute (L427–430).
+
+Summary:
+decltype(sA) and decltype(sB) pass the static shared-memory layouts as types to SharedStorage.
+Inside it, cosize_v gives each array’s element count; since the layouts already include the 3
+pipeline stages, A and B each get 24,576 halfs (three 128 × 64 tiles). sizeof gives the struct’s
+size at compile time: 98,304 bytes, stored in the int smem_size.
+
+template <class ElementA,
+          class ElementB,
+          class SmemLayoutA, 
+          class SmemLayoutB> 
+struct SharedStorage
+{
+Line 24:  alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
+  alignas(128) cute::ArrayEngine<ElementB, cosize_v<SmemLayoutB>> B;
+};
+
+• ArrayEngine has two template arguments: the element type (ElementA = half_t, FP16) and the
+number of elements (cosize_v<SmemLayoutA>).
+• cosize_v is evaluated at compile time: The layout is static, so the count is a compile-time
+constant (24,576).
+• ArrayEngine has no rows, columns or swizzle: It’s plain storage, 
+like std::array<half_t, 24576>: one flat block of elements. Rows, columns and swizzle come
+from the layout, which is attached to this storage inside the kernel 
+(L80: make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{})).
+  
+The pipeline stages are a separate mode, not part of K
+The layout has three modes: M, K and PIPE. The 3 stages are the third mode, (1,3):(0,8192), 
+not stacked along K:
+one stage  = 128 (M) × 64 (K) = 8,192 elements
+3 stages   = 3 × 8,192        = 24,576 elements   ← cosize_v<SmemLayoutA>
+
+Each stage is a complete 128 × 64 tile, 8,192 elements after the previous one.
+The swizzle doesn’t change the count. It only permutes 16-byte chunks within each 1 KB atom, 
+so the largest offset, and therefore cosize_v, stays the same.
+cosize_v is a count, not an index
+cosize_v gives one number: how many elements the array must hold (24,576). The index is what
+the layout computes later, for each coordinate: (m, k, stage) → a position in 0 … 24,575 inside
+this flat array.
+_v stands for “value”
+
+It’s the standard C++ naming convention (since C++17) for a variable template that gives a
+value: std::is_same_v<T,U> means std::is_same<T,U>::value. In the same way, cosize_v<L> is 
+the compile-time value of cosize for layout L.
+
+misalignment usually gives wrong results, not a crash
+alignas(128) makes each array start at an address that is a multiple of 128 bytes, relative to
+the start of the struct. What happens if alignment were wrong depends on which requirement is
+broken:
+</pre>
+|Requirement|	If broken|
+|:----------|:---------|
+|16-byte alignment for each<br> 16-byte cp.async|	runtime error (“misaligned address”):<br> the kernel faults.<br> This is the “crash” case|
+|1024-byte alignment for the<br> 128-byte swizzle pattern<br> (as discussed for SharedStorage)|	no error at all: CuTe’s swizzled writes<br> and the hardware’s swizzled wgmma<br> reads would disagree, and the GEMM would<br> silently produce wrong numbers|
+<pre>
+The second case is the dangerous one, because nothing tells you. That’s another reason the
+program should check its result against a reference, which, as noted in Chunk 1, it currently
+doesn’t.
+As I found earlier, alignas(128) alone doesn’t guarantee 1024-byte alignment. It works here
+because A starts at the beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48
+× 1024) puts B on a 1024-byte boundary too. 
+
+Here is that line piece by piece, without the swizzle details.
+alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
+1. cute::ArrayEngine<T, N>: a fixed-size array
+ArrayEngine<T, N> is CuTe’s wrapper around a plain array of N elements of type T. It behaves
+like:
+T A[N];
+2. ElementA: the element type
+It’s the template parameter of SharedStorage, and here it’s TA = half_t (FP16, 2 bytes).
+3. cosize_v<SmemLayoutA>: how many elements the array needs
+SmemLayoutA is the type of the sA layout built on the host (L383): shape (128, 64, 3).
+cosize_v<…> is a compile-time number: how many elements of storage that layout reaches. 
+The _v means “value”.
+The layout covers 128 rows × 64 columns × 3 stages with no gaps, so:
+cosize_v<SmemLayoutA> = 128 × 64 × 3 = 24,576 elements
+The print_layouts output showed 24,576.
+So the line is equivalent to:
+alignas(128) half_t A[24576];      // 24,576 × 2 B = 49,152 B = 48 KB
+On the swizzle: it rearranges where elements sit inside this array. It doesn’t need extra
+space, so the size is still 24,576. That’s all the previous explanation meant.
+4. alignas(128): where the array may start
+The array’s start address must be a multiple of 128 bytes.
+There’s one thing to remember from earlier: the 128-byte swizzle pattern repeats every 1,024
+bytes, and I noted that the buffers need to be 1,024-aligned for CuTe’s swizzle and the
+hardware’s to agree. alignas(128) alone only guarantees 128. Whether the A buffer actually
+starts at a multiple of 1,024 depends on the base address of dynamic shared memory. That’s the
+open hypothesis we listed, still to verify (for example, by printing the address of smem.A on
+the H100).
+5. A: the member name
+It’s a member of the SharedStorage struct (L18–26). The kernel places that struct on the
+dynamic shared memory:
+extern __shared__ char shared_memory[];
+SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
+Then L80 wraps it as a tensor: make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{}).
+That’s the pointer plus layout view.
+
+Summary
+</pre>
+|Part|	Meaning|	Value here|
+|:---|:--------|:-----------|
+|ArrayEngine<T, N>|	fixed array of N elements of T|	like T A[N]|
+|ElementA|	element type|	half_t, 2 B|
+|cosize_v<SmemLayoutA>|	elements the layout needs	|128 × 64 × 3 = 24,576|
+|total size|	N × 2 B|	49,152 B = 48 KB|
+|alignas(128)|	start address multiple of 128 B|	the swizzle needs<br> 1,024 (open item)|
+|used by|	sA = make_tensor(smem_ptr(smem.A.begin()),<br> layout)|	L80|
+
+
+
+
 
 |Form	|Text|	Where it comes from|
 |:----|:---|:--------------------|
