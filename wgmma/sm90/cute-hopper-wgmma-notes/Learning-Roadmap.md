@@ -721,10 +721,6 @@ to make one stage:
 • Each atom is 8 × 64 halfs = 1 KB, with its own 128-byte swizzle applied inside.
 • 16 atoms make one stage: 16 KB.
 • sA has 3 stages: 48 KB in total.
-
-
-
-
   
 Step 1: the definition, in bits (line 84)
 The same as a table:
@@ -1122,8 +1118,6 @@ Summary
 <pre>
 
 </pre>
-
-
 
 |Form	|Text|	Where it comes from|
 |:----|:---|:--------------------|
@@ -1716,9 +1710,49 @@ served one after another: a bank conflict.
 
 Without a swizzle, one atom is 8 rows × 128 bytes, row-major. The 16-byte chunk c of row r is
 at byte 128·r + 16·c, so its first bank is:
+(128·r + 16·c) / 4 mod 32 = (32·r + 4·c) mod 32 = 4·c        ← independent of r
+Step 1: what a bank is
+Shared memory is divided into 32 banks, each 4 bytes wide. Consecutive 4-byte words go to
+consecutive banks, wrapping around after 32:
+bytes   0–3   → bank 0
+bytes   4–7   → bank 1
+...
+bytes 124–127 → bank 31
+bytes 128–131 → bank 0   (wraps around)
+So for any byte address:
+bank = (address / 4) mod 32
+32 banks × 4 bytes = 128 bytes covers every bank exactly once.
+calculation: bank = (address / 4) mod 32
+address / 4: integer division (drop the remainder). This gives the number of the 4-byte word.
+mod 32: the remainder after dividing by 32. This wraps the word number around the 32 banks.
+Examples
+</pre>
+|Byte address|	Step 1: address / 4|	Step 2: mod 32|	Bank|
+|:----------|:---------------------|:-----------------|:-----|
+|0|	0	|0 mod 32 = 0|	0|
+|4|	1|	1 mod 32 = 1|	1|
+|10|	10/4 = 2| (remainder 2 dropped)	2|	2|
+|124|	31|	31|	31|
+|128|	32|	32 mod 32 = 0|	0 (wraps)|
+|140|	35|	35 − 32 = 3|	3|
+|300|	75|	75 − 2·32 = 11|	11|
+|1,024|	256|	256 − 8·32 = 0|	0|
+<pre>
+Working one through: address 300.
+300 / 4  = 75          (75 words from the start)
+75 mod 32: 75 = 2 × 32 + 11 → remainder 11
+bank = 11
+Bytes 8 to 11 share one bank
+All four bytes of one word are in the same bank, which is why step 1 drops the remainder:
+address 8  → 8/4  = 2 → bank 2
+address 9  → 9/4  = 2 → bank 2
+address 10 → 10/4 = 2 → bank 2
+address 11 → 11/4 = 2 → bank 2
+address 12 → 12/4 = 3 → bank 3
 
-(128·r + 16·c) / 4 mod 32 = (32·r + 4·c) mod 32 = 4·c        ← independent of r!
 
+	
+	
 Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
 
 Step 3: The definition of Swizzle<B, M, S>
