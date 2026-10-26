@@ -1765,16 +1765,18 @@ The row-1 entries show the earlier point: element 64 starts row 1 at bank 0, jus
 because one row is 128 bytes.
 These addresses are counted from the start of the buffer. That gives the right bank as long as
 the buffer itself starts on a multiple of 128 bytes, which alignas(128) guarantees.	
+Do byte addresses follow a sequential pattern, or can they be any arbitrary even or odd
+numbers, such as 6, 7, 9, 12, 14, or 20? Are they always even numbers?
 The formula works for any byte address, odd or even. Whether the addresses I actually see are
 even depends on the element type, because CUDA requires each access to be aligned to its own
 size.
 </pre>
 |Accessed as|	Size	|Address must be a multiple of|	Examples|
 |:----------|:---------|:-----------------------------|:----------|
-char / int8	1 B	1 (any number)	6, 7, 13
-half (this kernel)	2 B	2 (always even)	6, 12, 14, 20
-float / int	4 B	4	12, 20, 300
-16-B chunk (cp.async, wgmma rows)	16 B	16	0, 16, 144
+|char/int8|	1 B|	1 (any number)|	6, 7, 13|
+|half(this kernel)|	2 B|	2 (always even)|	6, 12, 14, 20|
+|float/int|	4 B|	4|	12, 20, 300|
+|16-B chunk (cp.async, wgmma rows)|	16 B|	16|	0, 16, 144|
 
 <pre>
 	
