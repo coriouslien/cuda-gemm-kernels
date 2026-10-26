@@ -1905,10 +1905,81 @@ Each group, before and after
 |0–3|	byte|	0110 = 6|	0110 = 6|	untouched|
 <pre>
 Check: 422 = 128·3 + 16·2 + 6
+Why each group behaves that way
+Look at the value being XORed in, 48:
+48:   0 0 0 | 0 1 1 | 0 0 0 0
+      zeros | row   | zeros
+XOR with 0 leaves a bit unchanged, and XOR with 1 flips it. So:
+Bits 0–3: the XOR value is always 0 here, because the shift moved the row only down to bit 4.
+“Below M = 4” means these bits sit below bit 4, where nothing reaches. So the byte inside the
+chunk never changes, and every 16-byte chunk stays whole.
+Bits 4–6: the XOR value holds the row number here, so these bits change: chunk becomes chunk
+XOR row.
+Bits 7–9: the XOR value is 0 here too, because the row bits were moved away from these
+positions by the shift. So the row stays the same. It’s called the source because it supplies
+the value that’s XORed into the chunk.
+Summary
+</pre>
+|Bits|	Name|	Role|	Changed?|
+|:---|:-----|:------|:----------|
+|0–3|	byte within chunk|	below M = 4: nothing is XORed in|	no|
+|4–6|	chunk|	target: XORed with the row|	yes (chunk XOR row)|
+|7–9|	row|	source: supplies the XOR value|	no|
+<pre>
+It’s the standard for Swizzle<3,4,3>: the same three groups behave the same way for every
+address, not just 406. And the general pattern (low bits kept, target bits changed, source bits
+kept) is the definition of every CuTe Swizzle. I checked this in CuTe’s cute/swizzle.hpp on 
+main, lines 42–79.
+The definition in the source
+The comment at lines 42–51 draws it:
+0bxxxxxxxxxxxxxxxYYYxxxxxxxZZZxxxx
+                              ^--^ MBase is the number of least-sig bits to keep constant
+                 ^-^       ^-^     BBits is the number of bits in the mask
+                   ^---------^     SShift is the distance to shift the YYY mask
+...
+the result is ... ZZ → AA where AA = ZZ xor YY
+And the code (lines 65–78):
 
+using bit_msk = (1 << BBits) - 1;
+using yyy_msk = bit_msk << (MBase + max(0, SShift));   // source bits (YYY)
+using zzz_msk = bit_msk << (MBase - min(0, SShift));   // target bits (ZZZ)
+return offset ^ shiftr(offset & yyy_msk, SShift);      // ZZZ ^= YYY
+Applying it to Swizzle<3,4,3>
+
+B = 3, M = 4, S = 3 (the three template parameters):
+
+bit_msk = (1 << 3) − 1    = 7 = 0b111
+yyy_msk = 7 << (4 + 3)    = 7 << 7 = 0x380   → bits 7–9 (source)
+zzz_msk = 7 << (4 − 0)    = 7 << 4 = 0x70    → bits 4–6 (target)
+
+Those are exactly the groups in your table, and 0x380 is the mask from the earlier example.
+
+Why the three groups always behave this way
+Bits below M (0–3): the comment says it directly, “MBase is the number of least-sig bits to
+keep constant”. Nothing is ever XORed there.
+Target bits (ZZZ, 4–6): these are the only bits the XOR changes.
+Source bits (YYY, 7–9): line 63 has static_assert(abs(SShift) >= BBits, …). Since S ≥ B, the
+source and target groups never overlap, so the source bits are never changed by the XOR. That’s
+guaranteed for every valid swizzle.
+Bits above the source (10 and up): not in either mask, so unchanged.
+Other swizzle modes follow the same rule with different bits
+Using the parameters from lines 81–84 of mma_traits_sm90_gmma.hpp:
+</pre>
+|Atom|	Swizzle|	Unchanged low bits|	Target(changed)| Source(unchanged)|
+|:---|:--------|:---------------------|:---------------|:-----------------|
+|INTER|	<0,4,3>|	all|	none (B = 0: nothing changes)|	none|
+|SW32|	<1,4,3>|	0–3|	bit 4|	bit 7|
+|SW64|	<2,4,3>|	0–3|	bits 4–5|	bits 7–8|
+|SW128 (this kernel)|<3,4,3>|	0–3|	bits 4–6|	bits 7–9|
+<pre>
+For SW32 and SW64, I computed the bits with the same formulas: bit_msk = 1 or 3, shifted by 7
+and by 4.
+Summary
+For Swizzle<B,M,S>: bits below M never change; B target bits starting at M are XORed with B
+source bits starting at M + S; the source bits never change (guaranteed because S ≥ B). For 
+this kernel’s Swizzle<3,4,3>, that’s bits 0–3 kept, bits 4–6 changed, bits 7–9 kept, for every address.
 	
 	
-
 So the swizzle is simply:
 physical chunk = logical chunk XOR (row mod 8)
 Step 5: Each of the three numbers
