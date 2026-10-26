@@ -1867,7 +1867,7 @@ Summary
 |:-------|:-------|
 |Why 400?|	an arbitrary example address|
 |Why 256 + 128 + 16?|	the powers of two that add up to 400 (bits 8, 7 and 4)|
-|Why 0 1 1 | 0 0 1 | 0 0 0 0?	|1 where a power of two is used, 0 where it isn’t,<br> grouped as row / chunk / byte|
+|Why 0 1 1 \| 0 0 1 \| 0 0 0 0?	|1 where a power of two is used, 0 where it isn’t,<br> grouped as row / chunk / byte|
 <pre>
 
 Step 4: What those bits mean in this atom
