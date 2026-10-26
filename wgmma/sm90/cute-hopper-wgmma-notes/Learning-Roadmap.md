@@ -1796,25 +1796,74 @@ One more level up: the copies and the swizzle in this kernel work in 16-byte chu
 addresses that matter for bank conflicts are multiples of 16, and each chunk always covers 4
 whole banks.
 
-
-
 	
-Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
+Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same
+chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way
+conflict.
 
 Step 3: The definition of Swizzle<B, M, S>
-
 A swizzle takes some bits of the address and XORs them into other bits:
-
 Take B bits starting at bit M + S, and XOR them into the B bits starting at bit M.
-
 As a formula, for Swizzle<3,4,3>:
-
 source bits: B = 3 bits starting at M + S = 7  → bits 7, 8, 9   (mask 0b1110000000 = 0x380)
 target bits: B = 3 bits starting at M = 4      → bits 4, 5, 6
-
 swizzle(x) = x XOR ((x AND 0x380) >> 3)
-
 The >> 3 is the S: it shifts bits 7–9 down by 3 onto bits 4–6.
+What >> 3 does to the bits
+bit 7 → bit 4
+bit 8 → bit 5
+bit 9 → bit 6
+The row bits (7–9) and the chunk bits (4–6) are 3 positions apart: 7 − 4 = 3. XOR only combines
+bits in the same position, so the row bits must first be moved down onto the chunk positions.
+Moving them by 3 is exactly that, and that 3 is the S in Swizzle<3,4,3>.
+Worked example: byte address 400
+The address in binary, with bits numbered from 0 on the right:
+400 = 256 + 128 + 16
+bit:    9 8 7 | 6 5 4 | 3 2 1 0
+        0 1 1 | 0 0 1 | 0 0 0 0
+        row=3 | chunk=1| byte 0
+	
+400 itself was an example address. The 256 + 128 + 16 and the bit pattern both come from
+writing 400 in binary.
+Step 1: each bit position has a value
+In binary, bit k is worth 2^k:
+bit:     9    8    7    6    5    4    3    2    1    0
+value: 512  256  128   64   32   16    8    4    2    1
+
+Any number is a sum of some of these values, each used at most once. A bit is 1 if its value is
+used, and 0 if not.
+Step 2: split 400 into those values
+Go from the largest value down, and take it whenever it still fits:
+</pre>
+|Value|	Fits in what’s left?|	Bit|	Remaining|
+|:----|:--------------------|:-----|:------------|
+|512|	400 < 512, no|	bit 9 = 0|	400|
+|256|	yes|	bit 8 = 1|	400 − 256 = 144|
+|128|	yes|	bit 7 = 1|	144 − 128 = 16|
+|64	|no|	bit 6 = 0|	16|
+|32	|no	|bit 5 = 0	|16|
+|16	|yes|	bit 4 = 1|	16 − 16 = 0|
+|8, 4, 2, 1|	nothing left|	bits 3–0 = 0|	0|
+<pre>
+So 400 = 256 + 128 + 16, and the bits are:
+bit:    9 8 7 | 6 5 4 | 3 2 1 0
+        0 1 1 | 0 0 1 | 0 0 0 0
+Step 3: why the bits are grouped that way
+The groups follow the meaning of the address in the atom:
+bits 0–3 (values 1–8, up to 15): the byte inside a 16-byte chunk
+bits 4–6 (values 16–64): which chunk in the row (0–7)
+bits 7–9 (values 128–512): which row in the atom (0–7)
+Reading each group as its own small binary number:
+row   = bits 9 8 7 = 0 1 1 = 3
+chunk = bits 6 5 4 = 0 0 1 = 1
+byte  = bits 3–0  = 0000  = 0
+We can check it with ordinary arithmetic, without binary:
+row   = 400 / 128            = 3   (remainder 16)
+chunk = 16 / 16              = 1
+byte  = 400 − 3·128 − 1·16   = 0
+Summary
+</pre>
+<pre>
 
 Step 4: What those bits mean in this atom
 
