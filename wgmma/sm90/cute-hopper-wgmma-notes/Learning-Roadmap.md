@@ -1977,21 +1977,23 @@ and by 4.
 Summary
 For Swizzle<B,M,S>: bits below M never change; B target bits starting at M are XORed with B
 source bits starting at M + S; the source bits never change (guaranteed because S ≥ B). For 
-this kernel’s Swizzle<3,4,3>, that’s bits 0–3 kept, bits 4–6 changed, bits 7–9 kept, for every address.
-	
+this kernel’s Swizzle<3,4,3>, that’s bits 0–3 kept, bits 4–6 changed, bits 7–9 kept, for 
+every address.
 	
 So the swizzle is simply:
 physical chunk = logical chunk XOR (row mod 8)
 Step 5: Each of the three numbers
-Parameter	Value	Meaning here
-M = 4	2⁴ = 16 bytes	the unit that moves as a whole: a 16-byte chunk = 8 halfs. It’s never split
-B = 3	2³ = 8	8 chunks per row get permuted: 8 × 16 = 128 bytes, hence “SW128”
-S = 3	shift of 3	the source bits are 3 positions above the target bits: bits 7–9 = the row index
-
-The whole pattern spans 2^(M+S+B) = 2¹⁰ = 1024 bytes: exactly one atom. That’s why it repeats identically in every atom, and why the buffer’s 1024-byte alignment matters.
+</pre>
+|Parameter|	Value|	Meaning here|
+|:--------|:------|:------------|
+|M = 4|	2⁴ = 16 bytes|	the unit that moves as a whole: a 16-byte<br> chunk = 8 halfs. It’s never split|
+|B = 3|	2³ = 8|	8 chunks per row get permuted: 8 × 16 = <br>128 bytes, hence “SW128”|
+|S = 3|	shift of 3|	the source bits are 3 positions above<br> the target bits: bits 7–9 = the row index|
+<pre>
+The whole pattern spans 2^(M+S+B) = 2¹⁰ = 1024 bytes: exactly one atom. That’s why it repeats
+identically in every atom, and why the buffer’s 1024-byte alignment matters.
 
 Step 6: One worked example
-
 Element (m = 3, k = 17) of a stage:
 
 byte offset = 2 · (64·3 + 17) = 2 · 209 = 418
