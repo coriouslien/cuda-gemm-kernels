@@ -1871,7 +1871,6 @@ Summary
 <pre>
 
 Step 4: What those bits mean in this atom
-
 Lay out the byte offset within one 1024-byte atom (8 rows × 128 bytes):
 
 bit:      9  8  7 │ 6  5  4 │ 3  2  1  0
@@ -1879,10 +1878,38 @@ bit:      9  8  7 │ 6  5  4 │ 3  2  1  0
          (0 … 7)  │ (0 … 7) │       (0 … 15)
 bits 0–3: byte within a 16-byte chunk. Untouched by the swizzle (they’re below M = 4).
 bits 4–6: which 16-byte chunk in the row (0 … 7). These are changed.
-bits 7–9: which row in the atom (0 … 7), since each row is 128 = 2⁷ bytes. These are the source, not changed.
+bits 7–9: which row in the atom (0 … 7), since each row is 128 = 2⁷ bytes. These are the
+source, not changed.
+These three lines say what the swizzle does to each group of bits: one group changes, and tw
+stay the same. Here’s an example that shows all three, using an address with a non-zero byte
+part.
+
+Example: byte address 406
+406 = 400 + 6, the same row and chunk as before, but byte 6 inside the chunk:
+bit:    9 8 7 | 6 5 4 | 3 2 1 0
+406:    0 1 1 | 0 0 1 | 0 1 1 0
+        row 3 | chunk 1| byte 6
+The swizzle, x XOR ((x AND 0x380) >> 3):
+x AND 0x380:   0 1 1 | 0 0 0 | 0 0 0 0      keep row bits only
+>> 3:          0 0 0 | 0 1 1 | 0 0 0 0      = 48: the row number, now in the chunk position
+x XOR 48:
+   406:        0 1 1 | 0 0 1 | 0 1 1 0
+   48:         0 0 0 | 0 1 1 | 0 0 0 0
+   result:     0 1 1 | 0 1 0 | 0 1 1 0      = 422
+Each group, before and after
+</pre>
+|Bits|	Group|	Before (406)|	After (422)|	What happened|
+|:---|:------|:-------------|:-------------|:---------------|
+|7–9	|row|	011 = 3|	011 = 3	|not changed: it’s the source<br> of the XOR value|
+|4–6|	chunk|	001 = 1	|010 = 2	|changed: 1 XOR 3 = 2|
+|0–3|	byte|	0110 = 6|	0110 = 6|	untouched|
+<pre>
+Check: 422 = 128·3 + 16·2 + 6
+
+	
+	
 
 So the swizzle is simply:
-
 physical chunk = logical chunk XOR (row mod 8)
 Step 5: Each of the three numbers
 Parameter	Value	Meaning here
