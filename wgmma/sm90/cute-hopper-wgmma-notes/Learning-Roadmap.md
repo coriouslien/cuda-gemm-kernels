@@ -1750,7 +1750,17 @@ address 10 → 10/4 = 2 → bank 2
 address 11 → 11/4 = 2 → bank 2
 address 12 → 12/4 = 3 → bank 3
 
-
+With half elements, as in sA
+Each half is 2 bytes, so element i is at byte 2·i (from the start of the buffer, without the swizzle):
+</pre>
+|Element i|	Byte 2i|	/ 4|	mod 32|	Bank|
+|:--------|:-------|:------|:---------|:----|
+|0|	0|	0|	0|	0|
+|1|	2|	0|	0|	0 (same word as element 0)|
+|2	|4|	1|	1|	1|
+|64 (row 1, col 0)|	128|	32|	0|	0, same bank as row 0|
+|70 (row 1, col 6)|	140|	35|	3|	3|
+<pre>
 	
 	
 Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
