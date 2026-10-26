@@ -1761,7 +1761,22 @@ Each half is 2 bytes, so element i is at byte 2·i (from the start of the buffer
 |64 (row 1, col 0)|	128|	32|	0|	0, same bank as row 0|
 |70 (row 1, col 6)|	140|	35|	3|	3|
 <pre>
-	
+The row-1 entries show the earlier point: element 64 starts row 1 at bank 0, just like row 0,
+because one row is 128 bytes.
+These addresses are counted from the start of the buffer. That gives the right bank as long as
+the buffer itself starts on a multiple of 128 bytes, which alignas(128) guarantees.	
+The formula works for any byte address, odd or even. Whether the addresses I actually see are
+even depends on the element type, because CUDA requires each access to be aligned to its own
+size.
+</pre>
+|Accessed as|	Size	|Address must be a multiple of|	Examples|
+|:----------|:---------|:-----------------------------|:----------|
+char / int8	1 B	1 (any number)	6, 7, 13
+half (this kernel)	2 B	2 (always even)	6, 12, 14, 20
+float / int	4 B	4	12, 20, 300
+16-B chunk (cp.async, wgmma rows)	16 B	16	0, 16, 144
+
+<pre>
 	
 Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
 
