@@ -1777,8 +1777,27 @@ size.
 |half(this kernel)|	2 B|	2 (always even)|	6, 12, 14, 20|
 |float/int|	4 B|	4|	12, 20, 300|
 |16-B chunk (cp.async, wgmma rows)|	16 B|	16|	0, 16, 144|
-
 <pre>
+For sA in this kernel: element i is at byte 2·i, so every element address is even. An odd
+address like 13 is a real byte, but a half can’t start there, because that access would be
+misaligned.
+examples, as half elements:
+</pre>
+|Address	|Element (address/2)	|Bank (address/4 mod 32)|
+|:----------|:----------------------|:----------------------|
+|6	|3	|1|
+|12	|6	|3|
+|14	|7	|3 (same 4-byte word as 12)|
+|20	|10	|5|
+<pre>
+The addresses in my earlier table (0, 4, 10, 124, 128, …) were just examples. They were all
+even, so all valid for half.
+One more level up: the copies and the swizzle in this kernel work in 16-byte chunks. So the
+addresses that matter for bank conflicts are multiples of 16, and each chunk always covers 4
+whole banks.
+
+
+
 	
 Chunk 7 of every row starts at bank 28, as the “before” column below shows. Accessing the same chunk in 8 different rows (a column of the tile) hits the same 4 banks 8 times: an 8-way conflict.
 
