@@ -1999,12 +1999,77 @@ Element (m = 3, k = 17) of a stage:
 byte offset = 2 · (64·3 + 17) = 2 · 209 = 418
 418 in binary:  0 1 1 │ 0 1 0 │ 0 0 1 0
                  row 3 │ chunk 2 │ byte 2
-
 Swizzle: chunk 010 XOR row 011 = 001 → chunk 1
-
 result:         0 1 1 │ 0 0 1 │ 0 0 1 0   =  384 + 16 + 2 = 402
+Element (3, 17) is logically in chunk 2 (K = 16 … 23) but physically stored in chunk 1 of row 3: byte 402 instead of 418. It stays in the same
+row, and its position inside the chunk doesn’t change.
+It takes one element of the A tile and finds which row, chunk and byte it occupies in the swizzle atom, before the swizzle is applied. Here it is
+step by step, with where each number comes from.
+Step 1: the element
+(m = 3, k = 17) is a chosen example: row 3 and column 17 of one stage of sA, in stage 0. This is the gemm_tn layout (K-major A).
+Step 2: element offset → byte offset
+One stage’s layout, without the swizzle, is (128,64):(64,1) (the flat form we read before):
+element offset = 64·m + 1·k = 64·3 + 17 = 192 + 17 = 209
+Each element is a half (2 bytes, since TA = half_t):
+byte offset = 2 · 209 = 418
+Step 3: 418 in binary
+Taking the largest power of two that fits each time (the method from before):
+</pre>
+|Value|	Fits?|	Bit|	Remaining|
+|:----|:-----|:-----|:-----------|
+|512	|no|	bit 9 = 0|	418, 418 < 512|
+|256|	yes|	bit 8 = 1|	162, 418 - 256 >= 0|
+|128|	yes|	bit 7 = 1|	34, 162 - 128 >=0 |
+|64|	no|	bit 6 = 0|	34, 34 - 64 not >= 0 (34 - 64 !>=0)|
+|32|	yes|	bit 5 = 1|	2, 34 - 32 >= 0|
+|16	|no|	bit 4 = 0|	2, 2 - 32 not >= 0(2 - 32 !>=0)|
+|8, 4|	no|	bits 3, 2 = 0|	2, they are not >= 0|
+|2	|yes|	bit 1 = 1|	0, 2-2 >=0|
+|1	|no	|bit 0 = 0|	0. 0-1 not >= 0|
+<pre>
+So 418 = 256 + 128 + 32 + 2:
+bit:   9 8 7 | 6 5 4 | 3 2 1 0
+       0 1 1 | 0 1 0 | 0 0 1 0	
+Step 4: read each group, and check it against (m, k)	
+</pre>
+|Bits|	Group|	Binary|	Value|	Check from (m, k)|
+|:---|:------|:-------|:-----|:------------------|
+|7–9	|row	|011|	3|	m mod 8 = 3 mod 8 = 3 |
+|4–6|	chunk|	010|	2|	k / 8 = 17 / 8 = 2 (8 halfs per 16-byte chunk) |
+|0–3|	byte|	0010|	2|	2 · (k mod 8) = 2 · 1 = 2 |
+<pre>
+The checks use the formulas from the “is it a matrix row?” answer. In words: element 17 of row 3 is in chunk 2 (which holds elements 16–23), 
+and it’s the second element of that chunk, at byte 2.
+Step 5: what the swizzle does to it
+Using the rule for Swizzle<3,4,3> (chunk = chunk XOR row):
+physical chunk = 2 XOR 3 = 010 XOR 011 = 001 = 1
+With the formula, as before:
+418 AND 0x380 = 384        (keep bits 7–9: 256 + 128)
+384 >> 3      = 48         (row 3 moved onto bits 4–6: 3 × 16)
+418 XOR 48:
+  418:  0 1 1 | 0 1 0 | 0 0 1 0
+   48:  0 0 0 | 0 1 1 | 0 0 0 0
+   =    0 1 1 | 0 0 1 | 0 0 1 0   = 256 + 128 + 16 + 2 = 402
+Check: 402 = 128·3 (row) + 16·1 (chunk) + 2 (byte).
+So element (3, 17) is stored at byte 402, not 418. The row and the byte within the chunk are unchanged, and only the chunk moved, from 2 to 1.
+Summary
+</pre>
+|Step	|Result	|From|
+|:------|:------|:---|
+|element|	(m = 3, k = 17)|	chosen example|
+|element offset|	64·3 + 17 = 209|	stage layout (128,64):(64,1)|
+|byte offset|	2 · 209 = 418|	half = 2 bytes|
+|binary groups|	row 3, chunk 2, byte 2|	bits 7–9, 4–6, 0–3|
+|after swizzle|	row 3, chunk 1, byte 2 → byte 402|	2 XOR 3 = 1|
+<pre>
 
-Element (3, 17) is logically in chunk 2 (K = 16 … 23) but physically stored in chunk 1 of row 3: byte 402 instead of 418. It stays in the same row, and its position inside the chunk doesn’t change.
+
+
+
+
+
+
+
 
 Step 7: The full pattern and why it removes the conflict
 
