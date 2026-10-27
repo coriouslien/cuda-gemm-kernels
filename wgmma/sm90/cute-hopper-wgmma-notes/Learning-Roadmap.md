@@ -2064,16 +2064,9 @@ Summary
 <pre>
 
 
-
-
-
-
-
-
-
 Step 7: The full pattern and why it removes the conflict
-
-Applying chunk XOR row to all 8 rows gives the table from your print_layouts output (row = rows, entries = physical chunk for logical chunks 0 … 7):
+Applying chunk XOR row to all 8 rows gives the table from your print_layouts output (row = rows, entries = physical chunk for logical 
+chunks 0 … 7):
 
 row 0:  0 1 2 3 4 5 6 7
 row 1:  1 0 3 2 5 4 7 6
@@ -2084,18 +2077,60 @@ row 5:  5 4 7 6 1 0 3 2
 row 6:  6 7 4 5 2 3 0 1
 row 7:  7 6 5 4 3 2 1 0
 
+How to read it
+
+The same table, with labels added:
+
+logical chunk c →   0 1 2 3 4 5 6 7
+row r = 0:          0 1 2 3 4 5 6 7
+row r = 1:          1 0 3 2 5 4 7 6
+row r = 2:          2 3 0 1 6 7 4 5
+row r = 3:          3 2 1 0 7 6 5 4
+row r = 4:          4 5 6 7 0 1 2 3
+row r = 5:          5 4 7 6 1 0 3 2
+row r = 6:          6 7 4 5 2 3 0 1
+row r = 7:          7 6 5 4 3 2 1 0
+
+We pick row 3 as an example:
+Row 3 is the 8 results of c XOR 3, for c = 0, 1, 2, …, 7 in that order:
+3 is the row number: r = 3 = 011.
+c runs through the logical chunks 0–7, the column positions.
+Each entry is computed with XOR, bit by bit (equal → 0, different → 1).
+</pre>
+|Column c|	c in binary|	r = 3|	c XOR r	|Entry|
+|:-------|:------------|:--------|:---------|:-----|
+|0|	000|	011|	011|	3|
+|1|	001|	011|	010|	2|
+|2|	010|	011|	001|	1|
+|3|	011|	011|	000|	0|
+|4|	100|	011|	111|	7|
+|5|	101|	011|	110|	6|
+|6|	110|	011|	101|	5|
+|7|	111|	011|	100|	4|
+<pre>
+Reading the last column top to bottom gives 3 2 1 0 7 6 5 4: row 3.
+One position in detail, column 5:
+c = 5 = 1 0 1
+r = 3 = 0 1 1
+        │ │ └─ 1 vs 1: equal     → 0
+        │ └─── 0 vs 1: different → 1
+        └───── 1 vs 0: different → 1
+result = 1 1 0 = 6
+Every other row is built the same way, with its own r.
+
 Each column (one logical chunk across the 8 rows) now lands on 8 different physical chunks. For logical chunk 7:
-
-Row	Physical chunk	First bank before swizzle	First bank after
-0	7	28	28
-1	6	28	24
-2	5	28	20
-3	4	28	16
-4	3	28	12
-5	2	28	8
-6	1	28	4
-7	0	28	0
-
+</pre>
+|Row|	Physical chunk|	First bank before swizzle|	First bank after|
+|:--|:----------------|:-------------------------|:-----------------|
+|0|	7|	28|	28|
+|1|	6|	28|	24|
+|2|	5|	28|	20|
+|3|	4|	28|	16|
+|4|	3|	28|	12|
+|5|	2|	28|	8|
+|6|	1|	28|	4|
+|7|	0|	28|	0|
+<pre>
 Before: all 8 rows start at bank 28. After: they start at banks 0, 4, 8, …, 28. Each chunk occupies 4 banks, so the 8 chunks together cover all 32 banks exactly once. Reading one chunk column across 8 rows no longer conflicts.
 
 As far as I know, the hardware serves 16-byte-per-thread accesses in groups of 8 threads at a time, which is why spreading one column of 8 chunks matters. That detail comes from my knowledge, not from this code.
