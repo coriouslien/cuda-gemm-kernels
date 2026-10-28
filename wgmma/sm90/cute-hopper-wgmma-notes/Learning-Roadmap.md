@@ -2279,6 +2279,7 @@ L383–384), which is exactly Sw<3,4,3>.
 2. Its size matches the tile
 </pre>
 |Swizzle part|	Requires|	In this kernel|
+|:-----------|:---------|:-----------------|
 B = 3 → 8 chunks × 16<br> B = 128-byte rows	|each row of the tile is ≥ 128 bytes<br> along the contiguous dimension	|bK = 64 halfs × 2 bytes = exactly 128 bytes (L378)|
 |M = 4 → 16-byte units<br> stay intact|	the copy moves whole 16-byte chunks|cp.async with uint128_t = 16 bytes (L387)|
 |pattern = 1024 bytes|	each atom (8 rows) starts<br> on a 1024-byte boundary|	atoms are 1024 bytes, and A starts at<br> the beginning of dynamic shared memory|
