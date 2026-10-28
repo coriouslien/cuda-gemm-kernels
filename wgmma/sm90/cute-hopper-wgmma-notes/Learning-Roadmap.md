@@ -2153,53 +2153,136 @@ address = 128·r + 16·7 = 128·r + 112
 Its first bank, using bank = (address / 4) mod 32:
 (128·r + 112) / 4 = 32·r + 28
 (32·r + 28) mod 32 = 28          ← 32·r is a multiple of 32, so it drops out
-
-
-
-
-
-	
-Before: all 8 rows start at bank 28. After: they start at banks 0, 4, 8, …, 28. Each chunk occupies 4 banks, so the 8 chunks together cover all 32 banks exactly once. Reading one chunk column across 8 rows no longer conflicts.
-
-As far as I know, the hardware serves 16-byte-per-thread accesses in groups of 8 threads at a time, which is why spreading one column of 8 chunks matters. That detail comes from my knowledge, not from this code.
-
+So for every row, the first bank is 28. The chunk covers banks 28–31 (4 banks of 4 bytes = 16
+bytes) in all 8 rows. 8 threads reading logical chunk 7 from 8 rows all hit banks 28–31: an 
+8-way conflict.
+Check, row 3: 128·3 + 112 = 496 → 496 / 4 = 124 → 124 mod 32 = 28
+Column 4: First bank after the swizzle
+Now the chunk is stored at its physical chunk p (column 2), so:
+address = 128·r + 16·p
+first bank = (32·r + 4·p) mod 32 = 4·p
+</pre>
+|Row|	Physical chunk p|	4·p|	Banks|
+|:---|:-----------------|:-----|:--------|
+|0	|7|	28|	28–31|
+|1|	6|	24|	24–27|
+|2|	5|	20|	20–23|
+|3|	4|	16|	16–19|
+|4	|3	|12|	12–15|
+|5|	2|	8|	8–11|
+|6|	1|	4|	4–7|
+|7|	0|	0|	0–3|
+<pre>
+Check, row 3: 128·3 + 16·4 = 448 → 448 / 4 = 112 → 112 mod 32 = 16.
+The 8 rows now use 8 different groups of 4 banks, which together cover banks 0–31 exactly once. 
+8 threads reading logical chunk 7 from 8 rows proceed with no conflict.
+Summary
+</pre>
+|Column|	Formula|	Source|
+|:-----|:----------|:---------|
+|Row	|r = 0–7|	atom row|
+|Physical chunk|	7 XOR r	|XOR table, column 7|
+|First bank before|	(128r + 16·7)/4 mod 32 = 28|bank formula; the same for<br> every row → 8-way conflict|
+|First bank after|	(128r + 16p)/4 mod 32 = 4p|	bank formula; all different → no conflict|
+<pre>
+Where 128·r + 16·7 comes from
+It’s the address formula for a byte inside one atom (from the “bits 7–9” answer):
+address = 128·r + 16·c + b
+128: bytes per atom row (64 halfs × 2 bytes)
+16: bytes per chunk (128 / 8 chunks per row)
+b: the byte inside the chunk (0–15)
+For this table, two values are fixed:
+c = 7: the logical chunk being followed (see below)
+b = 0: the first byte of the chunk, because the table asks for the chunk’s first bank
+So:
+address = 128·r + 16·7 + 0 = 128·r + 112
+The address is counted from the start of the atom, which sits on a 1,024-byte boundary.
+Example, row 2: 128·2 + 112 = 368. That’s the first byte of chunk 7 in row 2.
+Why chunk 7
+There’s no special reason. It’s an example. One column of the XOR table to show what happens to
+one logical chunk across the 8 rows, and chunk 7 was chosen. Any column gives the same 
+conclusion. Earlier I used chunk 0, where the physical chunks were 0, 1, …, 7 and the first
+banks 0, 4, …, 28.
+What chunk 7 is, concretely: the last 16 bytes of each row. For gemm_tn (K-major A), that’s the 8 halfs at k = 56–63 (7 × 8 = 56).
+Summary
+</pre>
+|Number|	Source|
+|128|	bytes per atom row: 64 halfs × 2 B|
+|16|	bytes per chunk: 128/8|
+|7|	the chosen logical chunk (an example;<br> any of 0–7 works)|
+|b = 0|	the chunk’s first byte, to get its first bank|
+|112|	16 · 7|
+<pre>
+The table below:
+</pre>
+|Row|	Physical chunk|	First bank before swizzle	|First bank after|
+|:--|:----------------|:----------------------------|:---------------|
+|0	|7	|28	|28|
+|1|	6|	28|	24|
+|2|	5|	28|	20|
+|3|	4|	28|	16|
+|4|	3|	28|	12|
+|5|	2|	28|	8|
+|6|	1|	28|	4|
+|7|	0|	28|	0|
+<pre>
+Before: all 8 rows start at bank 28. After: they start at banks 0, 4, 8, …, 28. Each chunk
+occupies 4 banks, so the 8 chunks together cover all 32 banks exactly once. Reading one chunk
+column across 8 rows no longer conflicts.
+As far as I know, the hardware serves 16-byte-per-thread accesses in groups of 8 threads at a
+time, which is why spreading one column of 8 chunks matters. That detail comes from my 
+knowledge, not from this code.
 Step 8: What the swizzle does not change
-The 16 bytes inside a chunk stay together and in order, so a 16-byte cp.async always reads/writes one intact chunk.
+The 16 bytes inside a chunk stay together and in order, so a 16-byte cp.async always
+reads/writes one intact chunk.
 Rows stay rows: only bits 4–6 change, so every element stays in its own 128-byte row.
-The total size stays the same: it’s a permutation within each 1024-byte atom, so cosize is still 24,576.
+The total size stays the same: it’s a permutation within each 1024-byte atom, so cosize is
+still 24,576.
 Which banks are used overall stays the same; only when each row uses which bank changes.
-Step 9: Why you also see Swizzle<3,3,3> elsewhere
-
-That’s the same pattern written for element offsets instead of byte offsets. A half is 2 bytes, so every bit position is one lower:
-
-Form	Unit	Chunk bits	Row bits
-Swizzle<3,4,3>	bytes	4–6	7–9
-Swizzle<3,3,3>	half elements	3–5	6–8
-
-I checked that both give the same physical location for all 512 elements of an atom. This kernel uses the byte form because the layout is composed with smem_ptr[16b] (Step 1).
+Step 9: Why I also see Swizzle<3,3,3> elsewhere
+That’s the same pattern written for element offsets instead of byte offsets. A half is 2 bytes,
+so every bit position is one lower:
+</pre>
+|Form|	Unit|	Chunk bits|	Row bits|
+|:---|:----|:-------------|:---------|
+|Swizzle<3,4,3>|	bytes|	4–6|	7–9|
+|Swizzle<3,3,3>|	half elements|	3–5|	6–8|
+<pre>
+I checked that both give the same physical location for all 512 elements of an atom. This
+kernel uses the byte form because the layout is composed with smem_ptr[16b] (Step 1).
 
 Step 10: Who applies it
-CuTe, in software, when the cp.async copies write shared memory, through the layout sA (with the extra as_position_independent_swizzle_tensor step still open from L89).
+CuTe, in software, when the cp.async copies write shared memory, through the layout sA (with
+the extra as_position_independent_swizzle_tensor step still open from L89).
 The wgmma hardware, when it reads A and B through the descriptor, which names the SW128 mode.
 
-Both must apply the identical pattern; otherwise the MMA would read the wrong elements. That’s why the shared-memory layout must be built from GMMA::Layout_K_SW128_Atom, the CuTe description of exactly the pattern the hardware uses.
-
+Both must apply the identical pattern; otherwise the MMA would read the wrong elements. That’s
+why the shared-memory layout must be built from GMMA::Layout_K_SW128_Atom, the CuTe descriptio
+of exactly the pattern the hardware uses.
 Summary
+Sw<3,4,3> keeps each 16-byte chunk intact (M = 4), permutes the 8 chunks of each 128-byte row
+(B = 3), and uses the row number inside the 1024-byte atom (bits 7–9, reached with a shift of S
+= 3) to choose the permutation: physical chunk = logical chunk XOR (row mod 8). This spreads
+any column of chunks across all 32 banks, so 8 rows can be accessed without bank conflicts.
+It’s the 128-byte swizzle mode that Hopper’s wgmma expects.
 
-Sw<3,4,3> keeps each 16-byte chunk intact (M = 4), permutes the 8 chunks of each 128-byte row (B = 3), and uses the row number inside the 1024-byte atom (bits 7–9, reached with a shift of S = 3) to choose the permutation: physical chunk = logical chunk XOR (row mod 8). This spreads any column of chunks across all 32 banks, so 8 rows can be accessed without bank conflicts. It’s the 128-byte swizzle mode that Hopper’s wgmma expects.
-
-Sw<3,4,3> makes sense here. Each of its three numbers matches something in this kernel, and the analysis turned up one point worth knowing: the swizzle is there mainly for the wgmma reads, not the cp.async writes.
+Sw<3,4,3> makes sense here. Each of its three numbers matches something in this kernel, and the
+analysis turned up one point worth knowing: the swizzle is there mainly for the wgmma reads,
+not the cp.async writes.
 
 1. It’s the format the MMA requires
-
-The MMA at L394 is SM90_64x64x16_F16F16F16_SS<Major::K, Major::K>: A and B are read from shared memory by wgmma, through a descriptor. The hardware accepts only a few shared-memory formats, so the tutorial must pick one of them. It picks K-major, 128-byte swizzle (Layout_K_SW128_Atom, L383–384), which is exactly Sw<3,4,3>.
+The MMA at L394 is SM90_64x64x16_F16F16F16_SS<Major::K, Major::K>: A and B are read from shared
+memory by wgmma, through a descriptor. The hardware accepts only a few shared-memory formats,
+so the tutorial must pick one of them. It picks K-major, 128-byte swizzle (Layout_K_SW128_Atom, 
+L383–384), which is exactly Sw<3,4,3>.
 
 2. Its size matches the tile
-Swizzle part	Requires	In this kernel
-B = 3 → 8 chunks × 16 B = 128-byte rows	each row of the tile is ≥ 128 bytes along the contiguous dimension	bK = 64 halfs × 2 bytes = exactly 128 bytes (L378)
-M = 4 → 16-byte units stay intact	the copy moves whole 16-byte chunks	cp.async with uint128_t = 16 bytes (L387)
-pattern = 1024 bytes	each atom (8 rows) starts on a 1024-byte boundary	atoms are 1024 bytes, and A starts at the beginning of dynamic shared memory
-
+</pre>
+|Swizzle part|	Requires|	In this kernel|
+B = 3 → 8 chunks × 16<br> B = 128-byte rows	|each row of the tile is ≥ 128 bytes<br> along the contiguous dimension	|bK = 64 halfs × 2 bytes = exactly 128 bytes (L378)|
+|M = 4 → 16-byte units<br> stay intact|	the copy moves whole 16-byte chunks|cp.async with uint128_t = 16 bytes (L387)|
+|pattern = 1024 bytes|	each atom (8 rows) starts<br> on a 1024-byte boundary|	atoms are 1024 bytes, and A starts at<br> the beginning of dynamic shared memory|
+<pre>
 The choice depends on bK. With bK = 32 halfs (64-byte rows), a 128-byte swizzle wouldn’t fit, and the 64-byte mode (Swizzle<2,4,3>, Layout_K_SW64_Atom) would be the natural choice. With bK = 64, SW128 is the widest mode that fits, and the widest swizzle spreads accesses most evenly.
 
 3. It’s consistent with the rest of the code
