@@ -3072,11 +3072,77 @@ So read 128 × 128 as rows × columns of the C tile, and 128 threads as a separa
 C tile = 128 × 128 = 16,384 elements   (one CTA's piece)
 CTA    = 128 threads
 
+the whole matrix C has many more than 16,384 elements. With this run’s sizes (M = N = 5120):
+
+matrix C = 5120 × 5120 = 26,214,400 elements
+         = 1,600 tiles × 16,384 elements per tile
+So, level by level:
+</pre>
+|Level|	Count|
+|:----|:-----|
+|matrix C	|26,214,400 elements = 1,600 tiles|
+|one tile (one CTA’s)|	16,384 elements = 128 × 128|
+|one thread’s tCgC|	128 elements|
+<pre>
+And your tCgC sentence is right: some elements of a tile (128 of them), covered by one thread.
+128 × 128 = bM × bN 
+                          │         └─ 128 columns of C (N direction) 
+                         └─────── 128 rows of C (M direction)
+
+the 128 and 128 are elements. bM x bN = 128 elements x 128 elements.
+both 128s count elements, 128 rows × 128 columns.
+that’s bM × bN, the tile size, not M × N. In this code, M and N are the whole matrix (5120 ×
+5120). bM and bN are the tile (128 × 128):	
+</pre>
+|Name|	Value|	Meaning|
+|:---|:------|:--------|
+|M × N|	5120 × 5120	|whole matrix C, in elements|
+|bM × bN|	128 × 128|	one CTA’s tile of C, in elements|
+<pre>
+A thread covers only 128 elements of the tile. It’s the whole CTA (128 threads together) that
+covers one bM × bN tile:
+one tile (bM × bN) = 16,384 elements
+  covered by one CTA = 128 threads
+  each thread covers 16,384 / 128 = 128 elements
+</pre>
+|Who|	Covers|
+|:---|:--------|
+|one CTA (128 threads)|	one whole tile, 16,384 elements|
+|one thread	128 |elements of that tile (its tCgC)|
+<pre>
+It needs 128 threads covering entire tile.
+It takes all 128 threads of the CTA, each covering its own 128 elements, to cover the
+entire 128 × 128 tile.
+	
+tCgC need 128 thread covering a tile. In this case M x N = 5120 x 5120. M / 128 = 40.
+orrect. M / bM = 5120 / 128 = 40 tiles along M.
+The same holds along N: N / bN = 5120 / 128 = 40 tiles along N. So:
+40 × 40 = 1,600 tiles = 1,600 CTAs = the grid (dimGrid 40 × 40)
+each thread has its own tCgC. So it’s “the 128 threads’ tCgCs together cover a tile”, rather
+than one tCgC needing 128 threads.
+
+It needs 1600 CTAx covering matrix C.
+Each CTA has 128 threads:
+1,600 CTAs × 128 threads = 204,800 threads cover matrix C
+Checking it in elements:
+204,800 threads × 128 elements per thread = 26,214,400 = 5120 × 5120
+</pre>
+|Level|	Count|	Covers|
+|:----|:-----|:-------|
+|grid|	1,600 CTAs|	all of matrix C|
+|CTA	|128 threads|	one tile (16,384 elements)|
+|thread|	1	|128 elements|
+<pre>
+One thread cover 128 elements, one CTA has 128 threads. We have 1600 CTA (M = 5120/128, N =
+5120/128) 1600 x 128 = 204800 threads. 204800 x 128 = 26214400 elements.
+1 thread       = 128 elements
+1 CTA          = 128 threads
+1,600 CTAs     × 128 threads  = 204,800 threads
+204,800 threads × 128 elements = 26,214,400 = 5120 × 5120 
 
 
 
 	
-
 	
 I would like to know if the following description is correct.
 
