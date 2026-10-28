@@ -2812,8 +2812,269 @@ into an A fragment, or mixed-input GEMMs that convert A in registers.
 No _RR for wgmma. B must always come from shared memory. Hopper (and SM120) still support the 
 register-register mma.sync.
 
-	===============
-If you plan to cite FlashAttention-3 in the write-up, I can find the exact functions where it converts and reshapes the accumulator into the A operand, so you can quote them directly rather than relying on my summary.
+FlashAttention-3, see FlashAttention.md
+
+_RS isn’t generally the better choice. For a plain GEMM like this kernel, where A arrives from
+global memory into shared memory, _SS is normally the right choice. Using _RS there would add a
+shared→register load of A that _SS doesn’t need, which costs instructions and registers.
+
+_RS exists for one situation: when A comes into existence, or is changed, in registers. Then
+_SS would force a detour through shared memory.
+
+_RS isn’t generally the better choice. For a plain GEMM like this kernel, where A arrives from
+global memory into shared memory, _SS is normally the right choice. Using _RS there would add a
+shared→register load of A that _SS doesn’t need, which costs instructions and registers.
+
+_RS exists for one situation: when A comes into existence, or is changed, in registers. Then
+_SS would force a detour through shared memory.
+
+The rule
+</pre>
+|Where A is when the MMA needs it|	Choice|
+|:-------------------------------|:-------|
+|In shared memory, already in<br> its final form (loaded by cp.async / TMA)|	_SS|
+|In registers, because threads<br> computed or modified it|	_RS|
+<pre>
+Case 1: A is computed by the threads (FlashAttention)
+
+In FlashAttention, the second GEMM is O += P·V, where P = softmax(S) is computed by the 
+threads. So P exists only in registers.
+With only _SS, P has to go through shared memory first:
+1. each thread writes its part of P to shared memory (st.shared);
+2. a proxy fence (fence.proxy.async), because wgmma reads shared memory through the async proxy
+and needs to see ordinary stores;
+3. a barrier so the whole warpgroup has finished writing;
+4. then the _SS wgmma reads P back.
+
+That costs shared-memory space for a P tile, shared-memory bandwidth for the write and read,
+and synchronization latency in the middle of the loop.
+
+With _RS, P is converted (FP32 → FP16/BF16) and reshaped into the A-fragment layout in 
+registers, then fed directly. None of the four steps is needed.
+
+So FlashAttention-3 uses both. Its first GEMM, S = Q·Kᵀ, has Q and K loaded into shared memory,
+so it’s _SS. Its second GEMM, P·V, is _RS. I’m confident of that split, but haven’t pointed to
+the exact FA3 source lines, so treat it as something to confirm when you return to 
+FlashAttention.
+
+Case 2: A must be transformed after loading (mixed-input GEMM)
+
+Example: weights are stored as int4/int8 to save memory bandwidth, but the MMA runs in FP16. 
+A is loaded into shared memory in its compact form, then threads load it into registers,
+convert or dequantize it (possibly multiplying by scales), and feed it as _RS.
+
+With only _SS, the converted A would have to be written back to shared memory, with the same 
+fence and barrier, before the MMA. That’s the same detour as Case 1.
+
+What _RS costs
+• Registers: each thread holds part of A, unlike _SS, whose A thread stride is 0 (the
+print_layouts output). That competes with the accumulator for registers.
+• Layout constraint: the A fragment in registers must match the layout wgmma expects (K-major).
+That’s why FlashAttention-3 has to reshape its accumulator.
+• Register hazards: wgmma is asynchronous, so the registers holding A must not be overwritten
+until the wgmma that reads them has finished (warpgroup_wait). The PTX ISA also requires
+wgmma.fence before a wgmma that reads registers written earlier.
+In one sentence
+_RS exists so that an A operand produced or modified in registers can go straight into the
+Tensor Cores without a shared-memory round trip (store, fence, barrier, reload); when A is 
+already in shared memory in its final form, as in wgmma_sm90.cu, _SS is the usual choice.
+
+Whether _RS actually wins in a given kernel is a measurement question. On the H100, I would
+compare the two versions in ncu: shared-memory traffic, stall reasons, and achieved Tensor Core
+throughput.
+
+Why every round of this kernel is _SS
+
+Each of the 64 k-iterations needs a new A tile: the next 128 × 64 slice along K, which comes
+from global memory. The copy path (L87–95, cp.async) puts it into shared memory, so the MMA 
+reads it from there:
+
+round k:  global A[:, k-slice] ──cp.async──► smem sA[stage] ──_SS──► Tensor Cores
+
+The A of round k is never in registers. Nothing from round k−1 can serve as the A of round k,
+because round k needs different data.
+
+What does carry over in registers: the accumulator C
+
+I think this is where the confusion comes from. Across rounds, the accumulator tCrC (L136)
+stays in registers:
+
+round 0:  tCrC  = A0·B0
+round 1:  tCrC += A1·B1
+...
+round 63: tCrC += A63·B63
+
+That happens in both _SS and _RS. In both variants, D/C is always in registers. The letters
+SS/RS describe only A and B, not C. So “the result stays in registers after round 1” doesn’t
+make round 2 an _RS case. The result is C, not the next round’s A.
+
+Where “first _SS, then _RS” is true: two different GEMMs in each iteration
+
+In FlashAttention the order holds, but within each iteration, for two different GEMMs, not
+across rounds of one GEMM:
+
+each iteration j:
+  GEMM 1:  S  = Q · Kjᵀ     Q, Kj in smem       → _SS
+           P  = softmax(S)  computed in registers
+  GEMM 2:  O += P · Vj      P in registers      → _RS
+
+GEMM 1’s output (after softmax) becomes GEMM 2’s A. That’s the register-to-A handoff _RS exists
+for. In the next iteration, j+1, GEMM 1 is _SS again, because it needs new K data from memory.
+
+A practical point
+The atom is part of the TiledMMA type (L394, SM90_64x64x16_F16F16F16_SS), so it’s fixed at
+compile time. A kernel that uses both, like FlashAttention, declares two TiledMMAs, one per 
+GEMM. It doesn’t switch one TiledMMA between rounds.
+
+Summary: the letters follow where A is for that GEMM. In this kernel A always comes from shared
+memory, so it’s _SS in all 64 rounds. _RS comes in only when another computation leaves A in 
+registers, as with FlashAttention’s P.
+
+Reading the name, letter by letter
+t  C  r  A
+│  │  │  └─ which matrix: A, B or C
+│  │  └──── which memory: g = global, s = shared, r = register
+│  └─────── which partitioning pattern: A = A-copy, B = B-copy, C = MMA
+└────────── "this thread's" partition
+
+</pre>
+|Name|	Line|	Reading|
+|:---|:-----|:---------|
+|tAgA|	L88|	this thread’s part of global A, by the A-copy pattern|
+|tAsA|	L89	|this thread’s part of shared A, by the A-copy pattern|
+|tCsA|	L128|	shared A, by the MMA pattern|
+|tCgC|	L130|	this thread’s part of global C, by the MMA pattern|
+|tCrA|	L133|	register fragment of A, by the MMA pattern|
+|tCrB|	L134|	register fragment of B, by the MMA pattern|
+|tCrC|	L136|	register fragment of C, by the MMA pattern|
+<pre>
+
+some elements which is a port of tile, it is assigned to a specific thread
+some elements, a part of the tile, assigned to one specific thread. That’s a thread’s partition.
+Two caveats from this kernel:
+For tAgA, the part repeats across tiles. The thread has the same position in each of the 64 
+k-tiles, not just one tile.
+For tCsA / tCsB (the _SS MMA), the “part” is the whole tile. Every thread gets the same whole
+tile, because the thread stride is 0.
+	
+The letter C comes from matrix C. The MMA’s thread layout is the layout of the threads that
+produce C. In CuTe’s earlier tutorial sgemm_1.cu, tC is literally a variable: the thread layout
+for computing C, which is then used to partition sA, sB and gC.
+But the tensor isn’t necessarily matrix C. The last letter tells you which matrix it is: tCsA
+is A, tCsB is B, tCgC / tCrC are C.	
+Some elements, a part of a tile, are assigned to a specific thread: that’s the thread’s
+partition. tC means “partitioned by the MMA’s thread layout”, called C because that is the
+layout of the threads that produce matrix C. The last letter says which matrix the tensor holds.
+tCrA, tCrB and tCrC are the MMA operand fragments. All three are partitioned by the MMA (tC)
+and live in registers (r). But they hold very different things in this kernel:
+</pre>
+|Tensor|	Made by (around L133–136)|	Holds|	Shape|
+|:-----|:----------------------------|:------|:------|
+|tCrA|	thr_mma.make_fragment_A(tCsA)|	descriptors pointing into sA|	(MMA, MMA_M, MMA_K, PIPE)|
+|tCrB|	thr_mma.make_fragment_B(tCsB)|	descriptors pointing into sB|	(MMA, MMA_N, MMA_K, PIPE)|
+|tCrC|	thr_mma.make_fragment_C(tCgC)|	the thread’s accumulator values|	(MMA, MMA_M, MMA_N)|
+<pre>
+tCrA and tCrB: descriptors, not data
+Because the atom is _SS (L394), A and B stay in shared memory. A descriptor is a 64-bit value
+that tells wgmma where an operand is and how it’s laid out. It encodes:
+• the start address in shared memory,
+• the leading and stride byte offsets,
+• the swizzle mode (128 B here, matching Sw<3,4,3>).
+tCrA holds one descriptor per atom position per stage:
+MMA_M = 128/64 = 2    (atoms along M)
+MMA_K = 64/16  = 4    (atoms along K)
+PIPE  = 3             (stages)
+→ 2 × 4 × 3 = 24 descriptors
+
+tCrB works the same way, with MMA_N = 128/64 = 2.
+
+I expect the MMA mode to have size 1, since one descriptor covers the atom’s whole 64 × 16
+block, so the shape would be (1, 2, 4, 3). I haven’t printed it, so confirm with print(tCrA).
+Because of the stride-0 thread mode, every thread holds the same descriptors.
+tCrC: real data
+tCrC is where the results are summed. From LayoutC_TV:
+(MMA, MMA_M, MMA_N) = (32, 2, 2) → 128 values per thread
+
+The element type is FP16 (F16F16F16: D, A and B are all half). That’s 128 halfs per thread, 
+which I’d expect to be packed two per 32-bit register, so about 64 registers. Check that
+against ptxas -v or the SASS.
+
+How the three are used
+before the loop:  tCrC is zeroed (clear)
+main loop:        gemm(mma, tCrA(_,_,k,stage), tCrB(_,_,k,stage), tCrC)
+                    → wgmma reads A,B from smem via descriptors
+                    → adds into tCrC (registers)
+epilogue (L257):  axpby(alpha, tCrC, beta, tCgC) → writes to global C
+
+tCgC (L130) is passed to make_fragment_C only to give it the shape. tCrC is a fresh register
+tensor of that shape, not a view of global memory.
+
+• Which tile: the CTA’s 128 × 128 tile of C, gC (from local_tile, L71–74).
+• How many and where: 128 elements per thread, scattered (pairs along N, following LayoutC_TV).
+Each element of the tile belongs to exactly one thread.
+• What it is: a view of global memory, partitioned by the MMA pattern (tC). No data is copied.
+It’s used only at the end, as the destination of the epilogue (L257).
+tCgC: some elements of the CTA’s C tile (gC, in global memory), assigned to a specific thread
+by the MMA pattern. It’s a view, 128 elements per thread, and is written once, in the epilogue.
+
+From a thread’s side: each thread gets some elements of the tile, 128 of them.
+From an element’s side: each element of the tile goes to exactly one thread. No element is
+skipped and none is shared. 
+
+The numbers show they fit together:
+128 threads × 128 elements per thread = 16,384
+tile 128 × 128                        = 16,384
+
+Every element is covered once. The tile is cut into 128 non-overlapping pieces, one per thread.
+For tCsA (_SS), each element belongs to all 128 threads, because of the stride-0 thread mode.
+
+tCgC: some elements, total 128 elements that is covered by one thread.
+Each thread’s tCgC covers 128 elements of the CTA’s C tile in global memory.
+tCgC: 128 elements of the CTA’s 128 × 128 C tile (global memory), covered by one specific
+thread. The 128 threads’ pieces don’t overlap, so together they cover the whole tile.
+
+A CTA is a group of threads, not a tile. Here it’s 128 threads, one warpgroup (the CUDA “thread
+block”).
+The 128 × 128 is the C tile assigned to the CTA, the piece of C this CTA computes:
+CTA  = 128 threads                (who does the work)
+tile = 128 × 128 elements of C    (the work it's given: bM × bN)
+The grid has 40 × 40 = 1,600 CTAs, and each one gets its own C tile (5120 / 128 = 40 along M
+and along N).
+
+To compute that tile, the CTA works through 64 k-tiles of A (128 × 64 each) and B (128 × 64
+each).
+
+A CTA is one array of 128 threads, indexed by threadIdx.x from 0 to 127.
+Here’s how the pieces fit together:
+
+grid:     1,600 CTAs
+CTA:      one array of 128 threads    → gets one 128 × 128 C tile
+thread:   one of the 128 (threadIdx.x) → gets 128 elements of that tile (tCgC)
+
+So “the CTA’s tile” means “the tile assigned to this CTA”, not “the CTA is a tile”.
+
+128 × 128 = bM × bN
+             │     └─ 128 columns of C (N direction)
+             └─────── 128 rows of C    (M direction)
+In this kernel, three different numbers all happen to be 128:
+</pre>
+|128|	Meaning|	Source|
+|:--|:---------|:---------|
+|bM|	tile rows|	L360-ish bM = Int<128><br> in gemm_tn|
+|bN|	tile columns|	bN = Int<128>|
+|threads|	CTA size, one warpgroup|	dimBlock(size(mma)) = 128|
+|elements per thread|	16,384 / 128 threads|	follows from the other three|
+<pre>
+That’s actually four 128s, and it’s a coincidence of this configuration. If bN were 256, 
+the tile would be 128 × 256 with still 128 threads, and each thread would cover 256 elements.
+So read 128 × 128 as rows × columns of the C tile, and 128 threads as a separate number.
+
+C tile = 128 × 128 = 16,384 elements   (one CTA's piece)
+CTA    = 128 threads
+
+
+
+
 	
 
 	
