@@ -2118,7 +2118,8 @@ r = 3 = 0 1 1
 result = 1 1 0 = 6
 Every other row is built the same way, with its own r.
 
-Each column (one logical chunk across the 8 rows) now lands on 8 different physical chunks. For logical chunk 7:
+Each column (one logical chunk across the 8 rows) now lands on 8 different physical chunks. 
+For logical chunk 7:
 </pre>
 |Row|	Physical chunk|	First bank before swizzle|	First bank after|
 |:--|:----------------|:-------------------------|:-----------------|
@@ -2131,6 +2132,33 @@ Each column (one logical chunk across the 8 rows) now lands on 8 different physi
 |6|	1|	28|	4|
 |7|	0|	28|	0|
 <pre>
+The table follows logical chunk 7 (the last 16 bytes of each row) through all 8 rows of the
+atom. It shows which banks that chunk uses without the swizzle and with it. Here’s where each
+column comes from.
+Column 1: Row
+The atom row r, 0–7.
+Column 2: Physical chunk = 7 XOR r
+This is column 7 of the XOR table (logical chunk c = 7 = 111):
+</pre>
+|Row r|	r binary|	111 XOR r|	Physical chunk|
+|:----|:-------|:------------|:---------------|
+|0|	000|	111|	7|
+|1|	001|	110|	6|
+|2|	010|	101|	5|
+|3	|011|	100|	4|
+<pre>
+Column 3: First bank before the swizzle
+Without the swizzle, the chunk stays at logical chunk 7. Its address is:
+address = 128·r + 16·7 = 128·r + 112
+Its first bank, using bank = (address / 4) mod 32:
+(128·r + 112) / 4 = 32·r + 28
+(32·r + 28) mod 32 = 28          ← 32·r is a multiple of 32, so it drops out
+
+
+
+
+
+	
 Before: all 8 rows start at bank 28. After: they start at banks 0, 4, 8, …, 28. Each chunk occupies 4 banks, so the 8 chunks together cover all 32 banks exactly once. Reading one chunk column across 8 rows no longer conflicts.
 
 As far as I know, the hardware serves 16-byte-per-thread accesses in groups of 8 threads at a time, which is why spreading one column of 8 chunks matters. That detail comes from my knowledge, not from this code.
