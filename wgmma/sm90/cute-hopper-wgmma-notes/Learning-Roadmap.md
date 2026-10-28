@@ -2284,111 +2284,122 @@ B = 3 → 8 chunks × 16<br> B = 128-byte rows	|each row of the tile is ≥ 128 
 |M = 4 → 16-byte units<br> stay intact|	the copy moves whole 16-byte chunks|cp.async with uint128_t = 16 bytes (L387)|
 |pattern = 1024 bytes|	each atom (8 rows) starts<br> on a 1024-byte boundary|	atoms are 1024 bytes, and A starts at<br> the beginning of dynamic shared memory|
 <pre>
-The choice depends on bK. With bK = 32 halfs (64-byte rows), a 128-byte swizzle wouldn’t fit, and the 64-byte mode (Swizzle<2,4,3>, Layout_K_SW64_Atom) would be the natural choice. With bK = 64, SW128 is the widest mode that fits, and the widest swizzle spreads accesses most evenly.
+The choice depends on bK. With bK = 32 halfs (64-byte rows), a 128-byte swizzle wouldn’t fit,
+and the 64-byte mode (Swizzle<2,4,3>, Layout_K_SW64_Atom) would be the natural choice. With bK
+= 64, SW128 is the widest mode that fits, and the widest swizzle spreads accesses most evenly.
 
 3. It’s consistent with the rest of the code
 The atom (Layout_K_…) and the MMA (Major::K) agree that K is contiguous.
-The NT version is consistent too: Layout_MN_SW128_Atom with Major::MN (L291, L302), where the 128-byte rows run along M (64 M elements).
+The NT version is consistent too: Layout_MN_SW128_Atom with Major::MN (L291, L302), where the
+128-byte rows run along M (64 M elements).
 4. The nuance: the cp.async writes don’t need it
-
-I checked the bank usage of the TN copy writes (each group of 8 threads writes at the same time):
-
-Threads	Banks used, no swizzle	Banks used, with Sw<3,4,3>
-0 – 7	32	32
-8 – 15	32	32
-16 – 23	32	32
-24 – 31	32	32
-
-All 32 banks either way. The copy plan already has 8 threads write one complete 128-byte row together (thread t writes chunk t mod 8 of row t/8), and a complete row always covers all 32 banks. The swizzle only permutes chunks within a row, so it can’t make this better or worse.
-
-So the swizzle’s job in this kernel is on the read side: wgmma reads the same chunk positions across 8 rows, the column access from the earlier explanation, which would hit the same banks 8 times without the swizzle. How exactly the hardware reads isn’t documented in detail, so whether those reads end up fully conflict-free can only be confirmed with ncu on an H100.
-
+I checked the bank usage of the TN copy writes (each group of 8 threads writes at the 
+same time):
+</pre>
+|Threads|	Banks used, no swizzle|	Banks used, with Sw<3,4,3>|
+|:------|:------------------------|:--------------------------|
+|0 – 7|	32|	32|
+|8 – 15|	32|	32|
+|16 – 23|	32|	32|
+|24 – 31|	32|	32|
+<pre>
+All 32 banks either way. The copy plan already has 8 threads write one complete 128-byte row
+together (thread t writes chunk t mod 8 of row t/8), and a complete row always covers all 32
+banks. The swizzle only permutes chunks within a row, so it can’t make this better or worse.
+	
+So the swizzle’s job in this kernel is on the read side: wgmma reads the same chunk positions
+across 8 rows, the column access from the earlier explanation, which would hit the same banks 8 
+times without the swizzle. How exactly the hardware reads isn’t documented in detail, so 
+whether those reads end up fully conflict-free can only be confirmed with ncu on an H100.
 Summary
+Sw<3,4,3> fits this kernel: it’s the 128-byte K-major format wgmma requires, it matches bK = 64
+halfs = 128-byte rows and the 16-byte cp.async unit, and it agrees with Major::K in the MMA.
+The cp.async writes are conflict-free with or without it (8 threads write a whole row); its
+purpose is the wgmma reads across rows, which can be verified with ncu on Hopper hardware.
 
-Sw<3,4,3> fits this kernel: it’s the 128-byte K-major format wgmma requires, it matches bK = 64 halfs = 128-byte rows and the 16-byte cp.async unit, and it agrees with Major::K in the MMA. The cp.async writes are conflict-free with or without it (8 threads write a whole row); its purpose is the wgmma reads across rows, which can be verified with ncu on Hopper hardware.
-
-It is because we have Layout_K_SW128_Atom in wgmma_sm90.cu, thus we have Sw<3,4,3>
-The swizzle comes directly from the atom the code chooses. The chain, with the source of each step:
+We have Layout_K_SW128_Atom in wgmma_sm90.cu, thus we have Sw<3,4,3>
+The swizzle comes directly from the atom the code chooses. The chain, with the source of eac
+step:
 
 L383  tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, …)      ← wgmma_sm90.cu: the choice
             │
             ▼
 mma_traits_sm90_gmma.hpp, line 84 (your grep output):
       Layout_K_SW128_Atom_Bits = ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag, Layout<…>>
-            │                                   └──── the swizzle is part of the atom's definition
+            │                                   └──── the swizzle is part of the 
+		  atom's definition
             ▼
 tile_to_shape repeats the atom but keeps its swizzle unchanged
             │
             ▼
 build log / print_layouts:  Sw<3,4,3> o smem_ptr[16b] o ((_8,_16),(_64,_1),(_1,_3)):…
 
-So the direction is: the tutorial chooses Layout_K_SW128_Atom, and Sw<3,4,3> comes with it. The swizzle isn’t specified anywhere else in the file.
+So the direction is: the tutorial chooses Layout_K_SW128_Atom, and Sw<3,4,3> comes with it. 
+The swizzle isn’t specified anywhere else in the file.
 
 Two related points:
 
-The NT kernel uses a different atom with the same swizzle. Layout_MN_SW128_Atom (L291) also carries Sw<3,4,3>; your print_layouts output shows it for sA_nt. Only the arrangement of the rows differs (M-contiguous instead of K-contiguous).
-Choosing a different atom would change the swizzle. For example, Layout_K_SW64_Atom would bring Swizzle<2,4,3> (only 4 chunks permuted, for 64-byte rows), and Layout_K_INTER_Atom would bring Swizzle<0,4,3>, meaning no swizzle at all.
+The NT kernel uses a different atom with the same swizzle. Layout_MN_SW128_Atom (L291) also
+carries Sw<3,4,3>; the print_layouts output shows it for sA_nt. Only the arrangement of the
+rows differs (M-contiguous instead of K-contiguous).
+Choosing a different atom would change the swizzle. For example, Layout_K_SW64_Atom would bring
+Swizzle<2,4,3> (only 4 chunks permuted, for 64-byte rows), and Layout_K_INTER_Atom would bring
+Swizzle<0,4,3>, meaning no swizzle at all.
 
-In the snippet from the previous post, it says:
-pattern = 1024 bytes    each atom (8 rows) starts on a 1024-byte boundary    atoms are 1024 bytes, and A starts at the beginning of dynamic shared memory
-
+pattern = 1024 bytes    each atom (8 rows) starts on a 1024-byte boundary    atoms are 1024
+bytes, and A starts at the beginning of dynamic shared memory
 Why do we know the pattern = 1024?
 
 Untangling which bits a bit-swizzle operation affects.
-
-Because the swizzle only uses address bits 0 to 9, and 2¹⁰ = 1024. Here’s the reasoning step by step.
-
+Because the swizzle only uses address bits 0 to 9, and 2¹⁰ = 1024. Here’s the reasoning step
+by step.
 Step 1: Which bits the swizzle touches
-
 From the definition of Swizzle<3,4,3>:
-
 reads  bits 7, 8, 9    (B = 3 bits starting at M + S = 4 + 3 = 7)
 changes bits 4, 5, 6   (B = 3 bits starting at M = 4)
 keeps  bits 0 – 3      (below M)
-
 The highest bit involved is bit 9. Bits 10 and above are never read and never changed.
-
 Step 2: Why that makes it repeat every 1024 bytes
-
-Adding a multiple of 1024 (= 2¹⁰) to an address changes only bits 10 and above. Bits 0–9 stay identical, so the swizzle does exactly the same thing to them.
+Adding a multiple of 1024 (= 2¹⁰) to an address changes only bits 10 and above. Bits 0–9 stay
+identical, so the swizzle does exactly the same thing to them.
 
 Example, using byte 418 from before:
-Address	Bits 9–7 (row)	Bits 6–4 (chunk)	After swizzle
-418	011	010	402 (chunk 001)
-418 + 1024 = 1442	011	010	1426 = 402 + 1024 (chunk 001)
-
-Same row bits, same chunk bits, same result, just shifted by 1024. So the pattern repeats every 1024 bytes.
-
+</pre>
+|Address|	Bits 9–7 (row)|	Bits 6–4 (chunk)|	After swizzle|
+|:------|:----------------|:----------------|:---------------|
+|418|	011|	010|	402 (chunk 001)|
+|418 + 1024 = 1442|	011	|010|	1426 = 402 + 1024 (chunk 001)|
+<pre>
+Same row bits, same chunk bits, same result, just shifted by 1024. So the pattern repeats 
+every 1024 bytes.
 The general formula is:
 
 pattern size = 2^(M + S + B) = 2^(4 + 3 + 3) = 2^10 = 1024 bytes
 Step 3: The atom is built to exactly that size
-
 The atom is 8 rows × 128 bytes = 1024 bytes, not by coincidence:
-
 128-byte rows → 8 chunks of 16 bytes → bits 4–6 (B = 3 chunk bits);
 8 rows → bits 7–9 (3 row bits).
-
 So one atom covers exactly one full repetition of the pattern.
-
 Step 4: Why the starting address must be a multiple of 1024
+The swizzle reads bits 7–9 of the actual address and assumes they’re the row number within an
+atom. That’s only true if the atom starts at a multiple of 1024.
 
-The swizzle reads bits 7–9 of the actual address and assumes they’re the row number within an atom. That’s only true if the atom starts at a multiple of 1024.
+If the buffer started at byte 128 instead, row 0 of the atom would have address bits 7–9 = 001,
+so the swizzle would treat it as row 1 and permute it with the wrong pattern. CuTe’s writes and
+the hardware’s reads could then disagree, and the GEMM would compute wrong results.
 
-If the buffer started at byte 128 instead, row 0 of the atom would have address bits 7–9 = 001, so the swizzle would treat it as row 1 and permute it with the wrong pattern. CuTe’s writes and the hardware’s reads could then disagree, and the GEMM would compute wrong results.
-
-In this kernel the condition holds because, as discussed for SharedStorage, A starts at the beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48 × 1024) puts B on a 1024-byte boundary too.
+In this kernel the condition holds because, as discussed for SharedStorage, A starts at the
+beginning of the dynamic shared memory, and A’s size (49,152 bytes = 48 × 1024) puts B on a
+1024-byte boundary too.
 Bit 9 is the highest of the three bits the swizzle reads (7, 8, 9).
-
 In terms of the template parameters:
-
 lowest read bit  = M + S         = 4 + 3     = 7
 highest read bit = M + S + B − 1 = 4 + 3 + 3 − 1 = 9
-
-So bits 0 through 9 are involved, 10 bits in total, and 2¹⁰ = 1024 is the length of the repeating pattern.
+So bits 0 through 9 are involved, 10 bits in total, and 2¹⁰ = 1024 is the length of the
+repeating pattern.
 010 XOR 011 = 001, which is 1. 101 = 5 is the sum, 2 + 3, not the XOR.
-
-XOR compares the bits one position at a time: the result is 1 where the two bits differ, and 0 where they’re the same:
+XOR compares the bits one position at a time: the result is 1 where the two bits differ, and 0
+where they’re the same:
 
           bit 2  bit 1  bit 0
   010:      0      1      0
@@ -2396,44 +2407,55 @@ XOR compares the bits one position at a time: the result is 1 where the two bits
   ─────────────────────────────
   XOR:      0      0      1     (same, same, different)   = 001 = 1
 
-Addition is different because it carries: bit 0 is 0 + 1 = 1, but bit 1 is 1 + 1 = 10 (write 0, carry 1 into bit 2), so 010 + 011 = 101 = 5. XOR is like addition without the carries, which is why the two results differ.
+Addition is different because it carries: bit 0 is 0 + 1 = 1, but bit 1 is 1 + 1 = 10 (write 0,
+carry 1 into bit 2), so 010 + 011 = 101 = 5. XOR is like addition without the carries, which is
+why the two results differ.
 
 The XOR table for single bits:
-
 a	b	a XOR b
 0	0	0
 0	1	1
 1	0	1
 1	1	0 (addition would give 10)
 
-You can check against the swizzle table: row 3, logical chunk 2 → physical chunk 1 (row 3 of the table is 3 2 1 0 7 6 5 4, and its entry at position 2 is 1).
-
-The pattern must be identical in both; what can differ is who computes it and what it’s applied to. If the result differed, the GEMM would read the wrong data.
+We can check against the swizzle table: row 3, logical chunk 2 → physical chunk 1 (row 3 of the
+table is 3 2 1 0 7 6 5 4, and its entry at position 2 is 1).
+The pattern must be identical in both; what can differ is who computes it and what it’s applied
+to. If the result differed, the GEMM would read the wrong data.
 
 What must be the same
-
-The XOR pattern itself: physical chunk = logical chunk XOR row, i.e. Sw<3,4,3> / SW128. CuTe writes the data with this pattern, and the hardware reads it back with the same pattern. Any mismatch means wgmma reads the wrong elements and the result is silently wrong.
+The XOR pattern itself: physical chunk = logical chunk XOR row, i.e. Sw<3,4,3> / SW128. CuTe
+writes the data with this pattern, and the hardware reads it back with the same pattern. Any 
+mismatch means wgmma reads the wrong elements and the result is silently wrong.
 
 What differs
-	Software (CuTe, cp.async writes)	Hardware (wgmma reads)
-Who computes the swizzle	the kernel’s own instructions: address arithmetic (XORs, shifts) compiled from the layout	the tensor-core hardware, internally
-How it’s told the pattern	the layout type Sw<3,4,3> o smem_ptr[16b] o …	the SW128 mode field in the matrix descriptor
-What it’s applied to	depends on the tensor form: the offset within the buffer (position-independent form, L89) or the absolute address	as far as I know, the absolute shared-memory address bits
+</pre>
+||Software (CuTe, cp.async writes)|	Hardware (wgmma reads)|
+|:---|:--------------------------|:-----------------------|	
+||Who computes the swizzle|	the kernel’s own instructions: address<br> arithmetic (XORs, shifts)<br> compiled from the layout|	the tensor-core hardware, internally|
+||How it’s told the pattern|	the layout type Sw<3,4,3> o smem_ptr[16b] o …<br>	the SW128 mode field in the matrix descriptor|
+||What it’s applied to|	depends on the tensor form:<br> the offset within the buffer (position-independent form, L89)<br> or the absolute address|	as far as I know, the absolute<br> shared-memory address bits|
+<pre>
 Why both still agree here
-
-They give the same result only if the offset within the buffer and the absolute address have the same bits 7–9 (the row bits). That’s true exactly when the buffer starts at a multiple of 1024 bytes:
-
+They give the same result only if the offset within the buffer and the absolute address have
+the same bits 7–9 (the row bits). That’s true exactly when the buffer starts at a multiple of
+1024 bytes:
 absolute address = buffer start + offset
 buffer start = multiple of 1024   →   bits 0–9 of address = bits 0–9 of offset
                                   →   same row bits, same swizzle
+In this kernel the A and B buffers start on 1024-byte boundaries (as discussed for
+SharedStorage), so the software and hardware swizzles land on the same physical bytes.
 
-In this kernel the A and B buffers start on 1024-byte boundaries (as discussed for SharedStorage), so the software and hardware swizzles land on the same physical bytes.
-
-I’m not fully certain how the hardware handles a buffer that isn’t 1024-aligned. As far as I know, the descriptor has a base-offset field for such cases, but I haven’t verified that against the PTX documentation, and this kernel doesn’t need it.
+I’m not fully certain how the hardware handles a buffer that isn’t 1024-aligned. As far as I
+know, the descriptor has a base-offset field for such cases, but I haven’t verified that
+against the PTX documentation, and this kernel doesn’t need it.
 
 So a precise version of your sentence:
+Software (CuTe) and hardware (wgmma) compute the swizzle separately and in different ways, but
+they must produce the same pattern. They agree here because the shared-memory buffers are
+aligned to 1024 bytes, so the offset CuTe swizzles and the address the hardware swizzles 
+share the same low 10 bits.
 
-Software (CuTe) and hardware (wgmma) compute the swizzle separately and in different ways, but they must produce the same pattern. They agree here because the shared-memory buffers are aligned to 1024 bytes, so the offset CuTe swizzles and the address the hardware swizzles share the same low 10 bits.
 
 How do we get the following table?
 row 0: 0 1 2 3 4 5 6 7 
@@ -2446,11 +2468,11 @@ row 6: 6 7 4 5 2 3 0 1
 row 7: 7 6 5 4 3 2 1 0
 
 Every entry is one XOR: row number XOR column number.
-
 the row r (0 … 7) is the row inside the atom;
 the column position c (0 … 7) is the logical chunk;
 the entry is the physical chunk: r XOR c.
-That rule comes from the swizzle: bits 7–9 of the address (the row) are XORed into bits 4–6 (the chunk), as derived in the Sw<3,4,3> explanation.
+That rule comes from the swizzle: bits 7–9 of the address (the row) are XORed into bits 4–6
+(the chunk), as derived in the Sw<3,4,3> explanation.
 
 Row by row, in binary
 Row 0 (000): XOR with 000 changes nothing:
@@ -2478,68 +2500,82 @@ row 5: 5 4 7 6 1 0 3 2
 row 6: 6 7 4 5 2 3 0 1
 row 7: 7 6 5 4 3 2 1 0     (111 flips every bit: 7−c)
 Two checks you can do by eye
-Each row contains 0 … 7 exactly once: XOR with a fixed r is a permutation, so no two chunks of a row collide.
-Each column contains 0 … 7 exactly once: the same logical chunk lands in a different physical position in every row. That’s the property that removes the bank conflicts.
+Each row contains 0 … 7 exactly once: XOR with a fixed r is a permutation, so no two chunks of
+a row collide.
+Each column contains 0 … 7 exactly once: the same logical chunk lands in a different physical 
+position in every row. That’s the property that removes the bank conflicts.
 How your print_layouts.cu produced it
-The program did the same thing via real addresses. For each row m and logical chunk c, it took the byte address of element (m, 8·c), applied Swizzle<3,4,3>, and printed bits 4–6 of the result:
+The program did the same thing via real addresses. For each row m and logical chunk c, it took
+the byte address of element (m, 8·c), applied Swizzle<3,4,3>, and printed bits 4–6 of the
+result:
 
-cpp
-int byte = 2 * sA_tn.layout_b()(m, 8 * c, 0);   // = 128·m + 16·c
+// = 128·m + 16·c
+int byte = 2 * sA_tn.layout_b()(m, 8 * c, 0);   
 int phys = Swizzle<3,4,3>{}(byte);
-printf("%d ", (phys >> 4) & 7);                 // physical chunk
+// physical chunk
+printf("%d ", (phys >> 4) & 7);      
 (phys >> 4) & 7 extracts bits 4–6, and those bits are exactly m XOR c after the swizzle.
-
-First, a small correction to how the name splits. It’s not “independent_swizzle_tensor” but:
 
 as_  position_independent  swizzle_tensor
  │          │                    └─ a tensor whose layout contains a swizzle (here Sw<3,4,3>)
  │          └─ whose result doesn't depend on the position (address) of the buffer
  └─ "convert to this form"
 
-So: convert sA into a swizzled tensor whose addressing doesn’t depend on where the buffer sits in memory.
+So: convert sA into a swizzled tensor whose addressing doesn’t depend on where the buffer sits
+in memory.
 
 What “position” means here
-
-“Position” is the buffer’s starting address in shared memory. There are two ways to apply a swizzle to an element at some offset inside the buffer:
-
-Form	Swizzle applied to	Result
-Position-independent	the offset inside the buffer	base + swizzle(offset)
-Position-dependent	the absolute address	swizzle(base + offset)
-
-In the first form, the base address only gets added at the end, so the swizzle doesn’t depend on the position. Hence the name.
+“Position” is the buffer’s starting address in shared memory. There are two ways to apply a
+swizzle to an element at some offset inside the buffer:
+ </pre>
+|Form	|Swizzle applied to|	Result|
+|:------|:-----------------|:---------|
+|Position-independent|	the offset inside the buffer|	base + swizzle(offset)|
+|Position-dependent|	the absolute address|	swizzle(base + offset)|
+<pre>
+In the first form, the base address only gets added at the end, so the swizzle doesn’t depend
+on the position. Hence the name.
 
 Concrete example (computed)
-
 Element at offset 418 (row 3, chunk 2, as in the earlier example):
-
-Buffer starts at	Position-independent: base + swizzle(418)	Position-dependent: swizzle(base + 418)
-2048 (multiple of 1024)	2048 + 402 = 2450	swizzle(2466) = 2450 ✓ same
-2176 (not a multiple of 1024)	2176 + 402 = 2578	swizzle(2594) = 2658 ✗ different
-When the buffer is 1024-aligned, both forms give the same address: the base doesn’t change bits 0–9, so the swizzle sees the same row and chunk bits either way.
-When it isn’t aligned, they disagree: adding 128 changed the row bits, so the position-dependent form permutes with a different row’s pattern.
+</pre>
+|Buffer starts at|	Position-independent: <br>base + swizzle(418)|	Position-dependent:<br> swizzle(base + 418)|
+|2048<br> (multiple of 1024)|	2048 + 402 = 2450|	swizzle(2466) = 2450  same|
+|2176<br> (not a multiple of 1024)|	2176 + 402 = 2578|	swizzle(2594) = 2658 different|
+<pre></pre>
+• When the buffer is 1024-aligned, both forms give the same address: the base doesn’t change
+bits 0–9, so the swizzle sees the same row and chunk bits either way.
+• When it isn’t aligned, they disagree: adding 128 changed the row bits, so the
+position-dependent form permutes with a different row’s pattern.
 Connection to “identical pattern in CuTe and wgmma”
-
-This is exactly the requirement you mentioned:
-
+This is exactly the requirement a developer mentioned:
 CuTe’s copy uses the position-independent form (after L89): base + swizzle(offset).
-As far as I know, the wgmma hardware works like the position-dependent form: it swizzles the actual shared-memory address.
+As far as I know, the wgmma hardware works like the position-dependent form: it swizzles the
+actual shared-memory address.
 
-They agree only when the buffer starts at a multiple of 1024 bytes, which this kernel guarantees through its SharedStorage placement, as discussed before. So the function doesn’t make the alignment unnecessary; it relies on it.
+They agree only when the buffer starts at a multiple of 1024 bytes, which this kernel
+guarantees through its SharedStorage placement, as discussed before. So the function doesn’t
+make the alignment unnecessary; it relies on it.
 
-Still open: why the tutorial converts to this form for the copy, but uses plain sA for the MMA side (L128). That depends on CuTe’s internal representation, which we’ll read from the source with your grep output when you’re home.
+Still open: why the tutorial converts to this form for the copy, but uses plain sA for the MMA
+side (L128). That depends on CuTe’s internal representation, which I'll read from the source
+with the grep output.
 
 Position-independent: does not depend on physical address.
 Position-dependent: depend on physical address.
+it’s the swizzle that does or doesn’t depend on the address. The final address always includes
+the buffer’s starting address in both forms:
+</pre>
+|Form|	Swizzle computed from|	Final address|
+|:----|:---------------------|:--------------|
+|Position-independent|	the offset inside the buffer only,<br> not the buffer’s address|	base + swizzle(offset)|
+|Position-dependent|	the full shared-memory address,<br> including the buffer’s start|	swizzle(base + offset)|
+<pre>
+And the key consequence: both give the same result only when the buffer starts at a multiple of
+1024 bytes, which this kernel guarantees.
 
-Yes, correct. One precision: it’s the swizzle that does or doesn’t depend on the address. The final address always includes the buffer’s starting address in both forms:
-
-Form	Swizzle computed from	Final address
-Position-independent	the offset inside the buffer only, not the buffer’s address	base + swizzle(offset)
-Position-dependent	the full shared-memory address, including the buffer’s start	swizzle(base + offset)
-
-And the key consequence: both give the same result only when the buffer starts at a multiple of 1024 bytes, which this kernel guarantees.
-
-The three numbers of Sw<B, M, S> aren’t three bit-fields read left to right. Your diagram puts 4 bits in the middle (6–3) and 3 at the bottom (2–0); the actual split is:
+The three numbers of Sw<B, M, S> aren’t three bit-fields read left to right. Your diagram puts
+4 bits in the middle (6–3) and 3 at the bottom (2–0); the actual split is:
 
 bit:     9   8   7  │  6   5   4  │  3   2   1   0
          └── B=3 ──┘  └── B=3 ──┘  └──── M=4 ────┘
@@ -2556,48 +2592,76 @@ B	3	how many bits in each of the two groups	target 4–6, source 7–9
 S	3	the distance between the groups: the shift	source starts at M + S = 7
 
 So:
-
 M gives the bottom group, 4 bits wide (0–3).
 B gives the width of both the target (4–6) and the source (7–9) groups.
 S isn’t a group of bits at all; it says how far apart the two B-bit groups are.
 
-The operation: take bits 7–9, shift them down by S = 3 onto bits 4–6, and XOR them there. Bits 0–3 and 7–9 come out unchanged.
+The operation: take bits 7–9, shift them down by S = 3 onto bits 4–6, and XOR them there. 
+Bits 0–3 and 7–9 come out unchanged.
 CuTe’s own names for the template parameters are:
 
-cpp
 template <int BBits, int MBase, int SShift = BBits>
 struct Swizzle;
-Letter	CuTe name	Meaning
-B	BBits	number of bits in the mask (the width of each group: 3)
-M	MBase	the base: number of low bits kept unchanged (4)
-S	SShift	the shift: distance between the source and target groups (3)
-
-So M is the base, and B gives the size of the mask (its number of bits). “Mask” isn’t a parameter name itself: the mask (0x380 here) is built from B, M and S together.
+</pre>
+|Letter|	CuTe name|	Meaning|
+|:-----|:------------|:--------|
+|B|	BBits	|number of bits in the mask (the width of each group: 3)|
+|M|	MBase|	the base: number of low bits kept unchanged (4)|
+|S|	SShift|	the shift: distance between the source and target groups (3)|
+<pre>
+So M is the base, and B gives the size of the mask (its number of bits). “Mask” isn’t a
+parameter name itself: the mask (0x380 here) is built from B, M and S together.
 
 The header also has a comment with a bit diagram of exactly this. To check it in your checkout:
 
-bash
 grep -n "BBits\|MBase\|SShift" ../cutlass/include/cute/swizzle.hpp | head -20
 
 Line 127: ThrMMA thr_mma = mma.get_slice(threadIdx.x);
 Line 128: Tensor tCsA = thr_mma.partition_A(sA);
 Line 130: Tensor tCgC = thr_mma.partition_C(gC); 
+	
 L127: mma.get_slice(threadIdx.x)
-
-Correct: get_slice records which thread this is, and thr_mma is the MMA plan specialized to that thread. Like get_slice for the copy, it doesn’t touch any data yet.
-
-One precision: “which matrix” → which parts of A, B and C. As your print_layouts output showed, those parts are very different for A/B and for C (see L128 below).
+get_slice records which thread this is, and thr_mma is the MMA plan specialized to that thread.
+Like get_slice for the copy, it doesn’t touch any data yet.
+One precision: “which matrix” → which parts of A, B and C. As the print_layouts output showed,
+those parts are very different for A/B and for C (see L128 below).
+"which parts of A, B and C": not a block. The CTA’s block was already chosen earlier, at L71–74
+(local_tile with cta_coord). 
+	
+	
+	By “which parts” meant which individual elements inside that block 
+this thread is tied to. For C, those elements are scattered, not a contiguous sub-block.
+For C, you can read this directly from the LayoutC_TV in your print_layouts output:
+((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
+   thread modes            value modes
+The index is into the 64 × 64 atom, column-major (index = m + 64·n). For thread 0, only the
+value strides matter: 64 → next column, 8 → 8 rows down, 512 → 8 columns over. That gives
+thread 0 these 32 (m, n) positions:
+m = 0, 8
+n = 0,1,  8,9,  16,17,  24,25,  32,33,  40,41,  48,49,  56,57
+Those are pairs of neighbours along N, spread across the whole atom. Other threads are shifted:
+thread 1 starts at n = 2 (thread stride 128 = 2 columns), thread 4 at m = 1 (stride 1), thread
+32 at m = 16 (stride 16).
+The CTA tile has 2 × 2 such atoms, so thread 0 owns this same pattern 4 times, which makes its
+128 elements.
+For A and B, the thread stride is 0, so there is no “which part”: every thread is tied to all
+of the A and B tiles.
+So “which parts” means which positions (m, n) within the CTA’s tile. For C each thread gets its
+own scattered set. For A and B every thread gets the whole tile.
 
 L128: thr_mma.partition_A(sA)
-
-The name: C means “partitioned by the MMA”, not “compute”. It follows the same convention as before: t = this thread, C = the MMA partitioning pattern (named after the accumulator C it produces), s = shared memory, A = matrix A. “Compute” is a handy mnemonic, but the convention letter is C because of the MMA’s output matrix, which is also why tCgC ends in C twice.
-
-The “carving”: here, every thread gets the same whole A tile. For a normal MMA, partition_A cuts out each thread’s own piece. But this is an _SS MMA, and your print_layouts output showed:
+The name: C means “partitioned by the MMA”, not “compute”. It follows the same convention as 
+before: t = this thread, C = the MMA partitioning pattern (named after the accumulator C it
+produces), s = shared memory, A = matrix A. “Compute” is a handy mnemonic, but the convention
+letter is C because of the MMA’s output matrix, which is also why tCgC ends in C twice.
+The “carving”: here, every thread gets the same whole A tile. For a normal MMA, partition_A 
+cuts out each thread’s own piece. But this is an _SS MMA, and your print_layouts output showed:
 
 LayoutA_TV: (_128,(_64,_16)):(_0,(_1,_64))
                   └ thread stride 0
 
-The thread mode has stride 0: all 128 threads map to the same 64 × 16 block of A. So tCsA isn’t a per-thread share. Every thread sees the whole shared-memory A tile, arranged for the MMA:
+The thread mode has stride 0: all 128 threads map to the same 64 × 16 block of A. So tCsA isn’t 
+a per-thread share. Every thread sees the whole shared-memory A tile, arranged for the MMA:
 
 tCsA:  (MMA, MMA_M, MMA_K, PIPE)
           │     │      │     └─ 3 stages
@@ -2605,81 +2669,154 @@ tCsA:  (MMA, MMA_M, MMA_K, PIPE)
           │     └─ 128/64 = 2 atoms along M
           └─ one atom's 64 × 16 block of A
 
-That’s what lets L133 (make_fragment_A) turn it into descriptors, one per (MMA_M, MMA_K, stage), which the hardware uses to read A from shared memory directly.
-
+That’s what lets L133 (make_fragment_A) turn it into descriptors, one per (MMA_M, MMA_K, 
+stage), which the hardware uses to read A from shared memory directly.
 L129 (tCsB) does exactly the same for B.
-
 L130: thr_mma.partition_C(gC)
+A view of global C, partitioned by the MMA, used as the destination for the result.
 
-Correct: a view of global C, partitioned by the MMA, used as the destination for the result.
-
-Here the partitioning is a real split among threads, unlike A and B. From LayoutC_TV, each thread owns 32 elements per 64 × 64 atom, and the CTA tile has 2 × 2 atoms:
+Here the partitioning is a real split among threads, unlike A and B. From LayoutC_TV, each
+thread owns 32 elements per 64 × 64 atom, and the CTA tile has 2 × 2 atoms:
 
 tCgC:  (MMA, MMA_M, MMA_N) = (32, 2, 2)   → 128 elements of C per thread
-
 Two steps keep C in its proper places:
-
 the MMA accumulates into tCrC (L136), the same shape but in registers;
-only at the very end does the epilogue write tCrC into tCgC (L257, axpby). During the main loop, global C is never touched.
+only at the very end does the epilogue write tCrC into tCgC (L257, axpby). During the main
+loop, global C is never touched.
 Summary
-Tensor	Line	Per thread	Where
-tCsA	L128	the whole A tile (stride-0 thread mode, _SS)	shared
-tCsB	L129	the whole B tile	shared
-tCgC	L130	its own 128 elements of C	global (written only at the end)
+</pre>
+|Tensor|	Line|	Per thread	Where|
+|tCsA|	L128|	the whole A tile<br> (stride-0 thread mode, _SS)	shared|
+|tCsB|	L129|	the whole B tile	shared|
+|tCgC|	L130|	its own 128 elements of C<br>	global (written only at the end)|
+<pre>
+To see these shapes printed, developer can build them on the host in print_layouts.cu: make a
+tensor with a null shared-memory pointer and sA_tn, then call
+mma_tn.get_slice(0).partition_A(…) and print it. I expect that to work on the host, since I'm
+only computing layouts, but I haven’t tried it.
 
-If you’d like to see these shapes printed, you can build them on the host in print_layouts.cu: make a tensor with a null shared-memory pointer and sA_tn, then call mma_tn.get_slice(0).partition_A(…) and print it. I expect that to work on the host, since we’re only computing layouts, but I haven’t tried it.
-
-The CTA’s block was already chosen earlier, at L71–74 (local_tile with cta_coord). By “which parts” I meant which individual elements inside that block this thread is tied to. For C, those elements are scattered, not a contiguous sub-block.
-
-For C, you can read this directly from the LayoutC_TV in your print_layouts output:
-
-((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
-   thread modes            value modes
-
-The index is into the 64 × 64 atom, column-major (index = m + 64·n). For thread 0, only the value strides matter: 64 → next column, 8 → 8 rows down, 512 → 8 columns over. That gives thread 0 these 32 (m, n) positions:
-
-m = 0, 8
-n = 0,1,  8,9,  16,17,  24,25,  32,33,  40,41,  48,49,  56,57
-
-Those are pairs of neighbours along N, spread across the whole atom. Other threads are shifted: thread 1 starts at n = 2 (thread stride 128 = 2 columns), thread 4 at m = 1 (stride 1), thread 32 at m = 16 (stride 16).
-
-The CTA tile has 2 × 2 such atoms, so thread 0 owns this same pattern 4 times, which makes its 128 elements.
-
-For A and B, the thread stride is 0, so there is no “which part”: every thread is tied to all of the A and B tiles.
-
-So “which parts” means which positions (m, n) within the CTA’s tile. For C each thread gets its own scattered set. For A and B every thread gets the whole tile.
-
+The CTA’s block was already chosen earlier, at L71–74 (local_tile with cta_coord). By “which
+parts” it meant which individual elements inside that block this thread is tied to. For C,
+those elements are scattered, not a contiguous sub-block.
+	
 Variant	A from	B from	D (accumulator)
 _SS	shared memory (descriptor)	shared memory (descriptor)	registers
 _RS	registers	shared memory (descriptor)	registers
 B always comes from shared memory, so there is no _SR or _RR.
-The accumulator C/D is always in registers, in both variants. That’s why tCrC (L136) is a register fragment even though this kernel is _SS.
+The accumulator C/D is always in registers, in both variants. That’s why tCrC (L136) is a
+register fragment even though this kernel is _SS.
 
-This comes from the PTX ISA’s wgmma.mma_async operand rules: A can be a register operand or a matrix descriptor, B must be a descriptor, and D is registers. CuTe mirrors that with its op names in cute/arch/mma_sm90_gmma.hpp.
+This comes from the PTX ISA’s wgmma.mma_async operand rules: A can be a register operand or a
+matrix descriptor, B must be a descriptor, and D is registers. CuTe mirrors that with its op
+names in cute/arch/mma_sm90_gmma.hpp.
 
-What changes with _RS: A then really is split across threads, unlike the stride-0 LayoutA_TV you saw for _SS. Each thread holds its own slice of A in registers, as with C. I also believe the CuTe _RS ops static_assert that A is K-major, since registers can’t be transposed the way a descriptor can. I haven’t checked that line in your copy, so you can confirm it with:
+What changes with _RS: A then really is split across threads, unlike the stride-0 LayoutA_TV
+I saw for _SS. Each thread holds its own slice of A in registers, as with C. I also believe the
+CuTe _RS ops static_assert that A is K-major, since registers can’t be transposed the way a
+descriptor can. I haven’t checked that line in your copy, so you can confirm it with:
 
 grep -n "static_assert" ../cutlass/include/cute/arch/mma_sm90_gmma.hpp | head -20
 
 This kernel uses _SS (L394: SM90_64x64x16_F16F16F16_SS).
 
-1. Calling make_fragment_A / make_fragment_B doesn’t say anything about where A and B come from. Every CuTe MMA kernel calls them, whatever its source path. What they produce depends on the MMA atom’s traits: specifically FrgTypeA / FrgTypeB in MMA_Traits (for Hopper, in cute/atom/mma_traits_sm90_gmma.hpp).
+1. Calling make_fragment_A / make_fragment_B doesn’t say anything about where A and B come 
+from. Every CuTe MMA kernel calls them, whatever its source path. What they produce depends on 
+the MMA atom’s traits: specifically FrgTypeA / FrgTypeB in MMA_Traits (for Hopper, in 
+cute/atom/mma_traits_sm90_gmma.hpp).
 
-_SS (this kernel, L394): FrgTypeA and FrgTypeB are GMMA shared-memory descriptor types. So make_fragment_A(tCsA) (L133) builds a tensor of descriptors, one per (MMA_M, MMA_K, PIPE), not a tensor of A values in registers. Same for B at L134.
-_RS: make_fragment_A builds a real register fragment of A values. B is still a tensor of descriptors.
+_SS (this kernel, L394): FrgTypeA and FrgTypeB are GMMA shared-memory descriptor types. So 
+make_fragment_A(tCsA) (L133) builds a tensor of descriptors, one per (MMA_M, MMA_K, PIPE), not
+a tensor of A values in registers. Same for B at L134.
+_RS: make_fragment_A builds a real register fragment of A values. B is still a tensor of 
+descriptors.
 
-2. There’s no “Register-Register” path for wgmma. As above, B must come from shared memory. The only choices are _SS and _RS, and this kernel is _SS.
+2. There’s no “Register-Register” path for wgmma. As above, B must come from shared memory. The
+only choices are _SS and _RS, and this kernel is _SS.
 
-A correct version of the description:
+make_fragment_A / make_fragment_B build the MMA’s operand fragments in the form the atom
+requires. For this kernel’s _SS atom, those are shared-memory descriptors. Only the accumulator
+fragment from make_fragment_C (L136) is register data.
 
-make_fragment_A / make_fragment_B build the MMA’s operand fragments in the form the atom requires. For this kernel’s _SS atom, those are shared-memory descriptors. Only the accumulator fragment from make_fragment_C (L136) is register data.
-
-To confirm in your copy:
+To confirm in the copy:
 
 grep -n "FrgType\|smem_desc" ../cutlass/include/cute/atom/mma_traits_sm90_gmma.hpp | head -30
 
-You should see the _SS traits using a smem_desc type for both A and B, and the _RS traits using it only for B. I haven’t seen your exact copy, so check that the names match.
+Developer should see the _SS traits using a smem_desc type for both A and B, and the _RS traits
+using it only for B. I haven’t seen the exact copy, so check that the names match.
 
+1. _SS
+The math, D = A·B + C, with A and B read from shared memory through descriptors and C/D in
+registers.
+On Ampere, A and B have to be loaded from shared memory into registers (typically with 
+ldmatrix) before mma.sync. _SS skips that step.
+_SS is the normal choice for a plain GEMM. This kernel uses it (L394).
+Overstated or unsupported:
+• “Waste massive amounts of power and clock cycles”: that’s not a measured claim. The concrete
+benefit is fewer instructions issued (no ldmatrix, no per-thread A/B fragments), and the MMA
+runs asynchronously while the warpgroup does other work.
+• “Frees up hundreds of registers per SM”: the unit is wrong. Registers are allocated per
+thread, and the SM has 64K 32-bit registers in total. _SS frees the per-thread registers that
+would have held A/B fragments. I can’t give you a number without checking SASS, and you can 
+verify the effect yourself with ptxas -v.
+• “Allows you to run far more threads simultaneously”: in practice, the freed registers usually
+go to a larger accumulator tile per thread, not to more resident threads. Whether occupancy
+goes up depends on the kernel. That’s an ncu question, not a general rule.
+• “Hopper’s superpower” is marketing wording. I’d drop it.
+
+2. _RS
+A comes from registers, B from shared memory, and the accumulator is in registers.
+The motivating case is back-to-back GEMMs. FlashAttention-3’s second GEMM (P·V) uses P from
+registers as operand A, so it avoids a round trip through shared memory.
+
+Wrong or overstated:
+• “Instantly relabel [the accumulator] as Matrix A”: it isn’t instant. The GEMM-1 accumulator
+is usually FP32 and must first be converted to the A operand type (FP16/BF16). Then its
+register layout is reshaped from the C-fragment form to the A-fragment form. For FP8 an extra
+register permutation is needed as well. FlashAttention-3 has explicit code for these steps. 
+The conversion happens in registers, so there’s still no shared-memory round trip, but there is
+work.
+• “Transformer MLPs”: MLP GEMMs are normally separate kernels, not GEMMs chained in registers.
+FlashAttention is the solid example. I’d remove MLP unless you have a specific fused kernel to 
+point to.
+• “NVIDIA spent millions of dollars in R&D to keep the _RS circuit”: unsupported. Remove it.
+Another real use worth knowing: mixed-input GEMM, where A is loaded in a compact type (e.g.,
+int4 weights), converted or scaled in registers, and then fed as _RS. That’s another reason an
+A-from-registers path is useful.
+	
+3. “The Death of _RR”
+Ampere’s mma.sync takes A and B from registers. CuTe doesn’t name the SM80 atoms _RR, though; they’re named like SM80_16x8x16_F16F16F16F16_TN.
+wgmma itself has no register-register form.
+
+Wrong:
+• “Complete removal of _RR in Hopper”: Hopper still supports mma.sync. sm_90 runs the Ampere-
+style warp-level MMA. What Hopper added was wgmma, a new asynchronous warpgroup instruction
+alongside it. Your own SM120 GPUs also use mma.sync, so the register-register path is very
+much alive on current hardware.
+• “Which is exactly why CuTe was invented”: no. CuTe arrived with CUTLASS 3.0, at about the
+same time as Hopper support, but it’s a general layout and tensor algebra. It’s used for 
+SM70/SM80 MMA atoms too, not just Hopper shared-memory layouts. The timing overlaps, but this
+causal claim isn’t supported.
+• “Mathematically foolproof”: overstated. CuTe’s static shapes and static_asserts catch many
+mistakes at compile time. Your C7510 investigation came from those asserts. But you can still
+build a wrong layout that compiles.
+	
+Corrected short version
+_SS: A and B are read by the Tensor Cores directly from shared memory through descriptors; the
+accumulator is in registers. This removes the shared→register load step Ampere needs before 
+mma.sync, and it’s the usual choice for a plain GEMM.
+
+_RS: A comes from registers, B from shared memory. It’s used when A is produced or modified in
+registers: for example FlashAttention-3’s P·V, where the FP32 scores are converted and reshaped
+into an A fragment, or mixed-input GEMMs that convert A in registers.
+
+No _RR for wgmma. B must always come from shared memory. Hopper (and SM120) still support the 
+register-register mma.sync.
+
+	===============
+If you plan to cite FlashAttention-3 in the write-up, I can find the exact functions where it converts and reshapes the accumulator into the A operand, so you can quote them directly rather than relying on my summary.
+	
+
+	
 I would like to know if the following description is correct.
 
 The Golden Path: _SS (Shared-Shared)
