@@ -2629,7 +2629,7 @@ those parts are very different for A/B and for C (see L128 below).
 (local_tile with cta_coord). 
 	
 	
-	By “which parts” meant which individual elements inside that block 
+By “which parts” meant which individual elements inside that block 
 this thread is tied to. For C, those elements are scattered, not a contiguous sub-block.
 For C, you can read this directly from the LayoutC_TV in your print_layouts output:
 ((_4,_8,_4),(_2,_2,_8)):((_128,_1,_16),(_64,_8,_512))
@@ -3086,8 +3086,8 @@ So, level by level:
 <pre>
 And your tCgC sentence is right: some elements of a tile (128 of them), covered by one thread.
 128 × 128 = bM × bN 
-                          │         └─ 128 columns of C (N direction) 
-                         └─────── 128 rows of C (M direction)
+            │    └─ 128 columns of C (N direction) 
+            └─────── 128 rows of C (M direction)
 
 the 128 and 128 are elements. bM x bN = 128 elements x 128 elements.
 both 128s count elements, 128 rows × 128 columns.
@@ -3256,21 +3256,6 @@ Describe all three in one consistent way, with numbers you can check:
 |tAgA|	64 elements of an A tile (128 × 64)|64, one per<br> k-iteration|40 CTAs with the<br> same M position|
 |tBgB|	64 elements of a B tile (128 × 64)|	64, one per<br> k-iteration|40 CTAs with the<br> same N position|
 <pre>
-Line 133: Tensor tCrA = thr_mma.make_fragment_A(tCsA)
- tCrA is a Tensor view, pointer + layout. CuTe allocates an array of registers perfectly sized and shaped to hold this thread's inputs for Matrix A.
- thr_mma: Using a thread tensor math calculation object. 
- tCsA: A thread partition the whole tile in shared memory of matrix A.
- make_fragment_A: The thread based on Shared Memory assignment, exactly how many registers needed to hold a piece of Matrix A
- 
-
-Line 136: Tensor tCrC = thr_mma.make_fragment_C(tCgC);
-tCrC: it is a Tensor view, pointer + layout. Cute allocates an array of registers perfectly size and shaped to hold this thread's input for Matrix C.
-tCgC: A thread partition the a part of tile of global matrix C
-
-	
-
-	
-
 tCrA and tCrC aren’t views.
 Applies to both lines: fragments own their storage
 A view is pointer + layout pointing at memory that already exists. tCsA, tCgC and tAgA are
@@ -3297,7 +3282,8 @@ thr_mma: It’s the TiledMMA sliced to this thread at L127.
 tCsA: It’s the MMA-partitioned view of sA, and each thread sees the whole tile (stride-0 thread
 mode). To be complete, it covers all 3 stages: shape (MMA, MMA_M = 2, MMA_K = 4, PIPE = 3).
 
-make_fragment_A: For _SS, it builds one descriptor per position in tCsA’s (MMA_M, MMA_K, PIPE) modes: 2 × 4 × 3 = 24. Each descriptor points at one atom’s 64 × 16 block in one stage. I
+make_fragment_A: For _SS, it builds one descriptor per position in tCsA’s (MMA_M, MMA_K, PIPE) 
+modes: 2 × 4 × 3 = 24. Each descriptor points at one atom’s 64 × 16 block in one stage. I
 expect shape (1, 2, 4, 3), but print(tCrA) would confirm it.
 
 L136: tCrC = thr_mma.make_fragment_C(tCgC)
@@ -3310,17 +3296,167 @@ tCgC: 128 elements, part of a tile of global C, covered by one thread. One more 
 role here: make_fragment_C uses tCgC only for its shape. It doesn’t read global C. tCrC gets
 the same shape in registers, so element i of tCrC matches element i of tCgC in the epilogue.
 Summary:
-L133 tCrA: an owning register tensor holding this thread’s descriptors for A. One descriptor per atom position and stage, 2 × 4 × 3, each pointing at a 64 × 16 block of sA. They’re built from tCsA, the MMA-partitioned view of the whole shared-memory A tile.
+L133 tCrA: an owning register tensor holding this thread’s descriptors for A. One descriptor
+per atom position and stage, 2 × 4 × 3, each pointing at a 64 × 16 block of sA. They’re built
+from tCsA, the MMA-partitioned view of the whole shared-memory A tile.
 
-L136 tCrC: an owning register tensor holding this thread’s 128 accumulator values of C (FP16). It has the same shape as tCgC, the thread’s 128 elements of the global C tile, so the epilogue can write tCrC into tCgC element for element.
+L136 tCrC: an owning register tensor holding this thread’s 128 accumulator values of C (FP16).
+It has the same shape as tCgC, the thread’s 128 elements of the global C tile, so the epilogue
+can write tCrC into tCgC element for element.
 
+Line 193: copy(copy_a, tAgA(_,_,_,k), tAsA(_,_,_,k)); 
+for (int k = 0; k < K_PIPE_MAX-1; ++k)     // K_PIPE_MAX = size<3>(tAsA) = 3 → k = 0, 1
+{
+  copy(copy_a, tAgA(_,_,_,k), tAsA(_,_,_,k));   // L193
+  copy(copy_b, tBgB(_,_,_,k), tBsB(_,_,_,k));
+  cp_async_fence();
+}
+copy_a: right idea, with two precisions
+copy_a is an object that describes how to copy. It’s the TiledCopy built in gemm_tn / gemm_nt
+(L387–389): cp.async 16 B per instruction, 16 × 8 threads, 1 × 8 values per thread.
 
+Precision 1: each thread copies only its own part. Every thread calls copy, and each moves only
+its 64 elements: from tAgA (its part of the global A tile) to tAsA (its part of the shared A
+stage). That’s 8 cp.async instructions of 16 B each. The 128 threads together move the whole
+128 × 64 tile.
 
+Precision 2: the copy is asynchronous. copy starts the cp.async transfers and returns before
+the data arrives. cp_async_fence() then closes this batch into a group. Later, cp_async_wait<0>
+() in the main loop waits for the groups to finish.
+The four modes: not “vector, row, col, k”
+The source comments name them (L88–89):
+tAgA: (CPY, CPY_M, CPY_K, k)
+tAsA: (CPY, CPY_M, CPY_K, PIPE)
+</pre>
+|Mode|	Size|	Meaning|
+|:----|:----|:---------|
+|CPY|	8|	values in one cp.async:<br> 8 consecutive halfs = 16 B|
+|CPY_M|	8|	repeats along M: rows 0, 16, …, 112<br> for thread 0|
+|CPY_K|	1|	repeats along K: 64 / 64 = 1|
+|4th mode|	tAgA: 64, tAsA: 3|	tAgA: which k-tile;<br> tAsA: which stage|
+<pre>
+So _, _, _ keeps the thread’s 8 × 8 × 1 = 64 elements, and the last index chooses one tile, 
+or one stage.
+The most important point: the same k means two different things
+tAgA(_,_,_,k)   k = which tile of A in global memory   (0 … 63)
+tAsA(_,_,_,k)   k = which shared-memory stage          (0 … 2)
+In the prefetch they’re equal by design:
+k = 0:  tile 0 → stage 0
+k = 1:  tile 1 → stage 1
 
+Stage 2 is left free on purpose: the main loop writes into it first 
+(k_pipe_write = K_PIPE_MAX-1 = 2). In the main loop, the two indices separate:
+tAgA(_,_,_,k_tile_next) → tAsA(_,_,_,k_pipe_write). That’s how 64 tiles cycle through 3 stages.
+
+Summary:
+L193: In the prefetch loop (k = 0, 1), each thread uses copy_a (the TiledCopy: cp.async 16 B,
+16 × 8 threads) to start asynchronous copies of its 64 elements of A tile k from global memory
+(tAgA) into its part of shared-memory stage k (tAsA). The modes are (CPY, CPY_M, CPY_K, k-tile
+or stage). In the prefetch, tile k goes into stage k, and stage 2 is left for the main loop.
 	
+Before main loop is Prologue, prefetch. 64 elements of matrix A tile, 64 elements is not entire
+tile in matrix A. It is a part of tile matrix A.
+• Prologue = prefetch: the part before the main loop that starts loading the first tiles (tiles
+0 and 1) so they’re on the way before the computing starts.
+• 64 elements is a part of the tile, not the whole tile: it’s one thread’s part. The whole 
+A tile is 128 × 64 = 8,192 elements, and all 128 threads together copy it (128 × 64 = 8,192),
+each starting its own cp.async instructions.	
 
+Line 195: cp_async_fence()
+What it does
+In CuTe, cp_async_fence() emits the PTX instruction cp.async.commit_group
+(cute/arch/copy_sm80.hpp). That instruction:
 
+takes all the cp.async copies this thread has started since its last commit,
+closes them into one group,
+and returns immediately.
 
+So in the prologue, each thread builds two groups:
+k = 0:  copy A tile 0, copy B tile 0  → commit → group 0
+k = 1:  copy A tile 1, copy B tile 1  → commit → group 1
+Each main-loop iteration then adds one more group (the next tile).
+
+Who waits: cp_async_wait<N>()
+The waiting happens later, in the main loop: cp_async_wait<0>() emits cp.async.wait_group 0,
+which means “wait until at most 0 of my groups are still pending”, i.e. all of them are done.
+
+Groups exist so we can wait for only the older ones. For example, cp_async_wait<1> lets one
+group stay in flight while we compute on the earlier tiles. This kernel uses <0>, so it waits
+for everything. That’s why it doesn’t overlap loads with compute, as we noted before.
+
+Two more corrections
+It’s per thread, not “for k-tiles in shared memory” as a whole. Each thread commits and waits
+only for its own copies. It doesn’t know when other threads’ copies have arrived.
+It’s not a hardware barrier between threads. Making other threads’ data visible needs something
+more, such as __syncthreads(). Whether this kernel’s main loop has enough synchronization
+between cp_async_wait<0>() and the wgmma is one of the open questions we listed earlier. I’ll
+address it when we reach that line.
+Summary:
+L195 cp_async_fence(): emits cp.async.commit_group. It closes this thread’s cp.async copies
+started so far (here A and B of tile k) into one group, and returns immediately. It doesn’t
+wait. Waiting is done later by cp_async_wait<N>() (cp.async.wait_group N), which waits until 
+at most N of this thread’s groups are still pending.
+
+copy(copy_a, tAgA(_,_,_,k), tAsA(_,_,_,k));
+copy(copy_b, tBgB(_,_,_,k), tBsB(_,_,_,k));
+• Each thread copies only its own part of the elements (64 of A and 64 of B per tile).
+• So the commit and the wait cover only that thread’s copies.
+• Neither one guarantees that the whole k-tile has arrived. That requires all 128 threads’
+copies to be done, plus synchronization between the threads.
+cp_async_fence() doesn’t “commit a thread”. It commits the thread’s copies into a group. 
+The waiting is done by cp_async_wait<N>(), not by the fence:
+copy(...)             start this thread's copies
+cp_async_fence()      group them (commit)
+cp_async_wait<N>()    wait for this thread's groups (main loop)
+
+Line 201: __syncthreads() is hardware synchronization, s sync points barrier. 
+The 128 threads hit a synchronization barrier __syncthreads(), then next step
+is go to main loop.
+__syncthreads() is a barrier for the whole CTA. Every one of the 128 threads must reach it
+before any thread continues into the main loop. It compiles to bar.sync 0, and it’s the “used 1
+barriers” in your ptxas output.
+
+What it guarantees:
+• All 128 threads have finished everything before the barrier: the prefetch loop, which started
+the copies, and clear(tCrC).
+• Ordinary shared-memory writes made before the barrier are visible to all threads after it.
+What it doesn’t guarantee: that the prefetched tiles have arrived. The cp.async copies were
+only started and committed. Nothing before this barrier waited for them (cp_async_wait comes
+later, inside the main loop). So after L201, tiles 0 and 1 may still be in flight.
+
+Why the barrier is placed here isn’t explained in the source. It doesn’t make the prefetched
+data ready, so I won’t guess its purpose. It feeds into the same open question as before: how
+this kernel ensures that every thread’s copies are complete and visible before the wgmma reads 
+shared memory. We’ll check that at cp_async_wait<0>() in the main loop.
+Summary:
+L201 __syncthreads(): a CTA-wide barrier (bar.sync 0). All 128 threads must arrive before any
+of them enters the main loop. It doesn’t wait for the cp.async copies, so the prefetched tiles
+aren’t guaranteed to be in shared memory yet.
+copy(copy_a, ...)   issues cp.async instructions: "please move these 16 B chunks"
+                    → returns right away; the data is still travelling
+copy(copy_b, ...)   same for B
+cp_async_fence()    groups those requests → returns right away
+__syncthreads()     waits for all threads to reach this line
+                    → they all have issued their requests, but the data may not have landed
+
+A cp.async moves data from global memory (DRAM / L2) into shared memory. That takes hundreds of
+cycles. The instruction doesn’t stall the thread for that time. That’s the whole point of
+“async”: the thread can keep going while the hardware moves the data.
+
+A timeline for one thread
+cycle  ~0   issue cp.async (8 for A, 8 for B)
+cycle  ~20  commit_group
+cycle  ~30  __syncthreads: all threads arrived
+            …data still on its way from DRAM…
+cycle ~500  data lands in shared memory
+The cycle numbers are only illustrative, not measured. The order is what matters: the barrier can pass before the data lands.
+
+Why __syncthreads() doesn’t cover it
+__syncthreads() waits for threads to arrive, and it orders ordinary memory operations. It
+doesn’t wait for outstanding cp.async transfers. According to the PTX ISA’s cp.async section, a
+thread knows its cp.async copies are complete only through 
+cp.async.wait_group / cp.async.wait_all (CuTe’s cp_async_wait<N>()), or through an mbarrier.
+	
 	
 	
 I would like to know if the following description is correct.
