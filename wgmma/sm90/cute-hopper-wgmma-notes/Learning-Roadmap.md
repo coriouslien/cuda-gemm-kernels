@@ -3139,6 +3139,185 @@ One thread cover 128 elements, one CTA has 128 threads. We have 1600 CTA (M = 51
 1 CTA          = 128 threads
 1,600 CTAs     × 128 threads  = 204,800 threads
 204,800 threads × 128 elements = 26,214,400 = 5120 × 5120 
+write M / bM = 40, N / bN = 40, and 40 × 40 = 1,600. M and N stay 5120. It’s the tile counts
+along M and N that are 40.
+	
+tCgC connects to five things in the kernel: two it’s built from, one that decides its pattern,
+and two that use it.
+
+What it’s built from:
+mC  (L68)   whole matrix C in global memory, 5120 × 5120
+ │  local_tile (L71–74), using this CTA's coordinate
+ ▼
+gC          this CTA's tile, 128 × 128
+ │  thr_mma.partition_C (L130), using this thread's thr_mma (L127)
+ ▼
+tCgC        this thread's 128 elements of that tile
+
+What decides its pattern: the MMA atom’s LayoutC_TV (L394, SM90_64x64x16_F16F16F16_SS). 
+It decides which 128 elements each thread gets: pairs along N, repeated over the 2 × 2 atoms.
+
+What uses it:
+tCrC (L136): make_fragment_C(tCgC) takes its shape to create the register accumulators. Each
+thread’s tCrC element i corresponds to its tCgC element i.
+The epilogue (L257): axpby(alpha, tCrC, beta, tCgC) writes the results from registers (tCrC)
+into global memory (tCgC). Since beta can be non-zero, it also reads C’s old values.
+So tCgC is the global-memory destination that matches tCrC element for element. The kernel’s
+results come together in tCrC and land in tCgC at the very end.
+tCgC: 1 thread = 128 elements, those 128 elements are one thread’s tCgC. 
+When we put all the threads’ tCgCs together:
+1 thread = 128 elements           ← one tCgC
+1 CTA = 128 threads               ← 128 tCgCs cover one tile (gC)
+1,600 CTAs × 128 = 204,800        ← 204,800 tCgCs in total
+204,800 × 128 = 26,214,400        ← together they cover all of C (mC)
+Every thread in the grid has its own tCgC, and none of them overlap. Together they cover the
+whole 5120 × 5120 matrix C exactly once.
+• “some elements, part of a tile, covered by one thread” (the general form)
+• “128 elements, part of a tile, covered by one thread” (this kernel’s number)
+
+tAgA:
+tAgA works the same way as tCgC, with two differences: it’s partitioned by the A-copy pattern
+(not the MMA), and it spans 64 tiles (not one).
+The counts, in the same style as for C:
+
+one A tile    = bM × bK = 128 × 64 = 8,192 elements
+1 CTA         = 128 threads
+1 thread      = 8,192 / 128 = 64 elements per tile
+64 tiles (along K) → 64 × 64 = 4,096 elements per thread in total
+
+That’s the shape (8, 8, 1, 64): 8 × 8 = 64 elements per tile, times 64 tiles.
+Where the 64 tiles come from: K = 4096 and bK = 64, so 4096 / 64 = 64 tiles along K. 
+Together they’re the CTA’s whole row block of A: 128 rows × 4096 columns.
+The big difference from C: A tiles are shared between CTAs.
+Each C tile belongs to exactly one CTA.
+Each row block of A is read by 40 CTAs: all CTAs with the same M coordinate, one for each N
+position.
+So this doesn’t hold for A:
+each element of A is covered 40 times (once per CTA in that row)
+A has 40 × 64 = 2,560 tiles in total, as we found before, and each is loaded by 40 CTAs.
+What it’s used for: tAgA is the source of the cp.async copy. Each k-iteration copies
+tAgA(_,_,_,k), the thread’s 64 elements of tile k, into tAsA (shared memory, one of 3 stages).
+</pre>
+||tCgC|	tAgA|
+|:----|:----|:-----|
+|Pattern|	MMA (tC)|	A copy (tA)|
+|Per thread, per tile|	128 elements|	64 elements|
+|Tiles|	1|	64 (one per k-iteration)|
+|Element covered by|	exactly 1 thread in the grid|	40 threads (one per CTA in that row)|
+|Role|	destination (epilogue)|	source (cp.async)|
+<pre>
+One tile bM x bK = 128 x 64 = 8192 elements.
+8192 elements / 128 threads = 64 elements, one thread covers 64 elements.
+One thread covers 64 elements of each A tile. With 128 threads, the whole 128 × 64 tile is
+covered once.
+
+64 tiles × 64 elements = 4,096
+│           └─ elements per thread per tile (8,192 / 128 threads, what you just worked out)
+└───────────── number of A tiles the CTA needs (K / bK = 4096 / 64)
+	
+Why the CTA needs 64 tiles of A. To compute its 128 × 128 C tile, the CTA needs the full rows
+of A for those 128 rows. That’s 128 rows × all of K = 128 × 4096. It’s too big to load at once,
+so it’s cut along K into pieces of bK = 64 columns:
+	
+CTA's A rows: 128 × 4096
+┌────────┬────────┬────────┬─ ··· ─┬────────┐
+│ tile 0 │ tile 1 │ tile 2 │       │tile 63 │   each tile 128 × 64
+└────────┴────────┴────────┴─ ··· ─┴────────┘
+  k = 0    k = 1    k = 2            k = 63
+
+4096 / 64 = 64 tiles. These are the 64 iterations of the main loop: one tile is loaded and used per iteration.
+
+What one thread does over the whole loop. In every iteration it copies its 64 elements of that iteration’s tile:
+
+iteration 0:   64 elements of tile 0
+iteration 1:   64 elements of tile 1
+...
+iteration 63:  64 elements of tile 63
+total:         64 × 64 = 4,096 elements
+
+So 4,096 is how many elements of A one thread copies over the whole kernel, not at once. At any
+moment, it only works on its 64 elements of the current tile.
+
+tAgA: 64 elements, part of a tile of A, covered by one thread, in each of the CTA’s 64 tiles
+(one per k-iteration).
+tCgC covers one tile. tAgA covers the same thread position in all 64 tiles.
+
+tBgB: 64 elements, part of a tile of B, covered by one thread, in each of the CTA’s 64 tiles
+along K.	
+There’s one difference from A, in which CTAs share the tiles:
+• A is shared by the 40 CTAs with the same M position (blockIdx.x).
+• B is shared by the 40 CTAs with the same N position (blockIdx.y).
+In this code B is stored as N × K = 5120 × 4096. CuTe’s GEMM convention keeps B in (N, K) shape.
+Describe all three in one consistent way, with numbers you can check:
+</pre>
+|Tensor|	Covered by one thread|	Tiles|	Shared between CTAs|
+|:-----|:------------------------|:------|:--------------------|
+|tCgC|	128 elements of a C tile<br> (128 × 128)|	1|	no, exactly one<br> thread in the grid|
+|tAgA|	64 elements of an A tile (128 × 64)|64, one per<br> k-iteration|40 CTAs with the<br> same M position|
+|tBgB|	64 elements of a B tile (128 × 64)|	64, one per<br> k-iteration|40 CTAs with the<br> same N position|
+<pre>
+Line 133: Tensor tCrA = thr_mma.make_fragment_A(tCsA)
+ tCrA is a Tensor view, pointer + layout. CuTe allocates an array of registers perfectly sized and shaped to hold this thread's inputs for Matrix A.
+ thr_mma: Using a thread tensor math calculation object. 
+ tCsA: A thread partition the whole tile in shared memory of matrix A.
+ make_fragment_A: The thread based on Shared Memory assignment, exactly how many registers needed to hold a piece of Matrix A
+ 
+
+Line 136: Tensor tCrC = thr_mma.make_fragment_C(tCgC);
+tCrC: it is a Tensor view, pointer + layout. Cute allocates an array of registers perfectly size and shaped to hold this thread's input for Matrix C.
+tCgC: A thread partition the a part of tile of global matrix C
+
+	
+
+	
+
+tCrA and tCrC aren’t views.
+Applies to both lines: fragments own their storage
+A view is pointer + layout pointing at memory that already exists. tCsA, tCgC and tAgA are
+views of shared or global memory.
+Line 136: Tensor tCrC = thr_mma.make_fragment_C(tCgC);
+tCrC: it is a Tensor view, pointer + layout. Cute allocates an array of registers perfectly
+size and shaped to hold this thread's input for Matrix C.
+tCgC: A thread partition the a part of tile of global matrix C
+A fragment made by make_fragment_* is an owning tensor: it holds its own array in registers,
+plus a layout. No pointer to existing memory is involved. CuTe’s tensor documentation
+(media/docs/cute/03_tensor.md) calls these non-owning and owning tensors.
+</pre>
+|Tensor|	Kind|	Memory|
+|:-----|:-------|:--------|
+|tCsA, tCgC|view (pointer + layout)|existing shared / global memory|
+|tCrA, tCrC|owning (array + layout)|its own registers|
+<pre>
+L133: tCrA = thr_mma.make_fragment_A(tCsA)
+tCrA: It doesn’t hold this thread’s A values. Because the atom is _SS (L394), it holds
+descriptors: 64-bit values telling wgmma where each A block is in shared memory and how it’s
+laid out (including the 128 B swizzle). It’s still an owning register tensor, but of
+descriptors, not of A data.
+thr_mma: It’s the TiledMMA sliced to this thread at L127.
+tCsA: It’s the MMA-partitioned view of sA, and each thread sees the whole tile (stride-0 thread
+mode). To be complete, it covers all 3 stages: shape (MMA, MMA_M = 2, MMA_K = 4, PIPE = 3).
+
+make_fragment_A: For _SS, it builds one descriptor per position in tCsA’s (MMA_M, MMA_K, PIPE) modes: 2 × 4 × 3 = 24. Each descriptor points at one atom’s 64 × 16 block in one stage. I
+expect shape (1, 2, 4, 3), but print(tCrA) would confirm it.
+
+L136: tCrC = thr_mma.make_fragment_C(tCgC)
+It’s owning, not a view (see above).
+It holds the accumulator, the thread’s results. It’s zeroed before the loop, added to by every
+wgmma, and written out in the epilogue. Unlike tCrA, tCrC holds real values: 128 FP16 per
+thread, shape (32, 2, 2).
+
+tCgC: 128 elements, part of a tile of global C, covered by one thread. One more fact about its
+role here: make_fragment_C uses tCgC only for its shape. It doesn’t read global C. tCrC gets
+the same shape in registers, so element i of tCrC matches element i of tCgC in the epilogue.
+Summary:
+L133 tCrA: an owning register tensor holding this thread’s descriptors for A. One descriptor per atom position and stage, 2 × 4 × 3, each pointing at a 64 × 16 block of sA. They’re built from tCsA, the MMA-partitioned view of the whole shared-memory A tile.
+
+L136 tCrC: an owning register tensor holding this thread’s 128 accumulator values of C (FP16). It has the same shape as tCgC, the thread’s 128 elements of the global C tile, so the epilogue can write tCrC into tCgC element for element.
+
+
+
+
+	
 
 
 
