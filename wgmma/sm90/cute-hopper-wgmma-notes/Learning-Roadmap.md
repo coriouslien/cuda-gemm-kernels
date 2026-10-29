@@ -3457,7 +3457,380 @@ doesn’t wait for outstanding cp.async transfers. According to the PTX ISA’s 
 thread knows its cp.async copies are complete only through 
 cp.async.wait_group / cp.async.wait_all (CuTe’s cp_async_wait<N>()), or through an mbarrier.
 	
-	
+Analogy
+Mailing letters: copy = dropping letters in the mailbox, cp_async_fence = bundling them as
+“batch 1”, __syncthreads = everyone in the office has dropped off their letters. None of that
+means the letters were delivered. cp_async_wait = waiting until delivery is confirmed.
+So in this kernel, data is only guaranteed to be complete (for each thread’s own copies) after
+cp_async_wait<0>() in the main loop.
+The cp.async instructions really execute, and the hardware starts moving the data right away.
+The thread just doesn’t wait for the move to finish.
+copy issues real transfer requests that start immediately and finish later. cp_async_fence
+groups them. The thread continues without waiting, and completion is only guaranteed after
+cp_async_wait.
+
+Line 222: copy(copy_a, tAgA(_,_,_,k_tile_next), tAsA(_,_,_,k_pipe_write));
+Line 223:    copy(copy_b, tBgB(_,_,_,k_tile_next), tBsB(_,_,_,k_pipe_write));
+Lien 224:    cp_async_fence();
+it’s the same operation as the prologue (start copies of one tile into one stage, then commit
+them as a group). The difference is the indices. In the prologue, tile k went into stage k.
+Here, the two indices move separately:
+int k_tile_next = k_tile + (K_PIPE_MAX-1);                 // 2 tiles ahead
+k_tile_next = (k_tile_next >= K_TILE_MAX) ? K_TILE_MAX-1 : k_tile_next;   // clamp to 63
+...
+++k_pipe_write;  k_pipe_write = (k_pipe_write == K_PIPE_MAX) ? 0 : k_pipe_write;   // 2,0,1,2,…
+The first iterations
+</pre>
+|k_tile<br>(computed this iteration)|k_tile_next<br>(loaded)|written to stage|read from stage|
+|:----------------------------------|:----------------------|:---------------|:--------------|
+|0|	2|	2|	0 (tile 0, from prologue)|
+|1|	3|	0|	1 (tile 1, from prologue)|
+|2|	4|	1|	2 (tile 2)|
+|3|	5|	2|	0 (tile 3)|
+|…|	…|	…|	…|
+<pre>
+Two patterns to notice:
+• It loads 2 tiles ahead. While computing tile k_tile, it starts loading tile k_tile + 2. 
+With 3 stages, that’s as far ahead as it can go.
+• The 3 stages are reused in a ring. Stage 0 holds tiles 0, 3, 6, …. Stage 1 holds tiles 1, 4,
+7, …. Stage 2 holds tiles 2, 5, 8, ….
+The end of the loop: the clamp
+k_tile = 61: k_tile_next = 63              → loads tile 63 into stage 0
+k_tile = 62: k_tile_next = 64 → clamped 63 → loads tile 63 again into stage 1
+k_tile = 63: k_tile_next = 65 → clamped 63 → loads tile 63 again into stage 2
+
+In the last two iterations, the loop copies tile 63 again, and those copies are never used.
+That keeps the loop simple (no if), at the cost of 2 redundant tile loads per CTA.
+
+In iteration 1, stage 0 is overwritten (tile 3 goes into it), while stage 0 held tile 0, which
+the wgmma read in iteration 0. That’s only safe if the wgmma reading tile 0 has finished before
+the new copies land. This kernel waits for that with warpgroup_wait<0>() at the end of each
+iteration. That’s part of the synchronization question we’ll check when we reach those lines.
+
+L235: cp_async_wait<0>()
+<0> means “wait until 0 groups are pending”, so everything committed is done. And yes, that’s
+why there’s no overlap.
+“every copy we issued” means every copy this thread issued. It emits cp.async.wait_group 0 (or
+cp.async.wait_all), which is per thread, like the commit. It doesn’t wait for the other 127 
+threads’ copies.
+Why there’s no overlap, specifically. L222–224 just started the copies for tile k_tile + 2.
+Then wait<0> waits for those too. So every iteration waits for the tile it only just requested,
+and the prefetch is wasted. My own analysis: since the copy is issued before the wait,
+cp_async_wait<2> would leave tiles k+1 and k+2 in flight and wait only for tile k. That would
+need the synchronization below to be correct as well, so treat it as a hypothesis to test on
+the H100.
+
+The wait is per thread, and the wgmma reads the whole tile, including other threads’ parts. I
+don’t see a barrier between the wait and the wgmma in this loop.
+The PTX ISA’s wgmma section says an async-proxy fence (fence.proxy.async) is needed between
+earlier writes to shared memory and the wgmma reads of them. I don’t see one here either.
+
+I’m not certain whether this is a real bug or something covered that I’m missing. It’s a good
+item for your write-up’s open questions. You can check it against the PTX ISA’s wgmma.fence
+section and against CUTLASS’s own SM90 cp.async mainloop.
+
+L237: warpgroup_fence_operand(tCrC)
+wgmma is asynchronous, a warpgroup is 128 threads (4 warps) working together, and this line is
+about protecting tCrC while the Tensor Cores use it.
+It’s not a hardware barrier. It’s a compiler fence. It emits no GPU instruction. In CuTe it’s
+an empty asm volatile with each register of tCrC as an in/out operand. The effect is to tell
+the compiler: “these registers may be changed by something we can’t see; don’t move reads or
+writes of them across this point.”
+It’s needed because the compiler doesn’t know that wgmma writes tCrC asynchronously. Without
+it, the compiler could keep a stale copy or reorder accesses to tCrC. That’s why it appears
+both before the MMA (L237) and after warpgroup_wait<0>(). You can confirm this in 
+cute/arch/mma_sm90_gmma.hpp: it should be an asm volatile("" : "+f"/"+r"(...) :: "memory") 
+pattern.
+
+L238: warpgroup_arrive()
+It doesn’t start the math. It emits wgmma.fence.sync.aligned. The name “arrive” is misleading
+here. It’s a fence that orders earlier register accesses before the wgmma that follows. The PTX
+ISA requires it before the first wgmma.mma_async, and whenever the accumulator or A registers
+were written by other instructions. Here, clear(tCrC) wrote the accumulator, and the previous
+iteration’s wgmma did too.
+
+The math itself starts on the next line: cute::gemm(...) issues the wgmma.mma_async
+instructions (16 per k-tile). Then warpgroup_commit_batch() (wgmma.commit_group) groups them,
+and warpgroup_wait<0>() (wgmma.wait_group 0) waits for them.
+Summary:
+</pre>
+|Line|	Call|	Emits|	What it does|
+|:---|:-----|:-------|:-------------|
+|L235|	cp_async_wait<0>()|	cp.async.wait_group 0|	this thread waits for<br> all its own copies, including<br> the tile just requested, so<br> there’s no overlap|
+|L237|	warpgroup_fence_operand(tCrC)|	nothing (compiler fence)|	stops the compiler from<br> moving tCrC accesses<br> across this point|
+|L238|	warpgroup_arrive()|	wgmma.fence.sync.aligned|	orders earlier register<br> accesses before the wgmma;<br> doesn’t start it|
+|next|	cute::gemm(...)|	16 × wgmma.mma_async|	starts the asynchronous math|
+|next|	warpgroup_commit_batch()|	wgmma.commit_group|	groups those wgmma instructions|
+|next	|warpgroup_wait<0>()	|wgmma.wait_group 0	|waits for them to finish|
+<pre>
+We’ll recognize the pattern from cp.async: start, commit, wait. wgmma uses the same three
+steps, plus the fences to protect registers.
+
+
+Line 235: cp_async_wait<0>();
+Line 237: warpgroup_fence_operand(tCrC);
+Line 238: warpgroup_arrive();
+Line 240: cute::gemm(mma, tCrA(_,_,_,k_pipe_read), tCrB(_,_,_,k_pipe_read), tCrC);
+Between line 235 and 240. There are warpgroup_fence_operand(tCrC) and warpgroup_arrive().
+warpgroup_fence_operand(tCrC): stop compiler accessing the tCrC. There is no any
+in/out moving to change tCrC.
+warpgroup_arrive(): GPU start prepare math command, however it is not doing 
+Tensor Core math yet.
+
+warpgroup_fence_operand(tCrC): it doesn’t stop the compiler from accessing tCrC. It stops the
+compiler from moving accesses to tCrC across this point. It works by naming each register of
+tCrC as an in/out operand of an empty asm volatile. So the compiler must assume, at this point,
+that tCrC is both read and changed. It can’t keep an old copy in another register, and it can’t
+move a tCrC access from before the line to after it, or the reverse. It emits no GPU 
+instruction. And it involves only tCrC, a register tensor. It says nothing about shared memory.
+
+warpgroup_arrive(): it doesn’t prepare the math command. It emits wgmma.fence.sync.aligned,
+which orders earlier register accesses (the accumulator and A-fragment registers) before the
+following wgmma. The math command is issued only at L240, by cute::gemm. My understanding is 
+that .sync.aligned here means the threads of a warp execute it together. It isn’t a barrier 
+across the CTA, and it doesn’t wait for other threads’ cp.async data.
+
+The wgmma at L240 reads the whole A and B tile from shared memory, including parts copied by
+other threads. For that read to be safe, two things are needed:
+
+The PTX ISA’s wgmma.fence description makes this distinction itself: as I understand it,
+wgmma.fence covers the register operands, and ordering prior shared-memory writes before wgmma 
+reads needs an async-proxy fence. So the question stays open.
+
+Compare with CUTLASS’s own Hopper cp.async + GMMA mainloop. I believe it puts a __syncthreads()
+right after cp_async_wait<…>(), before the GMMA. That’s from memory, so check:
+
+grep -rln "cp_async_wait" ../cutlass/include/cutlass/gemm/collective/ | grep -i sm90
+grep -rn "fence_view_async_shared\|fence.proxy.async" ../cutlass/include/cutlass/ | head
+
+Then look at what each of those files places between cp_async_wait and the GMMA. If CUTLASS has
+a barrier and/or a proxy fence there and this tutorial doesn’t, that’s a concrete finding for
+your write-up. Present it as “differs from CUTLASS’s production mainloop”, and don’t call it a
+bug until it’s confirmed.
+Summary:
+</pre>
+|Line|	What it really does|	Covers the smem question?|
+|:---|:--------------------|:----------------------------|
+|L235 cp_async_wait<0>()|this thread waits for its own copies|	partly: own copies only|
+|L237 warpgroup_fence_operand(tCrC)|compiler fence on the<br> tCrC registers; no instruction|	no: registers only|
+|L238 warpgroup_arrive()	|wgmma.fence: orders register<br> accesses before wgmma|no: registers only|
+|L240 cute::gemm(...)|	issues the wgmma;<br> the math starts here|	reads the whole<br> tile from smem|
+<pre>
+1. warpgroup_fence_operand(tCrC)
+It doesn’t stop reading or writing at this point. Code before and after it still reads and
+writes tCrC normally. What it stops is moving those accesses across this line:
+
+... accesses to tCrC ...      ← must stay above
+warpgroup_fence_operand(tCrC) ← a line the compiler can't move tCrC accesses across
+... accesses to tCrC ...      ← must stay below
+
+It also forces the compiler to treat tCrC as possibly changed here, so afterwards it uses the
+real registers, not an old copy.
+
+2. warpgroup_arrive()
+It doesn’t record commands. It’s a fence: register writes before it (such as clear(tCrC), or
+the previous wgmma’s results) are ordered before the wgmma after it reads or writes those
+registers. “Recording” (grouping) the math commands is warpgroup_commit_batch()
+(wgmma.commit_group), which comes after L240.
+Summary:
+</pre>
+|Line|	Correct one-liner|
+|:---|:------------------|
+|L237 warpgroup_fence_operand(tCrC)|	compiler-only line that tCrC<br> accesses can’t be moved across;<br> tCrC is treated as changed here|
+|L238 warpgroup_arrive()|	wgmma.fence: earlier register<br> writes are ordered before the<br> next wgmma uses those registers|
+|L240 cute::gemm(...)|	issues the wgmma instructions;<br> the math starts|
+|L241 warpgroup_commit_batch()|	groups the issued wgmma<br> (wgmma.commit_group)|
+<pre>
+Compilers reorder instructions to make code faster. Normally that’s safe, because the compiler
+knows which instructions use which registers. But it doesn’t know that the wgmma changes tCrC 
+in the background.
+Example of the danger:
+written in source:              compiler might reorder to:
+1. wgmma (writes tCrC, async)   1. read tCrC   ← too early: old values!
+2. wait                          2. wgmma
+3. read tCrC                     3. wait
+
+The fence forbids that reordering:
+1. wgmma
+2. wait
+3. warpgroup_fence_operand(tCrC)   ← "read tCrC" can't be moved above this line
+4. read tCrC                       ← still happens, in the right place
+
+So:
+Read and write still happen, before and after the fence.
+What’s forbidden is the compiler moving a read or write of tCrC from one side of the line to
+the other.
+Summary:
+</pre>
+|Word|	Meaning here|
+|:---|:-------------|
+|read / write tCrC|	the program using the registers:<br> still allowed on both sides|
+|move (across the fence)|	the compiler changing the order:<br> forbidden for tCrC accesses|
+<pre>
+Hopper WGMMA operations are asynchronous. The compiler must not freely move ordinary uses or
+modifications of accumulator registers across an in-flight WGMMA sequence. The fence helps 
+preserve the intended relationship between the register values and those operations.
+One precision makes it concrete. The in-flight sequence has two fences, one at each edge:
+
+warpgroup_fence_operand(tCrC)   ← edge 1: earlier tCrC writes stay before the wgmma
+warpgroup_arrive()
+cute::gemm(...)                 ← in flight
+warpgroup_commit_batch()
+warpgroup_wait<0>()
+warpgroup_fence_operand(tCrC)   ← edge 2: later tCrC uses stay after the wait
+
+Together they keep ordinary tCrC accesses outside the region where the Tensor Cores are using 
+those registers.
+Because the edge 1 and edge 2, we can fence the tCrC modification to prevent errors.
+the two fences prevent the compiler from causing errors (reordering or spilling tCrC). They
+work only together with the hardware steps:
+</pre>
+|Piece	|Prevents|
+|:------|:-------|
+|edge 1 + edge 2 fences	|compiler moving tCrC accesses into<br> the in-flight region|
+|warpgroup_arrive()	|earlier register writes not yet<br> ordered before the wgmma (hardware)|
+|warpgroup_wait<0>()|	reading tCrC before the math<br> is actually finished (hardware)|
+<pre>
+1. It is because Hopper WGMMA is asynchronous. If we don't use the warpgroup_fence_operand to
+protect tCrC, it is possible modified or corrupted in-flight.
+The danger exists only between the wgmma issue (cute::gemm) and the end of warpgroup_wait<0>().
+Before and after that window, tCrC is ordinary registers and can be used normally.
+2. “Possible”, not certain. Without the fences, an error happens only if the compiler moves a
+tCrC access (or a spill) into that window. Whether it does depends on its optimizations. The
+fences remove that possibility, so the code is correct by design rather than by luck.
+Summary:
+Because Hopper WGMMA is asynchronous, tCrC is being updated by the Tensor Cores between the
+wgmma issue and warpgroup_wait. Without warpgroup_fence_operand, the compiler could move a tCrC
+access or spill into that window and read or overwrite unfinished values. The fences prevent
+that.
+
+Line 383: auto sA = tile_to_shape(GMMA::Layout_K_SW128_Atom<TA>{}, make_shape(bM,bK,bP));
+The atom is defined in bits, and the 8 × 64 comes from converting it to half (16 bits). 
+I checked this in CuTe’s current cute/atom/mma_traits_sm90_gmma.hpp on main. It’s the same 
+line 84 we looked at before.
+Step 1: the definition, in bits (line 84)
+using Layout_K_SW128_Atom_Bits =
+  ComposedLayout<Swizzle<3,4,3>, smem_ptr_flag,
+                 Layout<Shape<_8,_1024>, Stride<_1024,_1>>>;
+The plain layout part is (8, 1024) : (1024, 1):
+
+8 rows
+1024 bits per row = 128 bytes, contiguous (stride 1 along the row)
+Step 2: convert to the element type (line 104)
+template <class Type>
+using Layout_K_SW128_Atom =
+  decltype(upcast<sizeof_bits<Type>::value>(Layout_K_SW128_Atom_Bits{}));
+upcast<N> regroups every N bits into one element. Here TA = half_t, so N = sizeof_bits<half_t> = 16:
+
+row:    1024 bits / 16 = 64 halfs
+rows:   8 (unchanged)
+→ (8, 64) : (64, 1)
+
+That’s the 8 × 64: 8 rows, each 64 halfs = 128 bytes, contiguous along K. That’s why it’s called K-major.
+
+The same atom gives different element counts for other types, but always 128 bytes per row:
+
+Type	Bits	Atom
+half_t (this kernel)	16	8 × 64
+FP8	8	8 × 128
+float / TF32	32	8 × 32
+Why 128 bytes and 8 rows
+
+128 bytes per row: this is the “SW128” in the name, the 128-byte swizzle mode, the widest of the swizzle modes that wgmma descriptors support (the neighbouring lines 81–83 define the INTER, SW32 and SW64 versions: 128, 256 and 512 bits per row). With bK = 64 halfs, one row of the A tile is exactly 128 bytes, so one atom row spans the full bK.
+
+8 rows: Swizzle<3,4,3> XORs 3 bits of the row number into the chunk bits. 3 bits means 2³ = 8 different patterns, so the pattern repeats every 8 rows:
+
+8 rows × 128 bytes = 1,024 bytes = one full swizzle pattern
+
+That’s the 1,024 bytes we found before, and the reason the buffers must be 1,024-aligned.
+
+How tile_to_shape uses it (L383)
+atom 8 × 64 → repeat 128 / 8 = 16 times along M → 128 × 64 (one stage)
+                                                  → 3 stages: (128, 64, 3)
+
+Along K, 64 / 64 = 1, so no repetition is needed.
+
+Summary
+Question	Answer	Source
+Where is 8 × 64 defined?	as (8, 1024) bits, line 84	mma_traits_sm90_gmma.hpp
+Why 64?	1024 bits / 16 bits per half = 64	upcast, line 104
+Why 128 B per row?	the 128-byte swizzle mode (SW128)	atom name, lines 81–84
+Why 8 rows?	Swizzle<3,…> uses 3 row bits → 8 patterns → 1,024 B
+The 8 × 64 defined in cute/atom/mma_traits_sm90_gmma.hpp because I use
+GMMA::Layout_K_SW128_Atom<TA>{}
+By writing GMMA::Layout_K_SW128_Atom<TA>, I choose the alias defined in that file (line 104). 
+That alias is built from the bit-level atom on line 84.
+1. The file defines it in bits. The 8 × 64 comes from your <TA>. Line 84 says 8 × 1024 bits.
+The 8 × 64 only appears because TA = half_t (16 bits), and upcast<16> turns 1024 bits into 64
+elements. With a different TA, the same name gives a different shape (8 × 128 for FP8, for
+example).
+2. A different atom name gives a different definition from the same file. For example:
+
+I write	Line	Shape for half_t
+GMMA::Layout_K_SW128_Atom<TA> (gemm_tn, L383)	84 → 104	8 × 64 (K-major)
+GMMA::Layout_K_SW64_Atom<TA>	83 → 102	8 × 32
+GMMA::Layout_MN_SW128_Atom<TA> (used in gemm_nt)	MN version	64 × 8 (MN-major)
+The last row matters because your default run is NT, which uses the MN version. Its bits are
+laid out the other way around: 1024 bits along M (or N) by 8 along K. For half that’s 64 × 8,
+with M contiguous. I inferred that from lines 75–77, where the INTER/SW32/SW64 MN atoms are
+(128 / 256 / 512, 8). Check the SW128 MN line in your copy; it should read Shape<_1024,_8>,
+Stride<_1,_1024>.
+GMMA:: is the namespace SM90::GMMA. That’s why it’s in the Hopper (sm90) traits file.
+
+One stage    ((8,16), (64,1))    ((64,512), (1,0))    128 × 64 = 8192 elements (16 KB)
+That table row is the stage layout: one 128 × 64 stage of sA in gemm_tn, before the swizzle is
+applied. Your print_layouts output showed it as:
+
+shape:  ((8,16), (64,1))
+stride: ((64,512), (1,0))
+Read it mode by mode. Each mode is (inside one atom, which atom).
+Mode 0: M (rows)
+Shape (8, 16):
+8: the 8 rows inside one atom (the atom is 8 × 64)
+16: atoms stacked along M, since 128 / 8 = 16
+
+Stride (64, 512):
+64: moving down one row inside an atom skips a full row of 64 halfs (stride 64 in the atom’s 
+own layout, (8,64):(64,1))
+512: moving to the next atom skips a whole atom: 8 rows × 64 = 512 elements
+Mode 1: K (columns)
+
+Shape (64, 1):
+64: the 64 elements along K inside one atom
+1: atoms along K, since 64 / 64 = 1 (the atom already covers all of bK)
+
+Stride (1, 0):
+1: K is contiguous inside the atom (the atom’s stride 1)
+0: that mode has size 1, so its index is always 0 and its stride never matters. CuTe writes 0
+for it.
+Putting it together
+shape:   ((8 , 16 ), (64, 1))
+stride:  ((64, 512), (1 , 0))
+           │    │      │   └─ K: atom index (only 1 atom) → 0
+           │    │      └───── K: inside atom → 1
+           │    └──────────── M: next atom → 8 × 64 = 512
+           └───────────────── M: next row inside atom → 64
+
+Check: element (m, k) is at offset
+
+(m % 8)·64 + (m / 8)·512 + k·1 = m·64 + k
+
+because 512 = 8 · 64. So, apart from the swizzle, one stage is a plain row-major 128 × 64
+block, 16 KB in half. The swizzle Sw<3,4,3> is then applied on top of these offsets.
+
+For the full (128, 64, 3) layout, the third mode (the stage) adds stride 8,192 = 128 × 64, one
+full stage.
+
+Summary
+Part	Value	Where it comes from
+8 / 64	rows / row length inside the atom	atom (8, 64) : (64, 1)
+16	atoms along M	128 / 8
+1	atoms along K	64 / 64
+stride 512	one atom’s size	8 × 64
+stride 0	size-1 mode	never used
+
+
+
 	
 I would like to know if the following description is correct.
 
