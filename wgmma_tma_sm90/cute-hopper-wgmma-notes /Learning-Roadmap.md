@@ -109,8 +109,11 @@ make_shape(bM, bK): It is the CTA tiler: it says which (bM,bK) piece of mA corre
 smem layout, i.e. one stage’s tile. Its shape must match sA(_,_,0)’s shape (128,64).
 
 Summary:
-tmaA is not data; it holds a hardware descriptor and metadata. It holds the CUtensorMap plus CuTe aux params.
-SM90_TMA_LOAD selects the TMA instruction, it’s a struct with static copy functions dispatching to 1D–5D variants. It emits PTX (cp.async.bulk.tensor), not SASS, and also selects the host-side Copy_Traits.
+tmaA is not data; it holds a hardware descriptor and metadata. It holds the CUtensorMap plus
+CuTe aux params.
+SM90_TMA_LOAD selects the TMA instruction, it’s a struct with static copy functions dispatching
+to 1D–5D variants. It emits PTX (cp.async.bulk.tensor), not SASS, and also selects the host-side
+Copy_Traits.
 mA gives bounds and strides. It also gives address and element type, all consumed on the host.
 sA(_,_,0) On the host it’s a layout slice. The 0 drops the pipe mode; the real stage is chosen at copy time.
 CuTe analyzes the layout and passes plain numbers (including the swizzle enum) to cuTensorMapEncodeTiled.
@@ -120,5 +123,52 @@ Software layers program it: CuTe (layout → parameters), the driver API (parame
 The descriptor is software-built data in a hardware-defined format, read directly by the TMA unit.
 Hardware constraints are fixed; CuTe’s choices are library policy.
 
- 
+Line 42: void
+gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
+            TA const* A, CUTLASS_GRID_CONSTANT TmaA const tma_a,
+            TB const* B, CUTLASS_GRID_CONSTANT TmaB const tma_b,
+            TC      * C, CStride dC, TiledMma mma,
+            Alpha alpha, Beta beta)
+
+TA and TB are template type parameters of gemm_device (L37–38), so the kernel works with any
+element type. In this program they become cute::half_t (FP16) because main sets using TA =
+cute::half_t;. FP16 is this instantiation, not a fixed property of the kernel.
+1. They are virtual, not physical, addresses, the same point as with L271.
+2. In this kernel they tell the kernel nothing, because they are never used. Search the body of
+gemm_device (L46–219): A and B never appear. The kernel reaches A and B only through tma_a and
+tma_b, which already hold the base addresses inside their descriptors. Compare C (L47), which is
+used, at L71 to build mC. So A and B are dead parameters, kept for signature symmetry.
+  
+CUTLASS_GRID_CONSTANT TmaA const tma_a:
+tma_a is the whole Copy_Atom built at L275, and TmaA is its type, deduced as decltype(tmaA) at
+L289. The atom contains the descriptor (CUtensorMap, 128 bytes) plus CuTe’s aux params.
+• TmaA is a type; the object tma_a holds the values.
+• The descriptor holds encoded numbers, not CuTe layouts: global dims, global strides in bytes, 
+box dims, and a swizzle mode (an enum such as 128B), not “instructions.”
+• The aux params hold CuTe’s mapping from gmem modes to TMA coordinates, which get_tma_tensor
+uses at L68.
+
+CUTLASS_GRID_CONSTANT / __grid_constant__
+“Maps to __grid_constant__”: (CUTLASS, cutlass/detail/helper_macros.hpp).
+“Read-only”: as a requirement. __grid_constant__ may only be applied to const-qualified kernel
+parameters, which is why the signature says TmaA const.
+
+Every kernel parameter is identical for the whole grid. All parameters are passed once per
+launch and shared by all threads.
+  
+So the purpose isn’t saving registers. It’s making the descriptor’s address usable by the TMA
+hardware. This connects back to the hardware/software distinction: the TMA unit reads the 
+descriptor directly from memory, so the descriptor must sit somewhere the TMA unit can address.
+Summary:
+</pre>
+|claim|	Verdict|
+|:----|:-------|
+|TA/TB are FP16|They are template type parameters;<br> FP16 (half_t) is this instantiation,<br> set in main.|
+|A/B tell the kernel where<br> data starts in physical memory|Base pointers, yes, but virtual<br> addresses, and unused in this kernel.<br> The addresses travel inside the descriptors.|
+|tma_a is the TMA descriptor|	It’s the whole Copy_Atom:<br> the 128-byte descriptor plus<br> CuTe aux params.|
+|TmaA|The object holds encoded dims,<br> byte strides, box dims, a swizzle mode,<br> and CuTe’s coordinate mapping.|
+|__grid_constant__ means<br> read-only|	 requires const.|
+|… identical for the whole grid|True of all kernel parameters;<br> not specific to __grid_constant__.|
+|Params are always<br> in param/constant space.| __grid_constant__ guarantees that taking<br> its address gives the param-space<br> address instead of a local-memory copy,<br> which the TMA instruction requires.|
+
 </pre>
