@@ -3853,12 +3853,10 @@ Explaining fixed-size array templates without shuffling operations.
 Explaining fixed-size array templates without shuffling operations.
 Here is that line piece by piece, without the swizzle details.
 
-cpp
 alignas(128) cute::ArrayEngine<ElementA, cosize_v<SmemLayoutA>> A;
 1. cute::ArrayEngine<T, N>: a fixed-size array
 ArrayEngine<T, N> is CuTe’s wrapper around a plain array of N elements of type T. It behaves like:
 
-cpp
 T A[N];
 2. ElementA: the element type
 It’s the template parameter of SharedStorage, and here it’s TA = half_t (FP16, 2 bytes).
@@ -3873,7 +3871,6 @@ Your print_layouts output showed 24,576.
 
 So the line is equivalent to:
 
-cpp
 alignas(128) half_t A[24576];      // 24,576 × 2 B = 49,152 B = 48 KB
 On the swizzle: it rearranges where elements sit inside this array. It doesn’t need extra space, so the size is still 24,576. That’s all the previous explanation meant.
 
@@ -3885,7 +3882,6 @@ There’s one thing to remember from earlier: the 128-byte swizzle pattern repea
 5. A: the member name
 It’s a member of the SharedStorage struct (L18–26). The kernel places that struct on the dynamic shared memory:
 
-cpp
 extern __shared__ char shared_memory[];
 SharedStorage& smem = *reinterpret_cast<SharedStorage*>(shared_memory);
 Then L80 wraps it as a tensor: make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{}). That’s the pointer plus layout view.
@@ -3929,7 +3925,6 @@ So CUTLASS relies on the same assumption. That suggests the base is suitably ali
 How to verify it
 Print the shared-memory address of A and B, modulo 1,024:
 
-cpp
 if (thread0()) {
   printf("A %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.A.begin()) % 1024));
   printf("B %% 1024 = %u\n", (unsigned)(__cvta_generic_to_shared(smem.B.begin()) % 1024));
