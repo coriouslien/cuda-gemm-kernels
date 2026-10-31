@@ -172,3 +172,163 @@ Summary:
 |Params are always<br> in param/constant space.| __grid_constant__ guarantees that taking<br> its address gives the param-space<br> address instead of a local-memory copy,<br> which the TMA instruction requires.|
 
 </pre>
+<pre>
+Explaining where kernel parameters live and why they get copied.
+Step 1: Where kernel parameters live
+When you launch a kernel, its arguments (shape_MNK, tma_a, C, alpha, …) are copied once per
+launch into a special memory region called parameter space. On the hardware, this is a constant
+bank; in SASS you see reads like c[0x0][0x210].
+
+All threads in the grid read the same copy, and this is true of every kernel parameter, with or 
+without __grid_constant__. That’s what “params are always in param/constant space” means.
+__grid_constant__ does not move the parameter anywhere.
+Step 2: Two ways to use a parameter
+(a) Use its value. For example, int M = get<0>(shape_MNK);. The thread reads the bytes from
+param space into a register. No problem, no copy.
+(b) Take its address. For example, &tma_a, or passing tma_a by reference to a function that
+needs a pointer to it. Now the code needs a pointer to the parameter, and this is where the
+issue arises.
+Step 3: Why taking the address normally produces a copy
+In C++, a function parameter is an ordinary object. Code holding a pointer to it could, in
+principle, write through that pointer. But param space is read-only and shared by the whole
+grid, so it can’t be handed out as an ordinary writable per-thread object.
+So without __grid_constant__, when the code takes the address, the compiler plays it safe:
+it allocates space in local memory, the thread’s private stack;
+it copies the parameter’s bytes from param space into that local copy;
+it gives us the address of the local copy.
+Each thread now has its own private copy, and the pointer points there, not to param space.
+With __grid_constant__, we promise the parameter is const and will never be modified. That’s why
+the qualifier requires const. Given that promise, no private copy is needed, so taking the
+address gives us the address of the original in param space.
+Step 4: Why TMA cares
+The TMA instruction does not receive the descriptor’s contents. It receives the address of the
+descriptor. The TMA hardware unit then reads the 128 bytes itself, from that address.
+The PTX documentation for cp.async.bulk.tensor requires that address to be in .param (a kernel
+parameter), .const, or .global memory. Local memory is not allowed. Local memory is a thread’s
+private stack, and the TMA unit is a separate engine, not that thread.
+Putting it together:
+Without __grid_constant__: &tma_a points to a local-memory copy, and the TMA instruction gets 
+an address it cannot use.
+With __grid_constant__: &tma_a points into param space, and the TMA instruction gets a valid
+address.
+
+An analogy: the descriptor is a notice posted on a shared board (param space). Without
+__grid_constant__, each thread photocopies the notice into its own desk drawer (local memory)
+and points to the drawer. The TMA unit can’t open anyone’s drawer; it can only read the board.
+__grid_constant__ tells each thread to point at the board directly.
+
+How you can verify this yourself on your 5080
+This doesn’t need TMA, so it works on SM120. Write two tiny kernels that take the address of 
+a large const struct parameter:
+
+struct alignas(64) Blob { int v[32]; };            // 128 bytes, like a CUtensorMap
+__device__ int sink(Blob const* p) { return p->v[threadIdx.x % 32]; }
+__global__ void no_gc(Blob const b, int* out)                 { out[threadIdx.x] = sink(&b); }
+__global__ void with_gc(__grid_constant__ Blob const b, int* out) { out[threadIdx.x] = sink(&b); }
+
+Mark sink with __noinline__ so the compiler can’t optimize the address away.
+Compile with nvcc -arch=sm_120 -Xptxas -v, and inspect with cuobjdump -sass. 
+The two outputs to compare:
+ptxas -v reports bytes stack frame per kernel. I expect no_gc to show a nonzero stack frame 
+(the local copy) and with_gc to show 0.
+In the SASS, no_gc should contain local stores (STL) copying the struct onto the stack, and
+with_gc should not.
+
+That’s my expectation from how the feature is specified. The compiler output is the real answer,
+and it’s the kind of profiling-anchored check that makes this concrete.
+
+Summary:
+Step 1: all kernel parameters live in param space (a constant bank). __grid_constant__ doesn’t
+change that.
+Step 2: reading a parameter’s value is fine; the issue only arises when its address is taken.
+Step 3: without __grid_constant__, taking the address makes the compiler copy the parameter
+into per-thread local memory and return that copy’s address. With it (and const), you get the
+original’s param-space address.
+Step 4: the TMA instruction takes the descriptor’s address, which must be in param, const, or
+global memory, never local. So __grid_constant__ is what makes tma_a usable by TMA.
+Verify: compare the -Xptxas -v stack frame size and the STL instructions in SASS for the two
+test kernels.
+
+Line 46:   TC * C, CStride dC, TiledMma mma,
+Checking the stride types for the output matrix.
+Reviewing how the epilogue and the TiledMma argument are handled.
+TC * C
+“Raw base pointer for C”: As with A/B:
+• TC is a template type parameter. It is half_t in this program only because main sets using 
+TC = cute::half_t;.
+• The address is virtual, not physical.
+Unlike A and B, C is used: at L71 it becomes mC = make_tensor(make_gmem_ptr(C), make_shape(M,N),
+dC). It is non-const because the kernel writes C.
+CStride dC
+• dC is the whole stride tuple, not the leading dimension. In gemm_nt it’s make_stride(Int<1>{},
+ldC) (L248). The leading dimension is ldC, one component of it. main sets ldC = m.
+• So mC is M-major: (M,N):(_1,ldC), counted in elements, not bytes.
+• CStride is the type of that tuple: a template parameter deduced as decltype(dC), with a static
+_1 and a dynamic int.
+“C is written with ordinary stores, not TMA”
+The source is the last line of gemm_device:
+axpby(alpha, tCrC, beta, tCgC);
+Each thread computes C = alpha·acc + beta·C on its own partition tCgC (from
+thr_mma.partition_C(gC)) and writes it with ordinary per-thread global stores.
+
+1. It may also read C. The beta·C term means C may be loaded as well. I’m not sure whether
+CuTe’s axpby skips the load when beta == 0 (it is 0 here). Checking the SASS for LDG alongside
+STG would settle it.
+2. “Often” applies to tutorials, not production. Production CUTLASS SM90 epilogues commonly
+stage C/D through shared memory and write it with TMA stores (SM90_TMA_STORE). This tutorial 
+uses direct stores for simplicity, which is why C needs only a pointer and stride. That’s a
+design choice of this example, not a general Hopper rule.
+tma_a is the hardware descriptor for memory movement, mma is the hardware descriptor for 
+math.These two parameters are fundamentally different kinds of objects.
+</pre>
+||tma_a|	mma (TiledMma)|
+|:---|:----|:------------|
+|Runtime data?|	Yes: a 128-byte CUtensorMap<br> built on the host with real values<br> (address, dims, strides)|	No: an empty object. All its<br> information is in its type.|
+|Read by hardware?|	Yes: the TMA unit reads the<br> descriptor from param space|	No: it never reaches hardware.<br> It exists only at compile time.|
+|Why pass it?|	To deliver the descriptor’s bytes|	Only so the kernel gets<br> the type (template deduction).<br> The value carries nothing.|
+<pre>
+Evidence it’s compile-time: __launch_bounds__(decltype(size(TiledMma{}))::value) (L40)
+constructs a fresh TiledMma{} from the type alone and gets the thread count as a compile-time
+constant.
+
+WGMMA’s actual hardware descriptors are something else. They are the 64-bit shared-memory matrix
+descriptors that encode the smem start address, layout type, and swizzle for each operand.
+They’re built inside the kernel, by thr_mma.make_fragment_A(tCsA) / make_fragment_B(tCsB). The
+tutorial comment above those lines says it: tCrA and tCrB are tensors of MMA descriptors, not
+register data. So the closest analogue to tma_a’s descriptor is the contents of tCrA/tCrB, not
+mma.
+What TiledMma does encode:
+Which instruction: SM90_64x64x16_F16F16F16_SS<MN, MN> (L264):
+a 64×64×16 tile per instruction;
+FP16 inputs and FP16 accumulator;
+SS means both A and B are read from shared memory;
+both operands are MN-major.
+Thread arrangement: one warpgroup of 128 threads. With no extra tiling in make_tiled_mma,
+size(tiled_mma) == 128, which sets dimBlock (L281) and __launch_bounds__.
+Data mapping: how partition_A/B/C split smem and the accumulators among the 128 threads.
+Matrix shapes are passed in explicitly. shape_MNK carries the dynamic (M,N,K) (L238 prob_shape),
+and the kernel uses it at L67 (auto [M, N, K] = shape_MNK). It’s an input, not something the
+kernel avoids.
+
+What the template parameters actually decouple is the mechanics: memory layout, major-ness,
+swizzle, and instruction choice. Evidence: gemm_nt and gemm_tn launch the same gemm_device body 
+with different dA/dB, smem layouts, TMA atoms, and MMA atoms. The kernel code doesn’t change 
+between NT and TN.
+
+It is also not fully decoupled from tile shapes. The static asserts at L54–57 tie the smem 
+layouts to cta_tiler. And the kernel still hard-codes assumptions:
+
+ConsumerBarType::init(&consumer_mbar[pipe], 128) hard-codes 128 consumer threads.
+The epilogue is labeled unpredicated: there’s no bounds check, so it assumes M and N are
+multiples of the 128×128 CTA tile.
+Summary:
+</pre>
+|Claim|	Verdict|
+|:----|:-------|
+|C is the raw base pointer<br> of the output|template type TC = half_t here;<br> virtual address;<br> non-const; used at L71).|
+|dC | the same issue as dA. dC is the<br> full tuple (_1, ldC); ldC <br>is the leading dimension;<br> units are elements.|
+|C is written by ordinary<br> stores, so no TMA descriptor|	for this kernel<br> (axpby, which may also read C for beta).<br> Production SM90 epilogues often use TMA stores.|
+|mma, it never reaches hardware.<br> It exists only at compile time |TiledMma is an empty compile-time<br> type that never reaches hardware.<br> WGMMA’s hardware descriptors are<br> the smem descriptors in tCrA/tCrB.|
+|TiledMma encodes the instruction,<br> the 128-thread arrangement,<br> the data mapping|	SM90_64x64x16_F16F16F16_SS,<br> one warpgroup, partition_*.|
+|The kernel assumes 128 threads| Shapes come in via shape_MNK.<br> Templates decouple the mechanics <br>(layout, major-ness, instructions),<br> and the kernel still assumes<br> 128 threads and tile-multiple M and N.|
+
