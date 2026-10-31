@@ -331,4 +331,65 @@ Summary:
 |mma, it never reaches hardware.<br> It exists only at compile time |TiledMma is an empty compile-time<br> type that never reaches hardware.<br> WGMMA’s hardware descriptors are<br> the smem descriptors in tCrA/tCrB.|
 |TiledMma encodes the instruction,<br> the 128-thread arrangement,<br> the data mapping|	SM90_64x64x16_F16F16F16_SS,<br> one warpgroup, partition_*.|
 |The kernel assumes 128 threads| Shapes come in via shape_MNK.<br> Templates decouple the mechanics <br>(layout, major-ness, instructions),<br> and the kernel still assumes<br> 128 threads and tile-multiple M and N.|
+<pre>
+Line 68: auto [M, N, K] = shape_MNK;
+Line 69: Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));               
+Line 70: Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));   
+Line 71: Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC); 
+  
+L68: auto [M, N, K] = shape_MNK;
+It is a C++17 structured binding that unpacks the CuTe tuple shape_MNK (built at L238 as
+make_shape(M, N, K)). M, N, K are plain runtime ints (L241–243), so they are dynamic,
+not Int<…> static constants.
+
+mA / mB: Represents the full extent of A and B, ready to be sliced: local_tile at L76–77 tiles
+them. But they are not views of memory:
+mC (a pointer tensor): mC(m,n) is a reference to an actual half_t in global memory.
+mA (a coordinate tensor): mA(m,k) is a TMA coordinate tuple, just integers. There is no pointer
+inside mA, and indexing it never touches memory.
+The TMA instruction takes descriptor + coordinates, not addresses, so the kernel-side
+representation of A only needs coordinates.
+
+tma_a.get_tma_tensor(...):
+tma_a is the Copy_Atom. It contains the 128-byte descriptor plus CuTe’s aux params. It’s kernel
+param space, implemented as a constant bank.
+The descriptor contains the base address, the strides in bytes (not dA itself, which is in 
+elements, and only for dims ≥1), the box dims, and the swizzle mode.
+
+get_tma_tensor(make_shape(M,K)) builds a coordinate tensor of shape (M,K) from the atom’s aux 
+params. Each element is the TMA coordinate of that position. Sliced tiles of it (tAgA(_,k_tile)) 
+provide the box coordinates the TMA instruction needs. The address of A lives only in the 
+descriptor.
+
+make_gmem_ptr(C)
+make_gmem_ptr(C) wraps the raw half_t* in CuTe’s gmem_ptr<…> type. It is a compile-time tag 
+with no runtime cost. print(mC) would show the iterator as a gmem pointer.
+
+
+
+
+make_tensor(..., make_shape(M,N), dC)
+dC is the stride tuple (_1, ldC), counted in elements, not a “physical stride.” The epilogue
+writes with ordinary per-thread stores, not TMA, so a real address-producing tensor is needed.
+
+</pre>
+||	mA / mB|	mC|
+|:--|:----|:----|
+|Built from|	Atom aux params plus the shape|	Pointer C plus the shape<br> plus stride dC|
+|Iterator|	Counting iterator (ArithTuple)|	gmem_ptr<half_t>|
+|tensor(i,j) yields|	A TMA coordinate tuple (integers)|	A reference to a half_t in<br> global memory|
+|Consumer|	TMA instruction (via tAgA), plus the descriptor|	Threads’ ordinary loads<br> and stores (axpby)|
+|Where the address lives|	Only inside the descriptor|	In the tensor itself|
+<pre>
+Summary
+</pre>
+|claim	|Verdict|
+|:-----|:-------|
+|mA/mB represent the full<br> A and B, ready to slice|yes, extent and slicing. they’re<br> coordinate tensors with no pointer.|
+|tma_a is the 128-byte descriptor| It’s the atom containing the descriptor<br> plus aux params, in param space.|
+|The descriptor contains A, dA, and the swizzle|	Address, byte strides (dims ≥1), <br>box dims, and swizzle mode.|
+get_tma_tensor doesn't read the descriptor|It doesn’t read the opaque descriptor;<br> it uses the aux params plus the shape<br> to build coordinates. The address<br? stays in the descriptor.
+|make_gmem_ptr attaches a<br> memory-space tag| yes.|
+|mC is built from pointer,<br> shape, and stride because C<br> isn’t written with TMA.| dC is the stride tuple<br> in elements, not a “physical stride.”|
+</pre>
 
