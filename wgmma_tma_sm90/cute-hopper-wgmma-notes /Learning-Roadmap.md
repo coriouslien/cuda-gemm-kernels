@@ -680,6 +680,9 @@ Both tma_partition arguments describe the second.
 
 
 
+
+
+  
   
     GMMA::Layout_K_SW128_Atom<TA>{},
     make_shape(bM,bK,bP)
@@ -884,7 +887,29 @@ This connects tma_partition() directly to Hopper's asynchronous synchronization 
 13. Summary: the complete execution flow
 TMA data preparation and transfer
 1. Create global-memory tensors
-   gA, gB represent the selected matrix tiles in global memory.
+gA, gB are this CTA’s tiles of A, B, expressed as global TMA coordinates. Each element is the
+global position in A, B that the tile element corresponds to. It does not contain the tile’s
+data, and it is not a pointer.
+Here use gA as explanation.
+Here is the shape of it. gA has shape (128, 64, 16) in the default run:
+Mode 0 (128): rows within a tile.
+Mode 1 (64): columns within a tile.
+Mode 2 (16): the k-tiles, one tile per step along K.
+In the simple case where the TMA dimensions are just A’s (M,K) modes, the element for CTA
+blockIdx.x = b is:
+gA(i, j, k) = (b·128 + i,  k·64 + j)
+That is a coordinate in the whole matrix A, not a position within the tile. “Global” means the 
+coordinate is measured from the origin of A, so the b·128 and k·64 offsets are already included. 
+(For this NT configuration the real TMA dimension order may differ from plain (M,K). Printing gA
+would show it.)
+Two points to keep straight:
+Coordinates, not addresses. The TMA hardware turns a coordinate into a memory address using the
+descriptor’s base address and strides.
+Why “tile coordinates” matters. tAgA(_, k_tile) later hands the TMA instruction the first 
+coordinate of that tile, the box origin.
+
+
+  
 2. Create shared-memory tensors
    sA, sB describe the shared-memory buffers and their swizzled layouts.
 3. Group tensor modes
