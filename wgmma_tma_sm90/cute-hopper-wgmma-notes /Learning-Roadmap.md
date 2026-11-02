@@ -754,6 +754,9 @@ The distinction:
 The first grouped mode represents the matrix tile on both sides. The second mode represents the 
 iteration or storage stage.
 8. tma_partition() actually does
+Reorders and offsets mode 0 per the atom and multicast configuration. 
+The shapes (TMA,k) and (TMA,PIPE) and “TMA is not another matrix dimension” are also correct.
+  
 tma_partition(
     tma_a,
     Int<0>{},
