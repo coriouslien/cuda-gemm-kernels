@@ -908,8 +908,6 @@ descriptor’s base address and strides.
 Why “tile coordinates” matters. tAgA(_, k_tile) later hands the TMA instruction the first 
 coordinate of that tile, the box origin.
 
-
-  
 2. Create shared-memory tensors
    sA, sB describe the shared-memory buffers and their swizzled layouts.
 3. Group tensor modes
@@ -925,6 +923,22 @@ coordinate of that tile, the box origin.
    The producer barrier signals when TMA has finished, allowing WGMMA to consume the 
    shared-memory tiles.
 
+Summary:
+- tma_partition prepares, doesn’t transfer
+- Return order (gmem, smem)	Correct
+- Int<0> is Rank in the multicast group
+- Layout<_1> is Multicast-group layout; the cluster is 2 CTAs
+- sA built with NT uses Layout_MN_SW128; it’s also the kernel’s smem tensor, not the host layout
+((8192),3) after grouping	Wrong. Shape is ((128,64),3); 8192 is size<0>
+- tAgA/tAsA shapes (TMA,k), (TMA,PIPE)	
+- tAgA(_,k_tile) selects a global tile	Selects that tile’s coordinates
+Pipeline overlap;  refills wait for the MMA on that stage
+- B is N×K
+- Transaction-byte logic
+
+  
+
+  
 I would like to focus on the relationship between these three statements:
 auto [tAgA, tAsA] = tma_partition(...);
 
