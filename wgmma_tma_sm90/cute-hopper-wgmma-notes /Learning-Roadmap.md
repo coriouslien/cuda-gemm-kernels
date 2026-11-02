@@ -648,19 +648,39 @@ multicast barriers and shared-memory synchronization.
   
 6. Understand group_modes<0,2>(sA)
 group_modes<0,2>(sA)
-To understand it, recall how sA was constructed earlier:
-auto sA = tile_to_shape(
-  Layout<_1>{} is the layout of the multicast group: the CTAs that receive the same TMA load. It has size 1, so each CTA loads its own tile and nothing is shared. Together with Int<0>{}, this CTA’s rank within that group, it says “no multicast.” This must match the host side, where make_tma_atom was built without a multicast cluster size. The 2-CTA cluster launched at L282 is unrelated to this layout.
+That line is in gemm_tn. The default run (transA='N', transB='T') goes through gemm_nt, which
+uses Layout_MN_SW128_Atom.
+The sA that group_modes receives is the kernel’s smem tensor (L83), built from that layout. It
+is not the host-side layout.
+The shape stays ((128,64),3), which is hierarchical. What equals 8192 is size<0>, not the shape.
+Grouping does not rearrange or copy data.
+gA is ((128,64),k) and sA is ((128,64),3). Using k = number of k-tiles (16 here).
+
+Layout<_1>{} is the layout of the multicast group: the CTAs that receive the same TMA load. 
+It has size 1, so each CTA loads its own tile and nothing is shared. Together with Int<0>{},
+this CTA’s rank within that group, it says “no multicast.” This must match the host side, where
+make_tma_atom was built without a multicast cluster size. The 2-CTA cluster launched at L282 is
+unrelated to this layout.
 
 Where this comes from
-
-The distinction between the two concepts rests on two things in your file: the dimCluster(2,1,1) launch at L282, and the tutorial comment at L92–93. The statement that these arguments describe the multicast group, not the cluster, is my recollection of CuTe’s tma_partition (cute/atom/copy_traits_sm90_tma.hpp) and of how CUTLASS’s SM90 mainloops use it. I haven’t re-read the source for this answer. To check it yourself, open the function’s definition in your CUTLASS checkout and look at what it does with cta_layout and cta_coord. I expect only the multicast offset computation, and nothing about cluster launch geometry.
+The distinction between the two concepts rests on two things in the file: the dimCluster(2,1,1) 
+launch at L282, and the tutorial comment at L92–93. The statement that these arguments describe the multicast group, not the cluster, is my recollection of CuTe’s tma_partition
+(cute/atom/copy_traits_sm90_tma.hpp) and of how CUTLASS’s SM90 mainloops use it. I haven’t re-
+read the source for this answer. Ppen the function’s definition in the CUTLASS checkout and look
+at what it does with cta_layout and cta_coord. I expect only the multicast offset computation,
+and nothing about cluster launch geometry.
 
 Summary
 Layout<_1>{} is a multicast-group layout of size 1, not a cluster layout.
 Int<0>{} is this CTA’s rank in that group, not its CTA index. Every CTA passes 0.
 Together they mean no multicast.
-Rule: cluster = how the grid is launched; multicast group = which CTAs share one TMA load. Both tma_partition arguments describe the second.
+Rule: cluster = how the grid is launched; multicast group = which CTAs share one TMA load. 
+Both tma_partition arguments describe the second.
+
+
+
+
+  
     GMMA::Layout_K_SW128_Atom<TA>{},
     make_shape(bM,bK,bP)
 );
