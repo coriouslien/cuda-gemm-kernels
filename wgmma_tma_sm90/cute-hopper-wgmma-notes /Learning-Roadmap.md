@@ -417,7 +417,32 @@ They describe corresponding portions of the source and destination tensors.
 Suppose matrix A is stored in GPU global memory, and I want to transfer a tile into Hopper
 shared memory.
 Global memory:
-gA — Original matrix A
+mA: represents the original, full matrix A in global memory.
+gA: represents the portion of matrix A selected for this CTA, not the entire original matrix.
+gA is constructed using local_tile():
+Tensor mA = tma_a.get_tma_tensor(make_shape(M, K));
+Tensor gA = local_tile(
+    mA,
+    cta_tiler,
+    cta_coord,
+    Step<_1, X, _1>{}
+);
+For example, if the CTA tile has dimensions 128 x 64, gA represents this CTA's assigned 
+128-row block, with its K tiles available for iteration.
+More precisely, its logical shape is: gA=(128,64,k)
+where k represents the number of K tiles assigned to this CTA.
+Tensor	      description
+mA	          Full matrix A in global memory
+gA	          This CTA's selected portion of matrix A in global memory
+sA	          Shared-memory layout for the CTA's A operand tiles
+tAgA	        TMA-partitioned global-memory source view
+tAsA	        TMA-partitioned shared-memory destination view
+
+Additional distinction: gA is a tensor view of the selected region, not a separate physical copy
+of the matrix data.
+      
+
+      
 Large matrix stored in device memory
 TMA transfer
 Uses the TMA tensor descriptor
