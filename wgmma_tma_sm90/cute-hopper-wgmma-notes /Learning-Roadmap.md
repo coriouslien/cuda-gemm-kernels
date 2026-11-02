@@ -560,7 +560,82 @@ Int<0> is the rank in the multicast group, and every CTA passes 0.
 The multicast group sits inside the cluster, and the kernel’s Layout<_1> must match the host
 atom.
 
+multicast group and  cluster:
+In NVIDIA Hopper (SM90), a CTA cluster and a multicast group are related, but they describe two
+different things.
 
+The simplest way to distinguish them is:
+- CTA cluster: Defines which CTAs are grouped together for cooperative execution.
+- Multicast group: Defines which CTAs receive the same data through a single multicast TMA
+transfer.
+Let's examine them step by step.
+1. CTA cluster
+A CTA (Cooperative Thread Array) is essentially a CUDA thread block.
+
+A CTA cluster groups multiple CTAs together so they can cooperate. Hopper introduced thread-
+block clusters as a hardware-supported programming model.
+
+For example, the tutorial uses:
+dim3 dimCluster(2, 1, 1);
+This means: 2 x 1 \times 1 = 2  CTAs per cluster
+
+One CTA cluster
+CTA 0                         CTA 1
+Thread block 0               Thread block 1
+  
+Both CTAs belong to the same cluster.
+CTAs in a cluster can use cluster-level synchronization and access each other's shared memory
+through distributed shared memory mechanisms.
+
+Importantly, belonging to the same cluster does not automatically mean they receive the same TMA
+data.
+2. Multicast group
+A multicast group is associated with a particular TMA transfer.
+It determines which CTAs in the cluster participate as recipients of the same transferred data.
+For example, suppose the cluster contains two CTAs:
+Case A: No multicast
+Multicast group 0
+One recipient
+CTA 0
+
+CTA 1
+Not included in this transfer's multicast group
+
+The TMA transfer targets CTA 0 only.
+
+Case B: Multicast
+One multicast group
+CTA 0
+
+CTA 1
+Both CTAs receive the same TMA transfer.
+
+Multicast can reduce redundant data movement when multiple CTAs need the same data.
+3. How they relate in your tutorial
+Your tutorial has:
+dim3 dimCluster(2, 1, 1);
+Therefore: Cluster size=2
+But the TMA partition uses:
+Int<0>{}, Layout<_1>{}
+
+The multicast-group configuration has size one:
+Multicast group size=1
+
+So:
+Concept	Value	Meaning
+CTA cluster size	2	Two CTAs belong to the cluster
+Multicast-group size	1	Only one CTA participates in this TMA multicast group
+Multicast	Disabled for this transfer	No data distribution to multiple CTAs
+One important clarification: The multicast group is not another independent hardware execution
+group like a CTA cluster. It is a recipient configuration for a particular multicast operation, mapped within the cluster.
+4. The key takeaway
+Think of it this way:
+- A cluster answers: Which CTAs are grouped together and can cooperate?
+- A multicast group answers: Which of those CTAs should receive this particular TMA transfer?
+A cluster of two CTAs can have a multicast group of one or two CTAs, depending on the TMA
+operation.
+That distinction is essential when studying Hopper TMA, especially when developer later examine
+multicast barriers and shared-memory synchronization.
 
 
 
