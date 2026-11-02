@@ -391,5 +391,351 @@ Summary
 get_tma_tensor doesn't read the descriptor|It doesn’t read the opaque descriptor;<br> it uses the aux params plus the shape<br> to build coordinates. The address<br? stays in the descriptor.
 |make_gmem_ptr attaches a<br> memory-space tag| yes.|
 |mC is built from pointer,<br> shape, and stride because C<br> isn’t written with TMA.| dC is the stride tuple<br> in elements, not a “physical stride.”|
+<pre>
+Line 98:  auto [tAgA, tAsA] = tma_partition(tma_a, Int<0>{}, Layout<_1>{},
+          group_modes<0,2>(sA), group_modes<0,2>(gA)); 
+Line 101:  auto [tBgB, tBsB] = tma_partition(tma_b, Int<0>{}, Layout<_1>{},
+          group_modes<0,2>(sB), group_modes<0,2>(gB));  
+These two statements are very important in NVIDIA's Hopper programming model. They connect TMA
+(Tensor Memory Accelerator), CuTe tensor layouts, global memory, and shared memory.
+The purpose of tma_partition() is to partition the global-memory and shared-memory tensors into
+the portions that the TMA operation will transfer.
+The first statement in detail. The second statement does exactly the same thing for matrix B.
+auto [tAgA, tAsA] = tma_partition(
+    tma_a,
+    Int<0>{},
+    Layout<_1>{},
+    group_modes<0,2>(sA),
+    group_modes<0,2>(gA)
+);
+
+The result contains two different tensor views:
+- tAgA: the global-memory side of the TMA transfer.
+- tAsA: the shared-memory side of the TMA transfer.
+They describe corresponding portions of the source and destination tensors.
+1. The data movement
+Suppose matrix A is stored in GPU global memory, and I want to transfer a tile into Hopper
+shared memory.
+Global memory:
+gA — Original matrix A
+Large matrix stored in device memory
+TMA transfer
+Uses the TMA tensor descriptor
+Shared memory:
+sA — Swizzled shared-memory layout
+Tile storage organized for WGMMA
+The TMA operation moves the data. tma_partition() prepares the corresponding tensor views 
+that describe the transfer.
+It is important to distinguish preparation from execution: calling tma_partition() does not
+itself transfer matrix data.
+2. The C++ structured binding
+First, look at this part:
+auto [tAgA, tAsA] = ...
+This is C++17 structured binding syntax.
+The function tma_partition() returns a pair of tensor objects, and C++ assigns them to two
+variables.
+For this CUTLASS implementation, the order is:
+tAgA = global-memory partition;
+tAsA = shared-memory partition;
+The naming convention is useful:
+Variable	Meaning
+t	Tiled or partitioned tensor
+A	Matrix operand A
+g	Global memory
+s	Shared memory
+
+So:
+- tAgA: partitioned global-memory tensor for A.
+- tAsA: partitioned shared-memory tensor for A.
+I should remember this because some newer CuTe DSL examples use a different return ordering.
+In this C++ tutorial, follow the actual source code and its comments. 
+3. Understand the first argument: tma_a
+tma_a"
+This is the TMA copy atom created earlier, using:
+Copy_Atom tmaA = make_tma_atom(
+    SM90_TMA_LOAD{},
+    mA,
+    sA(_,_,0),
+    make_shape(bM,bK)
+);
+Understand what this does.
+- SM90_TMA_LOAD{} specifies a Hopper TMA global-to-shared-memory load.
+- mA describes matrix A in global memory.
+- sA(_,_,0) supplies the shared-memory layout for one pipeline stage.
+- make_shape(bM,bK) specifies the tile transferred by the TMA operation.
+The resulting tma_a contains the information needed to perform the TMA operation, including its
+tensor-map descriptor and copy configuration.
+In other words, tma_a tells CuTe and the hardware how to transfer a tile of A from global memory
+into shared memory.
+4. Understand the second argument: Int<0>{}
+Int<0>{}:
+This is a compile-time integer value of zero.
+In this particular TMA partitioning operation, it specifies the CTA's position in the cluster
+for TMA multicast purposes.
+Why is it zero?
+Because this tutorial uses:
+Layout<_1>{}
+which describes a cluster layout containing just one CTA for the TMA partitioning.
+The tutorial's comment explicitly explains:
+// The Int<0>, Layout<_1> indicates that the TMAs are not multicasted.
+TMA multicast is a Hopper feature that allows one TMA transfer to distribute data to multiple
+CTAs in a thread-block cluster.
+In this tutorial, multicast is not being used.
+5. Understand the third argument: Layout<_1>{}
+Layout<_1>{}:
+This describes the CTA layout used for the TMA partition.
+_1 is a CuTe compile-time integer representing one.
+Therefore:
+CTA layout size=1
+There is only one CTA participating in this TMA partition.
+This works together with Int<0>{}:
+- CTA index = 0.
+- CTA layout size = 1.
+- No multicast.
+An important distinction: this is not the layout of matrix A. The matrix A layout is provided
+through sA and gA. Layout<_1>{} describes the cluster participation for this TMA operation.
+6. Understand group_modes<0,2>(sA)
+group_modes<0,2>(sA)
+To understand it, recall how sA was constructed earlier:
+auto sA = tile_to_shape(
+    GMMA::Layout_K_SW128_Atom<TA>{},
+    make_shape(bM,bK,bP)
+);
+Its logical shape is:
+sA=(bM,bK,bP)
+For the tutorial example:
+sA=(128,64,3)
+These three dimensions represent:
+- M: rows of the matrix tile.
+- K: columns of the matrix tile.
+- P: pipeline stages.
+What does group_modes<0,2> do?
+It groups modes starting at index 0 and ending before index 2.
+In other words, it combines the first two dimensions into one dimension.
+Before:
+(128,64,3)
+After:
+((128,64),3)
+Conceptually:
+Before grouping
+M        K         p
+128      64        3
+  
+After grouping
+M × K                                    p
+8192                                     3
+One complete matrix tile                 Pipeline stages
+
+Mathematically: 128 x 64=8192
+The grouped tensor now has two modes: ((8192),3)
+
+Why do we group M and K?
+Because TMA is responsible for transferring the entire matrix tile in mode 0. We want the TMA
+operation to handle the complete 128 × 64 tile as one transfer, while the pipeline stage remains
+a separate dimension.
+Notice that grouping modes does not physically rearrange or copy the data. It changes the
+logical organization of the tensor view.
+The same operation is performed on the global-memory tensor:
+group_modes<0,2>(gA)
+7. Understand group_modes<0,2>(gA)
+Earlier in the tutorial, the global-memory tensor is constructed as follows
+auto [M, N, K] = shape_MNK;
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+auto cta_coord = make_coord(blockIdx.x, blockIdx.y, _);              // (m,n,k)
+Tensor gA = local_tile(
+  mA, 
+  cta_tiler, 
+  cta_coord, 
+  Step<_1, X,_1>{}
+);  // (BLK_M,BLK_K,k)
+- mA represents the full matrix A in global memory.
+- local_tile() selects the matrix tiles assigned to this CTA.
+- gA represents the selected tiles across the K iteration dimension.
+Its shape is: gA=(bM,bK,k)
+lowercase k represents the number of K tiles, not the K dimension within an individual tile.
+After grouping:
+group_modes<0,2>(gA)
+the shape becomes: ((bM,bK),k)
+For example: ((128,64),k)
+
+Compare the two grouped tensors:
+Tensor	Before grouping	       After grouping
+sA	    (128,64,3)	           ((128,64),3)
+gA	    (128,64,k)	           ((128,64),k)
+The distinction:
+- The shared-memory tensor has 3 pipeline stages.
+- The global-memory tensor has however many K tiles must be processed.
+The first grouped mode represents the matrix tile on both sides. The second mode represents the 
+iteration or storage stage.
+8. tma_partition() actually does
+tma_partition(
+    tma_a,
+    Int<0>{},
+    Layout<_1>{},
+    group_modes<0,2>(sA),
+    group_modes<0,2>(gA)
+);
+Argument	             Purpose
+tma_a	                 Defines the TMA transfer operation
+Int<0>{}	             CTA cluster coordinate
+Layout<_1>{}           CTA cluster layout; one CTA, no multicast
+group_modes<0,2>(sA)   Grouped shared-memory destination view
+group_modes<0,2>(gA)	 Grouped global-memory source view
+
+tma_partition() then performs a specialized partitioning for the TMA operation.
+It reorders and offsets the first mode according to the TMA atom's requirements and the
+multicast configuration.
+
+The result is:
+auto [tAgA, tAsA] = ...;
+The resulting shapes are documented in the tutorial: 
+tAgA=(TMA,k)
+tAsA=(TMA,PIPE)
+TMA represents the TMA-managed tile portion. It is not another matrix dimension.
+TMA handles the entire first mode, and the program selects the appropriate global tile and
+shared-memory pipeline stage using the second mode. 
+9. See how tAgA and tAsA are actually used
+In the tutorial, I find:
+copy(
+    tma_a.with(producer_mbar[pipe]),
+    tAgA(_, k_tile),
+    tAsA(_, pipe)
+);
+A. tAgA(_, k_tile)
+This selects a particular K tile from global memory.
+Suppose: k_tile = 0;
+Then: tAgA(_, 0)
+means:
+- Select global-memory tile number 0.
+- Keep the entire TMA-managed portion, represented by _.
+If:
+k_tile = 1;
+it selects the next tile along K.
+B. tAsA(_, pipe)
+This selects a particular shared-memory pipeline stage.
+For example: pipe = 0;
+selects shared-memory stage 0.
+If: pipe = 1;
+it selects stage 1.
+C. The complete copy
+copy(
+    tma_a.with(producer_mbar[pipe]),
+    tAgA(_, k_tile),
+    tAsA(_, pipe)
+);
+This tells TMA:
+Transfer the selected matrix tile from global memory into the selected shared-memory pipeline 
+stage, and use the specified producer barrier to signal completion.
+The TMA transfer is asynchronous. The CPU-like CUDA thread issuing the operation does not need
+to copy each element individually.
+10. Visualize the three pipeline stages
+Suppose we have three shared-memory stages:
+Global-memory K tiles
+0            1            2          3         4         5
+K tile       K tile       K tile    K tile     K tile    K tile
+
+Shared-memory pipeline
+Stage 0  Shared memory       K tile 0
+sA(:,:,0)
+
+Stage 1  Shared memory       K tile 1
+sA(:,:,1)
+
+
+
+Stage 2  Shared memory  K tile 2
+sA(:,:,2)
+
+Illustration of the initial loading sequence. During the main loop, the three stages are reused
+in a circular pipeline.
+The program can load a subsequent tile while WGMMA consumes a previously loaded tile.
+This is one of the important performance advantages of Hopper's asynchronous TMA and WGMMA
+operations.
+11. What about matrix B?
+The second statement:
+auto [tBgB, tBsB] = tma_partition(
+    tma_b,
+    Int<0>{},
+    Layout<_1>{},
+    group_modes<0,2>(sB),
+    group_modes<0,2>(gB)
+);
+Does exactly the same thing for matrix B.
+The difference is the logical dimensions:
+Matrix A	         Matrix B
+sA                 sB
+gA	               gB
+tma_a	             tma_b
+tAgA	             tBgB
+tAsA	             tBsB
+
+For a conventional GEMM:
+C_MxN = (A_MxK) x B_KxN
+This tutorial uses a transposed representation for B:
+B_NxK
+That is why its B tile is organized using N and K rather than K and N.
+12. One more connection: TMA transaction bytes
+Immediately after the partitioning statements, the tutorial calculates:
+Line 105:  // The TMA is responsible for copying everything in mode-0 of tAsA and tBsB
+constexpr int tma_transaction_bytes =
+    sizeof(make_tensor_like(tensor<0>(tAsA)))
+  + sizeof(make_tensor_like(tensor<0>(tBsB 
+
+Why?  
+Because TMA is asynchronous, and the program needs to know how many bytes are expected to 
+arrive before the producer barrier can signal completion.
+The expression: tensor<0>(tAsA)
+selects the first mode of the shared-memory partition, which represents the complete 
+TMA-managed tile.
+make_tensor_like() creates a corresponding tensor representation, and sizeof() calculates its 
+storage size.
+The sizes for A and B are added together because the producer barrier tracks both transfers.
+Later:
+Line 144: // Set expected Tx Bytes after each reset / init
+ProducerBarType::arrive_and_expect_tx(
+    &producer_mbar[pipe],
+    tma_transaction_bytes // sets the expected transaction size.
+);
+This connects tma_partition() directly to Hopper's asynchronous synchronization mechanism.
+
+13. Summary: the complete execution flow
+TMA data preparation and transfer
+1. Create global-memory tensors
+   gA, gB represent the selected matrix tiles in global memory.
+2. Create shared-memory tensors
+   sA, sB describe the shared-memory buffers and their swizzled layouts.
+3. Group tensor modes
+   group_modes<0,2>() combines the two matrix dimensions into one tile mode, leaving the K 
+  iteration or pipeline stage separate.
+4. Partition for TMA
+   tma_partition() creates the corresponding global and shared-memory views.
+5. Calculate expected transaction bytes
+   The program determines how many bytes the TMA operations will transfer.
+6. Issue asynchronous TMA copies
+   copy() transfers global-memory tiles into shared-memory pipeline stages.
+7. Synchronize and execute WGMMA
+   The producer barrier signals when TMA has finished, allowing WGMMA to consume the 
+   shared-memory tiles.
+
+I would like to focus on the relationship between these three statements:
+auto [tAgA, tAsA] = tma_partition(...);
+
+copy(tma_a.with(producer_mbar[pipe]),
+     tAgA(_, k_tile),
+     tAsA(_, pipe));
+
+ProducerBarType::wait(
+    &producer_mbar[read_pipe],
+    read_state.phase()
+);
+     
+Together, they demonstrate how Hopper moves data asynchronously from global memory to shared
+memory and synchronizes that transfer with WGMMA.
+
+The key concept I should remember is:
+tma_partition() describes the transfer, copy() launches the transfer, and the producer barrier
+tells the consumer when the transfer is complete.
+
+Source: NVIDIA's CUTLASS Hopper WGMMA + TMA tutorial
 </pre>
 
