@@ -535,6 +535,31 @@ Int<0>{} is this CTA’s rank in that group, not its CTA index. Every CTA passes
 Together they mean no multicast.
 Rule: cluster = how the grid is launched; multicast group = which CTAs share one TMA load. 
 Both tma_partition arguments describe the second.
+  
+Layout<_1>{} describes the multicast-group layout … not the layout of the entire CTA cluster.
+Size = 1, only one CTA in the group, rank = 0.
+Each cluster contains two CTAs (L282). A size-1 multicast group doesn’t change the cluster size.
+The TMA transfer is not shared with another CTA through multicast, and this is the real
+consequence.
+Int<0>{} is the CTA’s rank within the multicast group.
+The remember-this sentence:
+Cluster size and multicast-group size are two different quantities. A cluster can contain two
+CTAs while a particular TMA transfer uses a multicast group of size one.
+  
+A multicast group containing one CTA vs. the cluster: to make the relationship precise, a
+multicast group is a set of CTAs within a cluster. Here the group is size 1 in a cluster of 2.
+In a multicast kernel, the group would be some subset of the cluster, or all of it.
+The 0 is the same in every CTA. Both CTAs in a cluster pass Int<0>{}, because each is alone in
+its own group. Rank 0 does not mean the first CTA of the cluster.
+The multicast setting has to match the host side. make_tma_atom was called without a multicast
+cluster size (default 1), and the kernel’s Layout<_1> has to agree with that.
+
+Summary
+The cluster is a launch property (2 CTAs here); the multicast group is a TMA property (1 CTA here).
+Int<0> is the rank in the multicast group, and every CTA passes 0.
+The multicast group sits inside the cluster, and the kernel’s Layout<_1> must match the host
+atom.
+
 
 
 
