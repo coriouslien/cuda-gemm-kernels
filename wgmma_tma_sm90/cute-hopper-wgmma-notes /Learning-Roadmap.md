@@ -964,6 +964,93 @@ The key concept I should remember is:
 tma_partition() describes the transfer, copy() launches the transfer, and the producer barrier
 tells the consumer when the transfer is complete.
 
-Source: NVIDIA's CUTLASS Hopper WGMMA + TMA tutorial
+Line 105:
+constexpr int tma_transaction_bytes =
+    sizeof(make_tensor_like(tensor<0>(tAsA)))
+  + sizeof(make_tensor_like(tensor<0>(tBsB)));
+ 
+This statement calculates the combined byte count for mode 0 of tAsA and mode 0 of tBsB. It calculates the number of bytes expected from the 
+two TMA loads for one pipeline stage. It does not calculate the total shared memory allocation for tAsA and tBsB across all pipeline stages.
+Earlier in the kernel:
+auto [tAgA, tAsA] = tma_partition(...); // (TMA, k) and (TMA, PIPE)
+auto {tBgB, tBsB] = tma_partition(...); // (TMA,k) and (TMA,PIPE) 
+The relevant destination tensor shapes are:
+Tensor	Mode 0	                            Mode 1
+tAsA	Elements transferred by TMA for A	Pipeline stage
+tBsB	Elements transferred by TMA for B	Pipeline stage
+
+Therefore:
+- tensor<0>(tAsA) selects the mode-0 tensor for A.
+- tensor<0>(tBsB) selects the mode-0 tensor for B.
+- The pipeline dimension is excluded from the byte calculation.
+This matches NVIDIA's tutorial comment, which states that TMA copies all elements in mode 0.
+2. Understanding tensor<0>, make_tensor_like, and sizeof
+Consider:
+sizeof(make_tensor_like(tensor<0>(tAsA)))
+
+
+It works in three steps:
+1. tensor<0>(tAsA) constructs a tensor view using the layout of mode 0 of tAsA.
+2. make_tensor_like(...) creates an owning register tensor with the same element type and shape, and a compatible layout.
+3. sizeof(...) obtains the C++ storage size of that newly constructed tensor type, in bytes.
+Important: sizeof is not measuring the original shared-memory tensor view, which contains pointer and layout information. Instead, make_tensor_like provides an owning tensor whose storage size can be used to calculate the transfer byte count. This behavior follows the CuTe implementation. 
+GitHub
+
+3. Calculate the actual byte count for the default tutorial
+The default gemm_nt configuration specifies:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};
+
+
+The elements of both A and B have type cute::half_t, which occupies 2 bytes. 
+GitHub
+
+
+For one pipeline stage:
+Tensor	Elements	Bytes
+tensor<0>(tAsA)	128 × 64 = 8,192	16,384
+tensor<0>(tBsB)	128 × 64 = 8,192	16,384
+Total	16,384	32,768
+
+Therefore:
+\[
+\boxed{\text{tma\_transaction\_bytes}=32768\text{ bytes}=32\text{ KiB}}
+\]
+
+Because bP = 3, the A and B pipeline buffers together hold 96 KiB of tile data across three stages, excluding barriers and other storage overhead.
+4. Why does the kernel need this value?
+Look at the following code:
+ProducerBarType::arrive_and_expect_tx(
+    &producer_mbar[pipe],
+    tma_transaction_bytes
+);
+
+copy(tma_a.with(producer_mbar[pipe]),
+     tAgA(_,k_tile),
+     tAsA(_,pipe));
+
+copy(tma_b.with(producer_mbar[pipe]),
+     tBgB(_,k_tile),
+     tBsB(_,pipe));
+
+
+The kernel uses one transaction barrier for both TMA copies in a pipeline stage.
+
+Before issuing the transfers, arrive_and_expect_tx() registers the expected number of transferred bytes:
+\[
+16384\;(A)+16384\;(B)=32768\text{ bytes}
+\]
+
+The barrier's completion condition accounts for both the software arrival and the completion of the expected TMA transactions. The consumer can then safely access the data after the appropriate barrier wait. 
+NVIDIA CUTLASS Documentation
+
+
+So the most precise description of your statement is:
+
+tma_transaction_bytes computes the combined byte count of the mode-0 TMA destination tiles of tAsA and tBsB, for one pipeline stage, to configure the TMA transaction-completion barrier.
+
+It is not the total size of all pipeline stages, nor the number of bytes transferred over the entire GEMM execution.
 </pre>
 
