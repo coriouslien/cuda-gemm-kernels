@@ -1023,29 +1023,26 @@ Because bP = 3, the A and B pipeline buffers together hold 96 KiB of tile data a
   
 4. Why does the kernel need this value?
 Look at the following code:
-ProducerBarType::arrive_and_expect_tx(
-    &producer_mbar[pipe],
-    tma_transaction_bytes
-);
-
-copy(tma_a.with(producer_mbar[pipe]),
-     tAgA(_,k_tile),
-     tAsA(_,pipe));
-
-copy(tma_b.with(producer_mbar[pipe]),
-     tBgB(_,k_tile),
-     tBsB(_,pipe));
+if ((warp_idx == 0) && lane_predicate) {   // L141: one elected thread
+  ProducerBarType::arrive_and_expect_tx(&producer_mbar[pipe], tma_transaction_bytes);  // L144
+  copy(tma_a.with(producer_mbar[pipe]), tAgA(_,k_tile), tAsA(_,pipe));                 // L145
+  copy(tma_b.with(producer_mbar[pipe]), tBgB(_,k_tile), tBsB(_,pipe));                 // L146
+}
+Only one thread, warp 0 and the lane picked by elect_one_sync(), runs these three calls. The barrier was initialized with arrival count 1
+(L130), so exactly one arrive_and_expect_tx per phase is correct.  
 
 The kernel uses one transaction barrier for both TMA copies in a pipeline stage.
 Before issuing the transfers, arrive_and_expect_tx() registers the expected number of transferred bytes:
-
+The barrier is initialized only once (L130, arrival count 1). The expected bytes are set again each time the stage is reused.
 16384(A)+16384(B)=32768 bytes
 
 The barrier's completion condition accounts for both the software arrival and the completion of the expected TMA transactions. 
 The consumer can then safely access the data after the appropriate barrier wait. 
 So the most precise description of the statement is:
-tma_transaction_bytes computes the combined byte count of the mode-0 TMA destination tiles of tAsA and tBsB, for one pipeline stage, 
-to tell the barrier how many bytes to wait for in each phase..
+  
+tma_transaction_bytes is the combined byte count of the mode-0 TMA destination tiles of tAsA and tBsB, for one pipeline stage. It is passed to
+arrive_and_expect_tx each time a stage is filled, in the prefetch (L144) and in the mainloop (L216). That tells the barrier how many bytes to 
+wait for in that phase.
 It is not the total size of all pipeline stages, nor the number of bytes transferred over the entire GEMM execution.
 
 tma_transaction_bytes is the number of bytes one stage’s two TMA loads will deliver. The barrier waits for that many bytes to arrive before 
@@ -1063,17 +1060,12 @@ Consequences of a wrong value: too large, and the phase never completes, so the 
 bytes land [follows from the PTX completion rule].
 
 Summary
-Your statement	Verdict
-
-  
 tensor<0> selects mode 0, excluding pipe (it stays a view on the same smem pointer)
 make_tensor_like makes an owning, array-backed; never instantiated, since sizeof doesn’t evaluate it
 sizeof is not measuring the original view	
 16,384 B + 16,384 B = 32,768 B = 32 KiB; 96 KiB over 3 stages (actual smem_size is about 98,432 B)
 One barrier covers both copies
 arrive_and_expect_tx registers the expected bytes, and it also counts the one arrival
-It “configures” the barrier	Refine: re-armed each phase (L144, L216)
-Copies issued by the kernel	Add: one elected thread, L141 and L210
 
 As a check on the last note, the whole-GEMM total per CTA in the default run would be 16 k-tiles × 32,768 B = 524,288 B.
 
