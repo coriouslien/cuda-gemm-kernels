@@ -783,6 +783,8 @@ tAsA=(TMA,PIPE)
 TMA represents the TMA-managed tile portion. It is not another matrix dimension.
 TMA handles the entire first mode, and the program selects the appropriate global tile and
 shared-memory pipeline stage using the second mode. 
+Reorders and offsets mode 0 per the atom and multicast configuration. The shapes (TMA,k) and (TMA,PIPE) and TMA is not another matrix dimension.
+
 9. See how tAgA and tAsA are actually used
 In the tutorial, I find:
 copy(
@@ -817,6 +819,7 @@ Transfer the selected matrix tile from global memory into the selected shared-me
 stage, and use the specified producer barrier to signal completion.
 The TMA transfer is asynchronous. The CPU-like CUDA thread issuing the operation does not need
 to copy each element individually.
+  
 10. Visualize the three pipeline stages
 Suppose we have three shared-memory stages:
 Global-memory K tiles
@@ -942,7 +945,7 @@ Pipeline overlap;  refills wait for the MMA on that stage
   
 
   
-I would like to focus on the relationship between these three statements:
+The relationship between these three statements:
 auto [tAgA, tAsA] = tma_partition(...);
 
 copy(tma_a.with(producer_mbar[pipe]),
