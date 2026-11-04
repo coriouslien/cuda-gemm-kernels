@@ -1069,10 +1069,9 @@ arrive_and_expect_tx registers the expected bytes, and it also counts the one ar
 
 As a check on the last note, the whole-GEMM total per CTA in the default run would be 16 k-tiles × 32,768 B = 524,288 B.
 
-L185–223
- auto write_state = cutlass::PipelineState<K_PIPE_MAX>();          
-  auto read_state  = cutlass::PipelineState<K_PIPE_MAX>();           
-
+L185–223:
+auto write_state = cutlass::PipelineState<K_PIPE_MAX>();          
+auto read_state  = cutlass::PipelineState<K_PIPE_MAX>();           
   CUTE_NO_UNROLL
   while (k_tile_count > -K_PIPE_MAX)
   {
@@ -1149,8 +1148,9 @@ Number of advances	index()	phase()
 Notice that the index wraps every three advances and the phase toggles at each wrap.
 phase() provides the expected barrier-phase parity. Initially it is 0. When the hardware barrier completes phase 0, its internal phase advances 
 to 1, signaling that phase 0 has completed. The software PipelineState advances its own phase when the circular buffer index wraps around.
-The current case we use the pipeline stages is 3(0,1,2). Initially the phase = 0, when hardware barrier completes phase 0, its internal phase 
-advances to 1, it does not mean all three pipeline stages (0, 1, 2) have completed.
+
+There are three producer barriers, one per stage. Each has its own phase, starting at 0. When producer_mbar[0] completes phase 0 it moves to 
+phase 1. That says nothing about producer_mbar[1] or [2].
 1. Example: Three stages, all initially at phase 0
 Suppose the three TMA transfers are started:
 Pipeline stage	TMA operation	Barrier    phase
@@ -1195,7 +1195,12 @@ The producer barrier tracks when data is ready to consume; the consumer barrier 
 The key point: Each of the three pipeline stages has its own producer barrier and consumer barrier, with independently advancing hardware phases.
 read_state.phase() is a separate software value that selects the expected phase for whichever stage read_state.index() currently identifies.
 The software pipeline phase and the hardware barrier phase are two separate things, although they work together.
-TMA: hardware instruction.
+TMA: a hardware copy engine in the SM
+TMA: the hardware unit.
+cp.async.bulk.tensor: the PTX instruction that commands it.
+SM90_TMA_LOAD: the CuTe C++ type that wraps that instruction
+
+  
 TMA is a hardware feature introduced with NVIDIA Hopper (SM90) that performs asynchronous tensor data transfers.
 There is an important distinction:
 - TMA: The hardware mechanism that performs the transfers.
@@ -1203,35 +1208,21 @@ There is an important distinction:
 For example, Hopper supports the PTX instruction:
 cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
 This instruction initiates an asynchronous 2D tensor copy from global memory into shared memory, with completion tracked by an mbarrier. 
-CUDA Core Compute Libraries+1
+CUDA Core Compute
 2. How TMA works in your CUTLASS tutorial
 copy(tma_a.with(producer_mbar[pipe]),
      tAgA(_,k_tile),
      tAsA(_,pipe));
 
 Conceptually:
-CUDA C++ / CuTe
-     |
-     V
-copy(tma_a.with(...), ...)
-     |
-     V
-PTX instruction
-     |
-     V
-cp.async.bulk.tensor...
-     |
-     V
-TMA hardware
-     |
-     V
-Transfers A tile from global memory to shared memory
-     |
-     V
-Hardware transaction barrier
-     |
-     V
-Tracks completion of the transfer
+copy(tma_a.with(producer_mbar[pipe]), tAgA(_,k_tile), tAsA(_,pipe))  
+  -> CuTe SM90_TMA_LOAD_<N>D::copy (inline PTX)                  
+  -> PTX cp.async.bulk.tensor ... mbarrier::complete_tx::bytes
+  -> ptxas lowers it to SASS
+  -> TMA unit reads the descriptor (param space), fetches the box from gmem,
+     writes it swizzled into smem
+  -> as bytes land, the TMA unit performs complete_tx on producer_mbar[pipe]
+    
 
 TMA can perform the transfer asynchronously while GPU threads continue other work
 3. How this relates to the two phases
@@ -1262,7 +1253,10 @@ The source code already executed the following operations before the two pipelin
 auto K_PIPE_MAX = size<1>(tAsA);
 int k_tile_count = size<1>(tAgA);
 int k_tile = 0;
-Then it initializes two arrays of barriers, one for TMA completion and another for WGMMA consumption, and starts the initial TMA loads:
+  
+Each CTA’s elected thread initializes the barriers (L127–133): arrival count 1 for each producer barrier, 128 for each consumer barrier. 
+Then cluster_sync() (L135) makes every thread wait until all of them have finished initializing. Only after that does the elected thread issue 
+the first TMA copies (L137–150):
 for (int pipe = 0; pipe < K_PIPE_MAX; ++pipe)
 {
     if ((warp_idx == 0) && lane_predicate)
@@ -1280,6 +1274,10 @@ for (int pipe = 0; pipe < K_PIPE_MAX; ++pipe)
     --k_tile_count;
     ++k_tile;
 }
+- The barriers are initialized by one elected thread per CTA (L129–131), but used by all threads.
+- cluster_sync() (L135) is a stop-until-everyone-arrives point placed between init and first use.
+Without it, a thread could use a barrier that isn’t initialized yet.
+- The comment’s “all CTAs” reflects the cluster-wide pattern. In this tutorial the within-CTA ordering is what actually matters.
                           
 For three pipeline stages, this initiates:
 Pipeline stage    	K tile loaded	    Producer barrier
@@ -1416,7 +1414,12 @@ ProducerBarType::arrive_and_expect_tx(
     &producer_mbar[pipe],
     tma_transaction_bytes);
 
-This begins the next transaction-tracking phase for that stage's producer barrier.
+arrive_and_expect_tx does two things. It adds 32,768 to the barrier’s expected transaction count, and it counts the one arrival 
+(the barrier was initialized with arrival count 1 at L130). A phase completes only when pending arrivals and pending transaction bytes are 
+both zero. That arrive_and_expect_tx maps to mbarrier.arrive.expect_tx is.
+This registers the one arrival and the 32,768 expected bytes for the barrier’s currently pending phase. That phase completes only after 
+the arrival has happened and both TMA copies have delivered all 32,768 bytes.
+
 As established previously, for the default half-precision tile shapes:
 tma_transaction_bytes=32768
 The producer barrier will track the completion of the two new TMA transfers totaling 32 KiB (128x64x2x2).
@@ -1448,35 +1451,39 @@ Advances the producer's stage and phase tracker:
 write_state = {index: 0, phase: 0};
 // After
 write_state = {index: 1, phase: 0};
+  
 6. Visualize the pipeline over several iterations
 To make the schedule easier to follow, suppose there are only five K tiles, numbered 0 through 4, with three pipeline stages.
 This is a tracing example; the tutorial's default problem has 16 K tiles.
-Interactive pipeline trace — 5 K tiles, 3 stages
-Prologue
-Step 1 of 6
-Prefetch
-Finish
-Stage 0
-Tile 0: loading
-Stage 1
-Tile 1: loading
-Stage 2
-Tile 2: loading
-WGMMA consumption—
-Next read index / phase: 0 / 0
-TMA issueLoad tiles 0, 1, 2
-Next write index / phase: 0 / 0
-The prologue fills all three stages with their initial TMA transfers. Previousk_tile_count = 2
+After the prologue, tiles 0, 1 and 2 are in flight in stages 0, 1 and 2. k_tile_count = 5 − 3 = 2, k_tile = 3, and both read_state and write_state
+are {index 0, phase 0}.
+</pre>
+Iter	k_tile_count at start	WGMMA consumes (stage / phase / tile)	Producer block (needs k_tile_count > 0)	k_tile_count after
+1	2	0 / 0 / tile 0	runs: tile 3 → stage 0	1
+2	1	1 / 0 / tile 1	runs: tile 4 → stage 1	0
+3	0	2 / 0 / tile 2	skipped	−1
+4	−1	0 / 1 / tile 3	skipped	−2
+5	−2	1 / 1 / tile 4	skipped	−3, loop exits
+<pre>
+The table follows the code’s logical order. The asynchronous TMA transfers may complete at different times; the barriers enforce the 
+necessary dependencies.
 Next 
-The display follows the code's logical ordering. Actual asynchronous TMA transfers may complete at different times; barriers enforce the 
+The table follows the code's logical ordering. Actual asynchronous TMA transfers may complete at different times; barriers enforce the 
 necessary dependencies.
 The important pattern is:
 Stage 0: Tile 0 → Tile 3 → Tile 6 → ...
 Stage 1: Tile 1 → Tile 4 → Tile 7 → ...
 Stage 2: Tile 2 → Tile 5 → Tile 8 → ...
-
 The three stages form a circular buffer.
+
+The producer wait (L195) and the consumer arrive (L206) are executed by all 128 threads, which is why the consumer barrier has arrival 
+count 128. The refill block (L210–220) is executed by one elected thread. That thread is therefore both a consumer and the producer. 
+This tutorial does not use warp specialization (comment at L179–182).
+  
 7. Why is the loop condition k_tile_count > -K_PIPE_MAX (Line 191)?
+groups A and B by stage. That is a logical grouping. Physically, SharedStorage (L28–29) holds all three A stages in one array and all three 
+B stages in another. Add “logical view” to the caption. I believe each stage is a contiguous block inside its array
+  
 This is probably the most unusual statement:
 Line 191: while (k_tile_count > -K_PIPE_MAX)
 You might expect:
@@ -1557,7 +1564,7 @@ Here is the whole loop expressed in plain language:
 The single most important concept to retain is that the pipeline has two independent synchronization directions:
 TMA finished writing  ----> WGMMA may read
 
-WGMMA finished reading ----> longrightarrow TMA may overwrite
+WGMMA finished reading ----> TMA may overwrite
 
 read_state and write_state identify the slot and barrier generation for each direction. The barriers, rather than the state objects themselves,
 enforce the safety of the overlapping execution.
