@@ -1069,5 +1069,94 @@ arrive_and_expect_tx registers the expected bytes, and it also counts the one ar
 
 As a check on the last note, the whole-GEMM total per CTA in the default run would be 16 k-tiles × 32,768 B = 524,288 B.
 
+L185–223
+ auto write_state = cutlass::PipelineState<K_PIPE_MAX>();          
+  auto read_state  = cutlass::PipelineState<K_PIPE_MAX>();           
+
+  CUTE_NO_UNROLL
+  while (k_tile_count > -K_PIPE_MAX)
+  {
+    int read_pipe = read_state.index();
+    ProducerBarType::wait(&producer_mbar[read_pipe], read_state.phase());
+    warpgroup_arrive();
+    gemm(mma, tCrA(_,_,_,read_pipe), tCrB(_,_,_,read_pipe), tCrC);   
+    warpgroup_commit_batch();
+
+    warpgroup_wait<0>();
+    ConsumerBarType::arrive(&consumer_mbar[read_pipe]);
+    ++read_state;
+
+    if ((warp_idx == 0) && lane_predicate && (k_tile_count > 0))
+    {
+      int pipe = write_state.index();
+      ConsumerBarType::wait(&consumer_mbar[pipe], write_state.phase());
+      ProducerBarType::arrive_and_expect_tx(&producer_mbar[pipe], tma_transaction_bytes);
+      copy(tma_a.with(producer_mbar[pipe]), tAgA(_,k_tile), tAsA(_,pipe));
+      copy(tma_b.with(producer_mbar[pipe]), tBgB(_,k_tile), tBsB(_,pipe));
+      ++write_state;
+    }
+    --k_tile_count;
+    ++k_tile;
+  }
+
+
+TMA must not overwrite shared-memory data while WGMMA is still using it, and WGMMA must not read data before TMA finishes loading it.
+1. Understand the pipeline's shared-memory organization
+For the default gemm_nt path, the host-side configuration includes:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};
+The shared-memory layouts use GMMA::Layout_MN_SW128_Atom, and the kernel constructs the shared-memory tensors sA and sB from those layouts.
+The destination tensors produced by tma_partition() have two logical modes:
+tAsA  // (TMA, PIPE)
+tBsB  // (TMA, PIPE)
+PIPE has size three. Each pipeline stage contains space for one A tile and one B tile.
+Pipe 0           Pipe 1         Pipe 2
+A                A              A
+128 × 64         128 × 64       128 × 64
+
+B                B              B
+128 × 64         128 × 64       128 × 64
+Three reusable pipeline stages. Each stage has a different shared-memory region for A and B.
+That's 32 KiB of operand data per stage, or 96 KiB across the three stages, excluding other shared-memory objects.
+The pipeline does not allocate more shared memory every time it processes another K tile. It reuses these same three stages.
+  
+2. PipelineState<K_PIPE_MAX>
+auto write_state = cutlass::PipelineState<K_PIPE_MAX>();
+auto read_state  = cutlass::PipelineState<K_PIPE_MAX>();
+These create two independent pipeline-state trackers.
+- write_state: Tracks which pipeline stage the next TMA copy should fill.
+- read_state: Tracks which pipeline stage WGMMA should consume next.
+A PipelineState contains two important values:
+Member	     Purpose
+.index()	   Selects a physical pipeline slot: 0, 1, or 2
+.phase()	   Identifies the barrier generation associated with the current use of that slot
+
+Initially, both states are:
+index = 0;
+phase = 0;
+Number of advances	index()	phase()
+0                 	0	      0
+1	                  1	      0
+2	                  2	      0
+3	                  0	      1
+4	                  1	      1
+5	                  2	      1
+6                 	0	      0
+7                 	1	      0
+
+Notice that the index wraps every three advances and the phase toggles at each wrap.
+
+The conceptual implementation is:
+void operator++() {
+    ++index_;
+
+    if (index_ == K_PIPE_MAX) {
+        index_ = 0;
+        phase_ ^= 1;
+    }
+}
+
 </pre>
 
