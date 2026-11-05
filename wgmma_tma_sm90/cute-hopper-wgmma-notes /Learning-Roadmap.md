@@ -4,6 +4,7 @@ Tensor mA = make_tensor(A, make_shape(M,K), dA);
 Tensor mB = make_tensor(B, make_shape(N,K), dB);
 Copy_Atom tmaA = make_tma_atom(SM90_TMA_LOAD{}, mA, sA(_,_,0), make_shape(bM,bK));
 Copy_Atom tmaB = make_tma_atom(SM90_TMA_LOAD{}, mB, sB(_,_,0), make_shape(bN,bK));
+	
 These four statements are part of the host-side TMA setup in NVIDIA's wgmma_tma_sm90.cu tutorial. They prepare the information that Hopper's 
 Tensor Memory Accelerator (TMA) will use to move matrix tiles from global memory into shared memory.
 The most important distinction is:
@@ -206,9 +207,9 @@ CTA mask
 Can distribute one      	No	                  Yes
 tile to several CTAs
 Barrier-based completion	Yes	                  Yes, 
-                                                for the selected recipients
-Main advantage          	Efficient tensor	    Avoids redundant loads of 
-                          loads                 shared input tiles
+                                                  for the selected recipients
+Main advantage          	Efficient tensor	  Avoids redundant loads of 
+                            loads                 shared input tiles
 
 These distinctions follow NVIDIA's CuTe implementation and PTX instruction definitions. 
 
@@ -421,48 +422,33 @@ Selected       Not selected    Not selected
 2D shared-memory layout
 Logical shape (128,64), with the stage's swizzled address mapping
 Important: Because this is inside the host-side gemm_nt function, sA is a layout object, not the kernel's shared-memory tensor.
-
 Consequently, sA(_,_,0) is a sliced layout, not a data copy and not an already allocated shared-memory buffer.
-
 Why select only stage 0?
-
 Because all three pipeline stages use the same within-stage organization.
-
-make_tma_atom() needs the layout of one destination tile to construct the transfer configuration. It does not need a separate TMA atom for every pipeline stage.
-
+make_tma_atom() needs the layout of one destination tile to construct the transfer configuration. It does not need a separate TMA atom for 
+every pipeline stage.
 The actual destination stage is selected later inside the kernel:
 tAsA(_,pipe)
-
-
 where pipe can be 0, 1, or 2.
 Argument 4: make_shape(bM,bK)
 This creates the logical shape:
 make_shape(Int<128>{}, Int<64>{})
-
-
 or:
 (128,64)
-
-
 This tells CuTe the CTA tile to be transferred for A.
-
 The distinction between the global matrix and the tile is:
-Object	Shape	Meaning
-mA	(512,1024)	Entire A matrix
-sA(_,_,0)	(128,64)	Layout of one shared-memory A tile
-make_shape(bM,bK)	(128,64)	Logical CTA A tile shape for TMA construction
+Object	             Shape	       Meaning
+mA	                 (512,1024)	   Entire A matrix
+sA(_,_,0)	         (128,64)	   Layout of one shared-memory A tile
+make_shape(bM,bK)	 (128,64)      Logical CTA A tile shape for TMA construction
 
-The tile shape and the shared-memory layout both describe a (128,64) logical region, but they are not interchangeable: the shape describes the tile's extent, while the layout describes how its elements are arranged in shared memory.
-
+The tile shape and the shared-memory layout both describe a (128,64) logical region, but they are not interchangeable: the shape 
+describes the tile's extent, while the layout describes how its elements are arranged in shared memory.
 For the default cute::half_t type:
-\[
-128\times64\times2=16384\text{ bytes}
-\]
-
+128 x 64 x 2=16384 bytes
 Thus, each A tile contains 16 KiB of FP16 data.
-
-The TMA builder uses these arguments to construct the copy atom, including the tensor-map descriptor and copy-layout information needed by CuTe's TMA operations. 
-GitHub+1
+The TMA builder uses these arguments to construct the copy atom, including the tensor-map descriptor and copy-layout information needed by 
+CuTe's TMA operations. 
 
 5. Statement 4: Copy_Atom tmaB = make_tma_atom(...)
 Copy_Atom tmaB = make_tma_atom(
@@ -471,61 +457,41 @@ Copy_Atom tmaB = make_tma_atom(
     sB(_,_,0),
     make_shape(bN,bK)
 );
-
-
 The mechanism is identical, except that it operates on B.
-Argument	Meaning for B
-SM90_TMA_LOAD{}	TMA global-to-shared load
-mB	Complete B tensor, shape (256,1024)
-sB(_,_,0)	One shared-memory B-stage layout, shape (128,64)
-make_shape(bN,bK)	CTA's B tile shape, (128,64)
+Argument	          Meaning for B
+SM90_TMA_LOAD{}	      TMA global-to-shared load
+mB	                  Complete B tensor, shape (256,1024)
+sB(_,_,0)	          One shared-memory B-stage layout, shape (128,64)
+make_shape(bN,bK)	  CTA's B tile shape, (128,64)
 
 For the default example, A and B tiles have the same number of elements:
-\[
-128\times64=8192
-\]
-
+128 x 64 = 8192
 Each TMA transfer moves 16 KiB of half-precision data for its operand, so the two transfers together account for 32 KiB per pipeline stage.
+	
 6. How do these four statements connect to the actual TMA transfer?
 This is where host-side setup meets kernel execution.
 TMA setup and execution
 Host: Describe and configure
-mA global tensor
-
-
-sA smem layout
-
-
-
-
-make_tma_atom(...)
-
-Constructs tmaA
-
-
-Kernel launch passes the TMA atom
-
-GPU kernel: Partition and execute
+	
+mA global tensor                sA smem layout
+______________________________________________
+	                |
+	                V
+            make_tma_atom(...)
+            Constructs tmaA
+      Kernel launch passes the TMA atom
+	
+GPU kernel: Partition and execute:
 tma_a.get_tma_tensor(...)
-
-Descriptor-backed global tensor
-
+(Descriptor-backed global tensor)
 local_tile(...) and tma_partition(...)
-
-CTA tile and TMA source/destination views
-
+(CTA tile and TMA source/destination views)
 copy(tma_a.with(...), ..., ...)
-
-Initiates the actual asynchronous TMA load
-
-
-
+(Initiates the actual asynchronous TMA load)
+	
 Inside gemm_device, the tutorial reconstructs a global-memory tensor using the TMA atom:
 Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
-
-
 This is not the same local C++ object as the host-side mA. It is a descriptor-backed tensor suitable for the kernel's TMA operations.
-
 Next:
 Tensor gA = local_tile(
     mA,
@@ -533,27 +499,21 @@ Tensor gA = local_tile(
     cta_coord,
     Step<_1,X,_1>{}
 );
-
-
 This creates the view of A assigned to the current CTA.
-
 Later:
 auto [tAgA, tAsA] =
     tma_partition(tma_a, Int<0>{}, Layout<_1>{},
                   group_modes<0,2>(sA),
                   group_modes<0,2>(gA));
 
-
-Here, sA is now the kernel's shared-memory tensor, not the host-side layout. The Int<0>{} and Layout<_1>{} describe the single-CTA multicast-group configuration, not the two-CTA cluster layout.
-
+Here, sA is now the kernel's shared-memory tensor, not the host-side layout. The Int<0>{} and Layout<_1>{} describe the single-CTA 
+multicast-group configuration, not the two-CTA cluster layout.
 Finally:
 copy(tma_a.with(producer_mbar[pipe]),
      tAgA(_,k_tile),
      tAsA(_,pipe));
 
-
 This initiates a TMA load for the selected K tile into the selected pipeline stage. 
-GitHub
 
 7. A concrete example: Which elements does TMA load?
 Consider the default matrices:
@@ -564,95 +524,164 @@ bM = 128
 bN = 128
 bK = 64
 
-
 Suppose the CTA is responsible for:
 blockIdx.x = 1;
 blockIdx.y = 0;
-
 
 and the kernel is processing:
 k_tile = 3;
 pipe   = 1;
 
-
 For A, the CTA's M tile starts at:
-\[
-m_{\mathrm{start}}=1\times128=128
-\]
+m_start = 1 x 128 = 128
 
 The selected K tile starts at:
-\[
-k_{\mathrm{start}}=3\times64=192
-\]
+k_start=3 x 64=192
 
 Therefore, the A source region is:
-\[
-A[128:256,\ 192:256]
-\]
+A[128:256, 192:256]
+
+******************
+Explaining A[128:256, 192:256]
+A[128:256, 192:256] means select 128 rows and 64 columns from the original matrix A.
+Let's derive those numbers step by step using your wgmma_tma_sm90.cu tutorial.
+1. Start with the original matrix A
+In the default gemm_nt example:
+M  = 512;
+K  = 1024;
+	
+bM = 128;
+bK = 64;
+
+Therefore:
+- Original matrix A has 512 rows and 1024 columns.
+- Each CTA handles 128 rows of A.
+- Each K tile contains 64 columns of A.
+The original matrix has logical shape:
+A:(512,1024)
+2. How do we get rows 128 through 255?
+Suppose the current CTA has:
+blockIdx.x = 1;
+The CTA's starting row is:
+row start = blockIdx.x x bM
+=1 x 128=128
+Since bM = 128, the CTA handles 128 rows:
+128,129,130,....,255
+Thus:
+A[128:256, ...]
+Notice that 256 is excluded. The last included row is 255.
+A matrix divided into 128-row CTA tiles
+CTA M tile 0       CTA M tile 1      
+Rows 0–127         Rows 128–255
+CTA M tile 2       CTA M tile 3
+Rows 256–383       Rows 384–511
+
+3. How do we get columns 192 through 255?
+Suppose the kernel is processing:
+k_tile = 3;
+Each K tile has width:
+bK = 64;
+Therefore:
+column start = k_tile x bK
+=3 x 64=192
+The 64 columns are:
+192,193,194,....,255
+Thus:
+A[..., 192:256]
+Again, 256 is excluded.
+4. Combine the two dimensions
+Selected source region of A
+Row selection
+128–255
+128 rows
+
+Column selection
+192–255
+64 columns
+
+A[128:256, 192:256]
+128 × 64 elements
+
+The first element is:
+mA(128,192);
+
+The last element is:
+mA(255,255);
+
+The selected region is therefore:
+A_tile belong to R^128 x 64
+
+5. How does this relate to column-major storage?
+Recall the global-memory tensor:
+Tensor mA = make_tensor(
+    A,
+    make_shape(M,K),
+    make_stride(Int<1>{}, ldA)
+);
+For the default tightly packed matrix, ldA = 512.
+Thus:
+offset_A(m,k)=m+512k
+
+The first selected element mA(128,192) is at offset:
+128+512 x 192=98432
+The last selected element mA(255,255) is at offset:
+255+512 x 255=130815
+
+These offsets are measured in elements, not bytes.
+Important: Even though the selected A tile contains 8,192 elements, those elements are not stored as one contiguous 8,192-element region in 
+global memory. Each selected column contains 128 contiguous elements, but successive columns are 512 elements apart at their starting 
+addresses.
+The TMA tensor descriptor uses the global-memory strides to locate the correct elements.
+		
+6. General formula
+For the tutorial, the A tile selected by a CTA and a K-tile index is:
+A[blockIdx.x x bM: (blockIdx.x+1) x bM, k_tile x bK:(k_tile+1) x bK]
+For:
+blockIdx.x = 1;
+k_tile     = 3;
+bM         = 128;
+bK         = 64;
+we get:
+A[128:256,192:256]
+
+So the two numbers 128 and 192 are starting coordinates, while the two numbers 256 and 256 are exclusive ending coordinates. 
+The selected tile is 128 rows by 64 columns.
+One more distinction: this source region is part of the full global-memory matrix mA. The kernel's gA is a CTA-specific view of that global
+memory, and tAgA(_,k_tile) selects the TMA source portion for the relevant K tile.
+*******************
 
 For B, the CTA's N tile starts at:
-\[
-n_{\mathrm{start}}=0\times128=0
-\]
-
+n_start=0 x 128=0
 So the B source region is:
-\[
-B[0:128,\ 192:256]
-\]
-
+B[0:128, 192:256]
 The transfer can be represented as:
-Global A
+Global A    ------>         Shared A      
+Rows 128–255                Pipeline stage 1
+K 192–255                   MN-major swizzled
+128 × 64                    128 × 64
 
-Rows 128–255
+Global B  -------->         Shared B
+Rows 0–127                  Pipeline stage 1
+K 192–255                   MN-major swizzled
+128 × 64                    128 × 64
 
-K 192–255
-128 × 64
-
-
-Shared A
-
-Pipeline stage 1
-
-MN-major swizzled
-128 × 64
-
-
-
-
-Global B
-
-Rows 0–127
-
-K 192–255
-128 × 64
-
-
-Shared B
-
-Pipeline stage 1
-
-MN-major swizzled
-128 × 64
-
-
-
-Illustrative tile selection for CTA coordinate (1,0), K tile 3, and pipeline slot 1. The source is global memory; the destinations are the CTA's own shared-memory buffers.
-Notice that the same tmaA and tmaB objects work for different CTA coordinates, K tiles, and pipeline stages. The global coordinate and the destination buffer are selected at execution time.
+Illustrative tile selection for CTA coordinate (1,0), K tile 3, and pipeline slot 1. The source is global memory; the destinations are the
+CTA's own shared-memory buffers.
+Notice that the same tmaA and tmaB objects work for different CTA coordinates, K tiles, and pipeline stages. The global coordinate and
+the destination buffer are selected at execution time.
 8. Final comparison
-Statement	What it creates	Does it move data?
-make_tensor(A, ...)	Global A tensor view	No
-make_tensor(B, ...)	Global B tensor view	No
-make_tma_atom(...mA...)	TMA copy atom for A	No
-make_tma_atom(...mB...)	TMA copy atom for B	No
-Kernel copy(tma_a.with(...), ...)	Initiates A transfer	Yes, asynchronously
-Kernel copy(tma_b.with(...), ...)	Initiates B transfer	Yes, asynchronously
+Statement	                         What it creates	       Does it move data?
+make_tensor(A, ...)	                 Global A tensor view	   No
+make_tensor(B, ...)	                 Global B tensor view	   No
+make_tma_atom(...mA...)              TMA copy atom for A       No
+make_tma_atom(...mB...)              TMA copy atom for B	   No
+Kernel copy(tma_a.with(...), ...)	 Initiates A transfer	   Yes, asynchronously
+Kernel copy(tma_b.with(...), ...)	 Initiates B transfer	   Yes, asynchronously
 
 The essential concept is that TMA setup separates the description of the memory layout from the execution of the transfer.
-
 make_tma_atom() prepares the machinery. The kernel's copy() uses it.
-
-One subtle point worth remembering: sA(_,_,0) does not mean TMA will always write to stage 0. It provides the layout information for a single stage; the actual destination stage is determined by tAsA(_,pipe).
-
+One subtle point worth remembering: sA(_,_,0) does not mean TMA will always write to stage 0. It provides the layout information for a 
+single stage; the actual destination stage is determined by tAsA(_,pipe).
 That is the connection between these four host-side statements and the three-stage pipeline you have been studying.
 
 
