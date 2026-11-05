@@ -247,8 +247,71 @@ Multicast destination selection
 0b01 — CTA 0 only   (CTA 0 receives tile, CTA 1 not selected)
 0b10 — CTA 1 only   (CTA 0 not selected, CTA 1 receives tile)
 0b11 — Both CTAs    (CTA 0 receives tile, CTA 1 receives tile)
+	
 This illustrates the destination mask of one multicast instruction, not an entire GEMM kernel's loading schedule.
+The multicast mask determines which CTAs receive data from one TMA instruction. It does not determine how all the A and B tiles are loaded
+throughout the GEMM kernel.
+We use the Hopper tutorial with a cluster containing two CTAs.
+1). One TMA multicast instruction
+Suppose:
+dim3 dimCluster(2, 1, 1);
+The cluster contains CTA 0 and CTA 1.
+Now imagine CTA 0 issues one TMA multicast instruction with:
+uint16_t multicast_mask = 0b11;
+One TMA multicast operation
+This instruction transfers one particular B tile to the shared memory of both CTAs.
+The mask 0b11 means:
+- Bit 0 = 1: CTA 0 receives the tile.
+- Bit 1 = 1: CTA 1 receives the tile.
+That is all the mask specifies for this operation.
+It does not tell the GPU which B tile to load next or which K tile WGMMA should compute.
+2). But GEMM requires many tile loads
+Suppose the GEMM has nine K tiles:
+K tile 0
+K tile 1
+K tile 2
+...
+K tile 8
+Assume both CTAs need the same B tile for each K iteration.
+The kernel must issue multiple TMA operations:
+TMA operation	Source	     Multicast mask	  Recipients
+1	            B tile 0	 0b11	          CTA 0 and CTA 1
+2	            B tile 1	 0b11	          CTA 0 and CTA 1
+3	            B tile 2	 0b11	          CTA 0 and CTA 1
+...	...	...	...
+9	            B tile 8	 0b11             CTA 0 and CTA 1
 
+The kernel's pipeline controls when each of these transfers is issued and which shared-memory pipeline stage receives the data.
+For example, with three pipeline stages:
+K tile	 Destination pipeline stage  	Multicast mask
+0	     0	                            0b11
+1	     1	                            0b11
+2	     2	                            0b11
+3	     0 (reused)                 	0b11
+4	     1 (reused)	                    0b11
+5	     2 (reused)	                    0b11
+
+Notice the difference:
+- Multicast mask 0b11: Which CTAs receive the tile.
+- Pipeline stage 0, 1, or 2: Which shared-memory buffer within each recipient CTA is used.
+- K tile 0, 1, 2, etc.: Which portion of the input matrix is being transferred.
+These are three independent concepts.
+3). Connect this to your code
+In the tutorial, I studied:
+copy(tma_b.with(producer_mbar[pipe]),
+     tBgB(_,k_tile),
+     tBsB(_,pipe));
+Here:
+k_tile selects the global-memory B tile, and pipe selects the destination pipeline stage.
+This particular tutorial uses SM90_TMA_LOAD, not multicast, so no multicast destination mask appears in the call.
+In a multicast-enabled implementation, a suitably configured operation would additionally identify the recipient CTAs using a multicast mask.
+4). One important clarification
+The table above is a hypothetical multicast-enabled GEMM schedule, not the actual loading schedule of the wgmma_tma_sm90.cu tutorial.
+Also, just because the mask selects both CTAs does not mean both CTAs should independently issue the identical multicast operation. Typically, 
+one designated CTA issues a multicast transfer for the shared tile, and the recipient CTAs synchronize appropriately.
+In one sentence: The multicast mask answers “Who receives this tile?”, while the GEMM pipeline answers “Which tile is loaded, where is it stored,
+and when can WGMMA use it?”
+	
 For example:
 uint16_t mcast_mask = 0b0011;
 Bits 0 and 1 are set, so both CTAs receive the data.
@@ -321,74 +384,42 @@ synchronization overhead, and the hardware.
 The essential distinction: A CTA cluster determines which CTAs can cooperate. SM90_TMA_LOAD_MULTICAST determines which of those CTAs receive 
 a particular TMA transfer.
 *******************
-
-Argument 2: mA
+	
+Argument 2: mA  (Line 275)
 We have already established that mA describes the entire A matrix:
 Global tensor mA
-
 Shape  = (512,1024)
 Stride = (1,512)
-
-
 The TMA builder inspects this tensor to obtain information about the global-memory data organization.
-
 This includes the base address, element type, dimensions, and strides.
-
 Importantly, mA represents the entire A matrix, not the specific 128×64 tile owned by one CTA.
-
 The CTA-specific region will be selected later, inside the kernel.
-Argument 3: sA(_,_,0)
+	
+Argument 3: sA(_,_,0) (Line 275)
 This is the part that deserves particular attention.
-
 Recall that the host-side sA was constructed as:
 auto sA = tile_to_shape(
     GMMA::Layout_MN_SW128_Atom<TA>{},
     make_shape(bM,bK,bP)
 );
-
-
 Its shape is:
-sA layout: (128,64,3)
-
-
+sA layout: (128,64,3)  
 Here:
 - Mode 0 corresponds to M, with extent 128.
 - Mode 1 corresponds to K, with extent 64.
 - Mode 2 corresponds to the pipeline stage, with extent 3.
 Now examine:
 sA(_,_,0)
-
-
 The underscore _ means retain that mode, while 0 selects pipeline stage 0.
-
 Conceptually:
 Host-side sA layout: (128,64,3)
-Stage 0
-128 × 64
-
-Selected
-
-
-Stage 1
-128 × 64
-
-Not selected
-
-
-Stage 2
-128 × 64
-
-Not selected
-
-
-
-sA(_,_,0)
-
+Stage 0        Stage 1         Stage 2
+128 × 64       128 × 64        128 × 64
+Selected       Not selected    Not selected
+          |
+		  V  sA(_,_,0)
 2D shared-memory layout
-
 Logical shape (128,64), with the stage's swizzled address mapping
-
-
 Important: Because this is inside the host-side gemm_nt function, sA is a layout object, not the kernel's shared-memory tensor.
 
 Consequently, sA(_,_,0) is a sliced layout, not a data copy and not an already allocated shared-memory buffer.
