@@ -159,15 +159,15 @@ And:
 mB shape  = (256, 1024)
 mB stride = (1, 256)
 Why is B shaped (N,K), not (K,N)?
-This is because the default GEMM uses:
-transB = 'T';
-Mathematically:
-C=A B^T
-with:
-A:(M,K), B:(N,K), B^T:(K,N)
-The original B data is stored as an (N,K) matrix. Its transpose is used in the mathematical multiplication.
-No physical transpose of B is performed by make_tensor(). The tensor view describes the original storage; the subsequent GEMM configuration
-handles the mathematical transpose.
+B is described as (N,K) in both gemm_nt (L272) and gemm_tn (L356). The kernel always computes C(m,n) = Σ_k A(m,k)·B(n,k). The transB flag 
+does not change the shape, only the strides: dB = (1, ldB) in NT (L252), (ldB, 1) in TN (L336). Nothing is transposed anywhere; the kernel 
+reads B with whichever strides it is given.
+
+
+
+
+	
+	
 4. Statement 3: Copy_Atom tmaA = make_tma_atom(...)
 Now we reach the most important statement:
 Copy_Atom tmaA = make_tma_atom(
@@ -308,8 +308,9 @@ This particular tutorial uses SM90_TMA_LOAD, not multicast, so no multicast dest
 In a multicast-enabled implementation, a suitably configured operation would additionally identify the recipient CTAs using a multicast mask.
 4). One important clarification
 The table above is a hypothetical multicast-enabled GEMM schedule, not the actual loading schedule of the wgmma_tma_sm90.cu tutorial.
-Also, just because the mask selects both CTAs does not mean both CTAs should independently issue the identical multicast operation. Typically, 
-one designated CTA issues a multicast transfer for the shared tile, and the recipient CTAs synchronize appropriately.
+Also, just because the mask selects both CTAs does not mean both CTAs should independently issue the identical multicast operation.
+In CuTe’s multicast pattern each CTA in the multicast group issues the load for its own slice of the tile, and the hardware delivers that slice 
+to every CTA in the mask. The rank passed to tma_partition decides which slice a CTA issues.
 In one sentence: The multicast mask answers “Who receives this tile?”, while the GEMM pipeline answers “Which tile is loaded, where is it stored,
 and when can WGMMA use it?”
 	
@@ -482,16 +483,17 @@ ______________________________________________
       Kernel launch passes the TMA atom
 	
 GPU kernel: Partition and execute:
-tma_a.get_tma_tensor(...)
-(Descriptor-backed global tensor)
+tma_a.get_tma_tensor(...) : get_tma_tensor builds a tensor of coordinates, not of memory.
+(TMA coordinate tensor: counting iterator + basis strides, no pointer)
 local_tile(...) and tma_partition(...)
 (CTA tile and TMA source/destination views)
 copy(tma_a.with(...), ..., ...)
 (Initiates the actual asynchronous TMA load)
 	
-Inside gemm_device, the tutorial reconstructs a global-memory tensor using the TMA atom:
+Inside gemm_device, the tutorial builds a coordinate tensor of shape (M,K) from the TMA atom:
 Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
-This is not the same local C++ object as the host-side mA. It is a descriptor-backed tensor suitable for the kernel's TMA operations.
+It is not the same object as the host-side mA. mA(m,k) is a TMA coordinate, and A’s address stays inside the descriptor. It is a 
+descriptor-backed tensor suitable for the kernel's TMA operations.
 Next:
 Tensor gA = local_tile(
     mA,
@@ -499,7 +501,7 @@ Tensor gA = local_tile(
     cta_coord,
     Step<_1,X,_1>{}
 );
-This creates the view of A assigned to the current CTA.
+gA is this CTA’s tiles of A as TMA coordinates, shape (128,64,k). It is not a view of memory.
 Later:
 auto [tAgA, tAsA] =
     tma_partition(tma_a, Int<0>{}, Layout<_1>{},
