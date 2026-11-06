@@ -55,7 +55,7 @@ A is a pointer to matrix A's data in GPU global memory.
 It is not a pointer to shared memory.
 Argument 2: make_shape(M,K)
 This describes the logical dimensions of matrix A:
-A\in \mathbb{R}^{M\times K}
+A belong to R^(M x K)
 For the tutorial's default matrix dimensions:
 M = 512;
 K = 1024;
@@ -184,7 +184,8 @@ sA(_,_,0)               Provides the shared-memory layout of one pipeline stage
 make_shape(bM,bK)	      Specifies the CTA's logical A tile shape, (128,64)
 
 Argument 1: SM90_TMA_LOAD{}
-This is a CuTe operation tag specifying the kind of copy to construct.
+A CuTe type that wraps the PTX instruction cp.async.bulk.tensor and selects how the host builds the atom.
+It has static copy functions containing the inline PTX [CuTe cute/arch/copy_sm90_tma.hpp]
 It selects Hopper's TMA load mechanism, which transfers data asynchronously from global memory into shared memory.
 It does not itself execute a TMA instruction. That happens later when the kernel issues a corresponding copy() operation.
 This tutorial uses SM90_TMA_LOAD, not the multicast variant SM90_TMA_LOAD_MULTICAST. 
@@ -194,14 +195,14 @@ The main difference between SM90_TMA_LOAD and SM90_TMA_LOAD_MULTICAST is the num
 - SM90_TMA_LOAD transfers a tensor tile from global memory into the shared memory of one CTA.
 - SM90_TMA_LOAD_MULTICAST allows one TMA operation to distribute the same tensor tile into the shared memory of multiple selected CTAs within 
 the same thread-block cluster.
-Both are CuTe operation tags for Hopper's Tensor Memory Accelerator, but they select different hardware transfer instructions.
+Both are CuTe operation tags for Hopper's Tensor Memory Accelerator, but they select different forms of the same PTX instruction.
 1). Side-by-side comparison
 
 Feature	                  SM90_TMA_LOAD	        SM90_TMA_LOAD_MULTICAST
 Source	                  Global memory	        Global memory
 Destination	One           CTA's shared memory   Selected CTAs' shared memories
 Transfer execution	      Asynchronous         	Asynchronous
-Uses TMA hardware 	      Yes	                  Yes
+Uses TMA hardware 	        Yes	                  Yes
 Uses a multicast        	No	                  Yes
 CTA mask
 Can distribute one      	No	                  Yes
@@ -211,7 +212,8 @@ Barrier-based completion	Yes	                  Yes,
 Main advantage          	Efficient tensor	  Avoids redundant loads of 
                             loads                 shared input tiles
 
-These distinctions follow NVIDIA's CuTe implementation and PTX instruction definitions. 
+These distinctions follow NVIDIA's CuTe implementation and PTX instruction definitions.
+[PTX ISA, cp.async.bulk.tensor; CuTe copy_sm90_tma.hpp]
 
 2). Example: A cluster containing two CTAs
 Suppose:
@@ -257,7 +259,7 @@ We use the Hopper tutorial with a cluster containing two CTAs.
 Suppose:
 dim3 dimCluster(2, 1, 1);
 The cluster contains CTA 0 and CTA 1.
-Now imagine CTA 0 issues one TMA multicast instruction with:
+Now imagine CTA 0 issues one TMA multicast instruction (in a real kernel, every group member issues its own slice) with:
 uint16_t multicast_mask = 0b11;
 One TMA multicast operation
 This instruction transfers one particular B tile to the shared memory of both CTAs.
@@ -334,10 +336,10 @@ cp.async.bulk.tensor.2d.shared::cluster.global
 The second instruction includes the multicast modifier and accepts the additional CTA mask operand.
 The difference is visible in CUTLASS's implementation:
 // Ordinary TMA load: no multicast_mask
-copy(desc_ptr, mbar_ptr, cache_hint,
+SM90_TMA_LOAD_2D::copy(desc_ptr, mbar_ptr, cache_hint,
      smem_ptr, coord0, coord1);
 // Multicast TMA load: includes multicast_mask
-copy(desc_ptr, mbar_ptr, multicast_mask,
+SM90_TMA_LOAD_MULTICAST_2D::copy(desc_ptr, mbar_ptr, multicast_mask,
      cache_hint, smem_ptr, coord0, coord1);
 These are simplified signatures of the actual CuTe architecture-layer functions. 
 
@@ -368,7 +370,7 @@ To use SM90_TMA_LOAD_MULTICAST instead, the kernel would need a coordinated mult
 appropriate TMA partitioning, and correctly initialized barriers in the destination CTAs. Simply replacing SM90_TMA_LOAD{} with 
 SM90_TMA_LOAD_MULTICAST{} is not sufficient. 
 
-One additional detail from NVIDIA's CUTLASS developers: even for a multicast TMA atom, the shared-memory layout passed to the TMA creator 
+One additional detail from NVIDIA's CUTLASS developers: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, [Source: NVIDIA/cutlass Discussion #1315](https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com). even for multicast, even for a multicast TMA atom, the shared-memory layout passed to the TMA creator 
 describes one CTA's shared-memory layout, not the combined storage of the whole cluster. 
 
 6). When is multicast useful for GEMM?
@@ -383,8 +385,8 @@ For this pattern, an efficient design might use:
 This can reduce redundant traffic, especially through L2, although actual performance depends on tile sharing, cluster arrangement,
 synchronization overhead, and the hardware.
 
-The essential distinction: A CTA cluster determines which CTAs can cooperate. SM90_TMA_LOAD_MULTICAST determines which of those CTAs receive 
-a particular TMA transfer.
+The essential distinction: A CTA cluster determines which CTAs can cooperate. The multicast mask passed to a SM90_TMA_LOAD_MULTICAST copy 
+decides which of those CTAs receive a particular transfer..
 *******************
 	
 Argument 2: mA  (Line 275)
