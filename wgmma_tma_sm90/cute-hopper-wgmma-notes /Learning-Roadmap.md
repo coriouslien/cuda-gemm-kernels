@@ -15,7 +15,7 @@ transA = 'N';
 transB = 'T';
 which calls gemm_nt, not gemm_tn. 
 1. First, understand the complete context
-Here is the relevant setup code, including the statements immediately before the four lines:
+Here is the relevant setup code:
 // Global matrix strides
 auto dA = make_stride(Int<1>{}, ldA);
 auto dB = make_stride(Int<1>{}, ldB);
@@ -26,11 +26,12 @@ auto bK = Int<64>{};
 // Number of pipeline stages
 auto bP = Int<3>{};
 // Shared-memory layouts
+
 auto sA = tile_to_shape(
-    GMMA::Layout_MN_SW128_Atom<TA>{},
+    GMMA::Layout_MN_SW128_Atom\<TA\>{},
     make_shape(bM, bK, bP));
 auto sB = tile_to_shape(
-    GMMA::Layout_MN_SW128_Atom<TB>{},
+    GMMA::Layout_MN_SW128_Atom\<TB\>{},
     make_shape(bN, bK, bP));
 // The four statements
 Tensor mA = make_tensor(A, make_shape(M,K), dA);
@@ -132,8 +133,10 @@ Row-major	(K,1)	Second dimension, K
 Therefore, in the gemm_nt tutorial:
 auto dA = make_stride(Int<1>{}, ldA);
 Since ldA = M for tightly packed column-major A, this describes column-major global-memory storage.
+CuTe’s name for the “column-major.” In the NT path both A and B are MN-major: M for A, N for B is the stride-1 mode.
 One detail: ldA can be larger than M when the columns have padding. The layout is still column-major because the first dimension has 
 stride 1.  
+
 ****************
   
 Elements in the same column are adjacent in global memory because the first dimension has stride 1.
@@ -162,11 +165,6 @@ Why is B shaped (N,K), not (K,N)?
 B is described as (N,K) in both gemm_nt (L272) and gemm_tn (L356). The kernel always computes C(m,n) = Σ_k A(m,k)·B(n,k). The transB flag 
 does not change the shape, only the strides: dB = (1, ldB) in NT (L252), (ldB, 1) in TN (L336). Nothing is transposed anywhere; the kernel 
 reads B with whichever strides it is given.
-
-
-
-
-	
 	
 4. Statement 3: Copy_Atom tmaA = make_tma_atom(...)
 Now we reach the most important statement:
@@ -225,13 +223,13 @@ Case A — SM90_TMA_LOAD: Two independent TMA loads
                          |
 ___________________________________________________
 |TMA#1                                             | TMA #2 
-CTA 0, shared A tile                               CAT 1, shared A tile
+CTA 0, shared A tile                               CTA 1, shared A tile
 Each CTA independently issues a TMA load of the same data.
   
 Case B — SM90_TMA_LOAD_MULTICAST: One multicast operation
               Global Memory: A tile
                          | 
-                  One TMA mutlicast
+                  One TMA multicast
 ___________________________________________________
 |                                                 | 
 CTA 0, shared A tile                               CAT 1, shared A tile
@@ -370,9 +368,11 @@ To use SM90_TMA_LOAD_MULTICAST instead, the kernel would need a coordinated mult
 appropriate TMA partitioning, and correctly initialized barriers in the destination CTAs. Simply replacing SM90_TMA_LOAD{} with 
 SM90_TMA_LOAD_MULTICAST{} is not sufficient. 
 
-One additional detail from NVIDIA's CUTLASS developers: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, <a href="https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com">Source: NVIDIA/cutlass Discussion #1315</a>[Source: NVIDIA/cutlass Discussion #1315](https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com). even for multicast, even for a multicast TMA atom, the shared-memory layout passed to the TMA creator 
-describes one CTA's shared-memory layout, not the combined storage of the whole cluster. 
-
+One additional detail: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is 
+that of a single CTA, not of the entire cluster, <a href="https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com">Source:
+NVIDIA/cutlass Discussion #1315</a>. The SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, even for
+multicast (NVIDIA/cutlass Discussion #1315, accepted answer by @thakkarV, Jan 2024, about make_tma_copy). I expect the same for make_tma_atom
+	
 6). When is multicast useful for GEMM?
 Imagine two CTAs computing different output tiles:
 C_0=A_0B, C_1=A_1B
@@ -402,10 +402,7 @@ The CTA-specific region will be selected later, inside the kernel.
 Argument 3: sA(_,_,0) (Line 275)
 This is the part that deserves particular attention.
 Recall that the host-side sA was constructed as:
-auto sA = tile_to_shape(
-    GMMA::Layout_MN_SW128_Atom<TA>{},
-    make_shape(bM,bK,bP)
-);
+auto sA = tile_to_shape(GMMA::Layout_MN_SW128_Atom\<TA\>{}, make_shape(bM,bK,bP));
 Its shape is:
 sA layout: (128,64,3)  
 Here:
@@ -450,8 +447,17 @@ describes the tile's extent, while the layout describes how its elements are arr
 For the default cute::half_t type:
 128 x 64 x 2=16384 bytes
 Thus, each A tile contains 16 KiB of FP16 data.
-The TMA builder uses these arguments to construct the copy atom, including the tensor-map descriptor and copy-layout information needed by 
-CuTe's TMA operations. 
+make_tma_atom plans the transfer and asks the CUDA driver to fill in a small hardware-format record. That record is stored inside tmaA, 
+an ordinary host variable. Nothing is allocated on the GPU at this point.
+1). CuTe (host C++) reads mA’s pointer, shape and strides and the layout sA(_,_,0). It works out the box shape, the dimension order and 
+the swizzle mode. (CuTe copy_traits_sm90_tma.hpp)
+2). CUDA driver: CuTe calls cuTensorMapEncodeTiled with plain numbers. The driver fills a 128-byte CUtensorMap. (CUDA driver API docs)
+3). Where it lives: that struct sits by value inside tmaA in host memory.
+
+Why gemm_nt uses Layout_MN_SW128_Atom.
+TMA cannot transpose, so the smem tile must be contiguous in the same direction as global memory. In NT, A’s stride-1 mode is M, so the smem 
+atom is MN-major (Line 263; GMMA::Major::MN at Line 267). gemm_tn uses K-major atoms (Line 347, Line 351). The driver also requires every 
+global stride except the first to be a multiple of 16 bytes, so for half_t, ldA must be a multiple of 8.
 
 5. Statement 4: Copy_Atom tmaB = make_tma_atom(...)
 Copy_Atom tmaB = make_tma_atom(
@@ -469,7 +475,7 @@ make_shape(bN,bK)	  CTA's B tile shape, (128,64)
 
 For the default example, A and B tiles have the same number of elements:
 128 x 64 = 8192
-Each TMA transfer moves 16 KiB of half-precision data for its operand, so the two transfers together account for 32 KiB per pipeline stage.
+Each operand’s per-stage copy moves 16 KiB (16,384 B), so the two transfers together account for 32 KiB per pipeline stage.
 	
 6. How do these four statements connect to the actual TMA transfer?
 This is where host-side setup meets kernel execution.
@@ -483,7 +489,35 @@ ______________________________________________
             make_tma_atom(...)
             Constructs tmaA
       Kernel launch passes the TMA atom
-	
+	  - Launch: tmaA is passed by value as a kernel argument. In the kernel it is the __grid_constant__ parameter tma_a, 
+	  so it stays in kernel parameter space.
+	 // Kernel Launch
+     Line 303: cutlass::Status status = cutlass::launch_kernel_on_cluster(params, kernel_ptr,
+                                                             prob_shape, cta_tiler,
+                                                             A, tmaA,
+                                                             B, tmaB,
+                                                             C, dC, tiled_mma,
+                                                             alpha, beta);
+	  - Hardware: when the elected thread issues copy(tma_a.with(...), ...), the TMA unit reads the descriptor from that parameter space 
+	  and fetches the box.
+
+This function cutlass::Status status = cutlass::launch_kernel_on_cluster is the call that launches the kernel. Everything it list after params 
+and kernel_ptr becomes a kernel argument, and tmaA is one of them.
+How it matches the kernel. The arguments after params and kernel_ptr are in the same order as the parameters of gemm_device (Line 43–47):
+
+Launch argument  	Kernel parameter
+prob_shape	        shape_MNK
+cta_tiler	        cta_tiler
+A	                TA const* A
+tmaA	            CUTLASS_GRID_CONSTANT TmaA const tma_a (Line 44)
+tmaB	            CUTLASS_GRID_CONSTANT TmaB const tma_b (Line 45)
+
+Why “by value”. CUDA kernel arguments are copied into the kernel’s parameter space at launch. So the whole tmaA object, including its 
+128-byte descriptor, is copied there, and the kernel’s tma_a is that copy.
+
+What the function itself does. It is declared in cutlass/cluster_launch.hpp, which the source includes at L10. I recall that it launches 
+the kernel with the cluster dimension from params (the dimCluster(2,1,1)) through the CUDA extended launch API, cudaLaunchKernelEx. 
+
 GPU kernel: Partition and execute:
 tma_a.get_tma_tensor(...) : get_tma_tensor builds a tensor of coordinates, not of memory.
 (TMA coordinate tensor: counting iterator + basis strides, no pointer)
@@ -688,145 +722,6 @@ One subtle point worth remembering: sA(_,_,0) does not mean TMA will always writ
 single stage; the actual destination stage is determined by tAsA(_,pipe).
 That is the connection between these four host-side statements and the three-stage pipeline you have been studying.
 
-
-
-  
-
-
-
-
-
-
-
-
-
-
-
-
-  
-Line 271:  Tensor mA = make_tensor(A, make_shape(M,K), dA);
-Line 272:   Tensor mB = make_tensor(B, make_shape(N,K), dB);
-Line 271: Tensor mA = make_tensor(A, make_shape(M,K), dA);
-mA is a CuTe Tensor object. It does not allocate or store data.
-It’s a non-owning view: an iterator (here the raw pointer) plus a Layout (shape plus stride). 
-Contrast this with make_tensor_like(...) at L104, which does create an owning, array-backed 
-tensor.
-The label “global tensor” is only a convention here. Because A is passed as a plain TA const*,
-not wrapped in make_gmem_ptr(A), the tensor carries no gmem tag. CuTe doesn’t know it points to 
-global memory, and doesn’t need to, since make_tma_atom only extracts the raw address. 
-Compare L71, where mC uses make_gmem_ptr(C).
-A is not the matrix object itself, A is the physical starting address.
-A is the starting address of the matrix data, but it is a GPU virtual address, not a physical 
-one. 
-It comes from d_A.data().get() in main, which is device memory allocated by 
-thrust::device_vector.
-Two more facts from the pointer:
-Its type TA const* (half_t const*) also gives the tensor its element type and makes it read-only.
-It’s a device address being used inside a host function. That’s safe only because the host never 
-dereferences it; it just reads the pointer value.
-make_shape(M, K) defines the 2D logical bounds (Rows, Columns) ... domain of valid coordinates 
-(i, j).
-A is M×K, so mode 0 is M (rows) and mode 1 is K (columns), and valid coordinates are 0 ≤ i < M, 
-0 ≤ j < K. M and K are plain int (L241–243), so the shape is dynamic, known only at runtime.
-dA is not the leading dimension. It is already the full stride tuple, defined at L246 in gemm_nt:
-auto dA = make_stride(Int<1>{}, ldA);   // (dM, dK)
-The leading dimension is ldA, the function parameter, which is one component of dA.
-So make_tensor doesn’t build (1, dA) from dA. It uses dA as-is, giving the layout (M,K):
-(_1,ldA). 
-Element (i,j) is at A + i*1 + j*ldA, and strides are counted in elements, not bytes.
-If the matrix is column-major ...?
-CuTe makes no such decision. The layout is whatever stride you pass, and the “column-major” 
-choice was made by the programmer when writing L246 for the NT case. In CuTe terms this is 
-M-major (M is the stride-1 mode).
-The TN path (L314) passes dA = (ldA, _1) instead, which is K-major, and the same make_tensor
-call  then describes row-major A. Same line of code, different stride, different layout.
-Where the value comes from: main sets ldA = m when transA == 'N', so with the defaults, mA is 
-(512,1024):(_1,512).
-  
-Line 272: Tensor mB = make_tensor(B, make_shape(N,K), dB);
-The shape is (N,K), not (K,N). This code stores B as N×K and computes C(m,n) = 
-Σ_k A(m,k)·B(n,k). That convention is why the kernel tiles B with Step<X,_1,_1> at L77
-(selecting the N and K tile modes).
-dB = (_1, ldB) (L247), so B is N-major in the NT path. main sets ldB = n when transB == 'T', so
-with the defaults mB is (256,1024):(_1,256).
-Summary:
-Tensor as a view: correct. Note A is a raw pointer, so there’s no gmem tag, unlike mC.
-A: the starting address, but a GPU virtual address, not physical. Its type also sets the element
-type and const-ness.
-Shape (M,K): correct. Dynamic ints defining the coordinate domain.
-dA: not the leading dimension. It is the complete stride tuple (_1, ldA) built at L246, used 
-unchanged, in units of elements. ldA is the leading dimension.
-Major-ness: set by the stride the programmer passes (M-major here, K-major in TN), not inferred
-by CuTe.
-L272: same pattern, but B is shaped (N,K) with dB = (_1, ldB), so it is N-major.
-  Copy_Atom tmaA = make_tma_atom(SM90_TMA_LOAD{}, mA, sA(_,_,0), make_shape(bM,bK));
-  Copy_Atom tmaB = make_tma_atom(SM90_TMA_LOAD{}, mB, sB(_,_,0), make_shape(bN,bK));
-
-  
-Line 275:  Copy_Atom tmaA = make_tma_atom(SM90_TMA_LOAD{}, mA, sA(_,_,0), make_shape(bM,bK))
-tmaA is a Copy_Atom<Copy_Traits<SM90_TMA_LOAD, …>, …>, and its Copy_Traits (in CuTe’s
-cute/atom/copy_traits_sm90_tma.hpp) holds two things:
-The TmaDescriptor, a 128-byte CUtensorMap, which is the hardware descriptor;
-aux params, mainly the mapping from gmem modes to TMA coordinate dimensions. These are CuTe-side
-metadata, not hardware. get_tma_tensor uses them later.
-So tmaA contains a hardware descriptor plus CuTe metadata. It is not purely a hardware
-descriptor.
-
-SM90_TMA_LOAD{}
-It isn’t an empty tag. It has no data members, but it has static copy(...) member functions.
-These dispatch to SM90_TMA_LOAD_1D … _5D (in cute/arch/copy_sm90_tma.hpp) depending on the
-descriptor’s rank. Each of those contains the inline PTX cp.async.bulk.tensor.
-<N>d.shared::cluster.global.mbarrier::complete_tx::bytes.
-It produces PTX, not SASS. ptxas then lowers that PTX to SASS. “It selects the PTX instruction”
-is the accurate level.
-
-It also matters on the host: the type selects which Copy_Traits specialization make_tma_atom
-builds. So it determines how the descriptor is constructed, not just which device instruction
-runs later.
-
-mA (the source)
-It supplies the global bounds and strides, and the base address and the element type. All of it
-is consumed on the host to encode the descriptor. At runtime the TMA unit never sees mA; it sees
-only the descriptor.
-
-sA(_,_,0): sA is a Layout, not a tensor. It was defined at L257:
-auto sA = tile_to_shape(GMMA::Layout_MN_SW128_Atom<TA>{}, make_shape(bM,bK,bP));
-That is a swizzled ComposedLayout of shape (128,64,3), with no pointer. The smem tensor sA in
-the kernel (L83) is a different variable that happens to share the name. So sA(_,_,0) is a 
-layout slice: the (128,64) layout of one stage.
-make_tma_atom( SM90_TMA_LOAD{},   // argument 1
-               mA,                // argument 2
-               sA(_,_,0),         // argument 3  ← this whole thing
-               make_shape(bM,bK)) // argument 4
-
-So the sentence means: argument 3, sA(_,_,0), is a layout template for the destination, not the
-destination itself.
-sA(_,_,0) describes the destination’s layout (shape, stride, and swizzle), not its address. 
-The 0 drops the pipe mode, the descriptor describes one stage’s shape and swizzle, and stage 0
-is just a representative.
-The _ meaning “keep this whole mode”.
-
-The swizzle matters because TMA must write smem in exactly the swizzled pattern that WGMMA 
-expects to read (Layout_MN_SW128_Atom is a GMMA-defined atom), and that pattern also avoids 
-bank conflicts. It’s just CuTe, not the driver, that translates the layout.
-
-make_shape(bM, bK): It is the CTA tiler: it says which (bM,bK) piece of mA corresponds to the
-smem layout, i.e. one stage’s tile. Its shape must match sA(_,_,0)’s shape (128,64).
-
-Summary:
-tmaA is not data; it holds a hardware descriptor and metadata. It holds the CUtensorMap plus
-CuTe aux params.
-SM90_TMA_LOAD selects the TMA instruction, it’s a struct with static copy functions dispatching
-to 1D–5D variants. It emits PTX (cp.async.bulk.tensor), not SASS, and also selects the host-side
-Copy_Traits.
-mA gives bounds and strides. It also gives address and element type, all consumed on the host.
-sA(_,_,0) On the host it’s a layout slice. The 0 drops the pipe mode; the real stage is chosen at copy time.
-CuTe analyzes the layout and passes plain numbers (including the swizzle enum) to cuTensorMapEncodeTiled.
-(bM,bK) is the single-transaction tile	Imprecise. It’s the CTA tiler; CuTe derives the box from it and the smem layout, possibly needing more than one TMA instruction (NT case, unverified).
-TMA is a hardware copy engine in the SM.
-Software layers program it: CuTe (layout → parameters), the driver API (parameters → descriptor), PTX (instruction) → SASS.
-The descriptor is software-built data in a hardware-defined format, read directly by the TMA unit.
-Hardware constraints are fixed; CuTe’s choices are library policy.
 
 Line 42: void
 gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
