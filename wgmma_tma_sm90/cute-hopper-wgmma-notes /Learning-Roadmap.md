@@ -370,7 +370,7 @@ To use SM90_TMA_LOAD_MULTICAST instead, the kernel would need a coordinated mult
 appropriate TMA partitioning, and correctly initialized barriers in the destination CTAs. Simply replacing SM90_TMA_LOAD{} with 
 SM90_TMA_LOAD_MULTICAST{} is not sufficient. 
 
-One additional detail from NVIDIA's CUTLASS developers: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, [Source: NVIDIA/cutlass Discussion #1315](https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com). even for multicast, even for a multicast TMA atom, the shared-memory layout passed to the TMA creator 
+One additional detail from NVIDIA's CUTLASS developers: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, <a href="https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com">Source: NVIDIA/cutlass Discussion #1315</a>[Source: NVIDIA/cutlass Discussion #1315](https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com). even for multicast, even for a multicast TMA atom, the shared-memory layout passed to the TMA creator 
 describes one CTA's shared-memory layout, not the combined storage of the whole cluster. 
 
 6). When is multicast useful for GEMM?
