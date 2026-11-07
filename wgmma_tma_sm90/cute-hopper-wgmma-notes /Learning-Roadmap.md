@@ -2016,7 +2016,7 @@ __grid_constant__ was not being enabled, allowing the descriptor to be copied in
 memory. The resulting pointer was unsuitable for TMA.
 	
 The issue was confirmed in the discussion. 
- <a https://github.com/NVIDIA/cutlass/discussions/2054?utm_source=chatgpt.com">NVIDIA CUTLASS Discussion #2054</a> NVIDIA CUTLASS Discussion #2054 — TMA failure and grid-constant parametersThis does not mean every kernel without __grid_constant__ will fail. The compiler's treatment of the address and where the descriptor ultimately resides determine whether the TMA instruction is valid. But this is a real correctness concern, not merely a performance optimization.
+ <a href="https://github.com/NVIDIA/cutlass/discussions/2054?utm_source=chatgpt.com">NVIDIA CUTLASS Discussion #2054</a> NVIDIA CUTLASS Discussion #2054 — TMA failure and grid-constant parametersThis does not mean every kernel without __grid_constant__ will fail. The compiler's treatment of the address and where the descriptor ultimately resides determine whether the TMA instruction is valid. But this is a real correctness concern, not merely a performance optimization.
 6. Three addresses you should distinguish
 Because you're tracing the CUDA kernel launch and TMA execution, keep these three addresses separate:
 Address	Meaning
