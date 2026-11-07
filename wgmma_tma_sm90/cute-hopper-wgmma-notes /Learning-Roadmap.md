@@ -2189,7 +2189,81 @@ The conclusion: CUDA requires const with __grid_constant__ because the parameter
 shared, read-only identity across the grid. For the CUTLASS kernel, this also preserves an
 address suitable for accessing the TMA descriptor.
 
+Question 5. Does the kernel body ever use A and B? Check by searching the body (L46–230) for
+whole-word uses of A and B. Be careful: sA, gA and tAgA contain the letter, so they don’t
+count. Compare with C.
 
+I checked the gemm_device() body in the source code, distinguishing whole-word matches from
+actual references to the function parameters.
+Result: The kernel does not use its A or B pointer parameters. It does directly use its C 
+pointer parameter.
+1. Compare A, B, and C
+Kernel parameter	Appears as a whole word in the body?	Actually uses the parameter?
+TA const* A	        Yes, in smem.A and comments	            No
+TB const* B	        Yes, in smem.B and comments	            No
+TC* C	            Yes, in make_gmem_ptr(C)                Yes
+
+2. Examine the actual statements
+For A:
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+Tensor sA = make_tensor(
+    make_smem_ptr(smem.A.begin()),
+    SmemLayoutA{}
+);
+Neither statement uses the kernel parameter A.
+- tma_a is the TMA copy atom containing A's descriptor.
+- smem.A refers to the A member of the SharedStorage object.
+- sA is a separate local tensor variable.
+For B:
+Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
+Tensor sB = make_tensor(
+    make_smem_ptr(smem.B.begin()),
+    SmemLayoutB{}
+);
+
+
+The same distinction applies. The kernel parameter B is not referenced.
+
+Now compare C:
+Tensor mC = make_tensor(
+    make_gmem_ptr(C),
+    make_shape(M,N),
+    dC
+);
+
+
+Here, C directly refers to the kernel's TC* C parameter.
+
+The kernel uses that pointer to create a global-memory tensor view of the output matrix.
+3. Why does this matter?
+The implementation uses two different mechanisms to access its matrices:
+Matrix	How the kernel obtains access
+A	Through the descriptor contained in tma_a
+B	Through the descriptor contained in tma_b
+C	Directly through pointer C
+
+The host-side gemm_nt() function uses A and B pointers when constructing the TMA descriptors:
+Tensor mA = make_tensor(A, make_shape(M,K), dA);
+Tensor mB = make_tensor(B, make_shape(N,K), dB);
+
+
+But after the descriptors are passed to gemm_device(), the kernel's separately passed A and B pointers are unused.
+
+By contrast, the output C pointer is needed to construct mC and ultimately write the GEMM result through:
+axpby(alpha, tCrC, beta, tCgC);
+
+
+Here, tCgC is derived from gC, which is derived from mC, which ultimately references the pointer parameter C.
+4. One subtle point about whole-word searching
+A regular expression such as:
+\bA\b
+
+
+will match A in smem.A, because the period separates identifiers. It will also match occurrences of A in comments.
+
+Therefore, simply counting whole-word matches is insufficient to establish whether the parameter is used. You must identify which C++ object each occurrence refers to.
+
+Conclusion: In this specific NVIDIA tutorial, the A and B kernel parameters are redundant for the current implementation, while C is necessary. You could remove the two unused pointer parameters if you also update the corresponding kernel-launch arguments. The host-side A and B pointers would still be needed to create their TMA descriptors.
 
 
 	
