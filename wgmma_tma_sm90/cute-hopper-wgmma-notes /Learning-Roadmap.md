@@ -722,8 +722,572 @@ One subtle point worth remembering: sA(_,_,0) does not mean TMA will always writ
 single stage; the actual destination stage is determined by tAsA(_,pipe).
 That is the connection between these four host-side statements and the three-stage pipeline you have been studying.
 
+Lien 43 - Line 47:
+This function is the GPU kernel that performs the actual matrix multiplication in NVIDIA's
+Hopper wgmma_tma_sm90.cu tutorial.
+I have already studied make_tma_atom(), tma_partition(), TMA transfers, shared-memory pipeline
+stages, and WGMMA. This function brings all of those components together.
 
-start from here Nov 7
+I checked the current NVIDIA CUTLASS source. I'll follow the default gemm_nt execution path 
+(transA='N', transB='T') and explain the parameters in the order they appear. 
+
+1. Understand what gemm_device() does
+The kernel computes:
+C=alpha(AB)^T + betaC   ( axpby(alpha, tCrC, beta, tCgC);)
+
+With the following logical matrix dimensions:
+A:(M,K), B:(N,K), C:(M,N)
+
+The default tutorial configuration is:
+Parameter	           Value
+M	                   512
+N	                   256
+K	                   1024
+CTA tile	           (128, 128, 64)
+Pipeline stages	       3
+Input/output types	   cute::half_t
+Alpha	               1
+Beta	               0
+Thus, in the default run, the result is simply C=(AB)^T. 
+
+2. The complete function declaration
+The statement is part of a C++ function template. Here is its complete declaration:
+template \<
+    class ProblemShape,
+    class CtaTiler,
+    class TA, class SmemLayoutA, class TmaA,
+    class TB, class SmemLayoutB, class TmaB,
+    class TC, class CStride,
+    class TiledMma,
+    class Alpha, class Beta
+\>
+__global__ static
+__launch_bounds__(decltype(size(TiledMma{}))::value)
+void gemm_device(
+    ProblemShape shape_MNK,
+    CtaTiler cta_tiler,
+
+    TA const* A,
+    CUTLASS_GRID_CONSTANT TmaA const tma_a,
+
+    TB const* B,
+    CUTLASS_GRID_CONSTANT TmaB const tma_b,
+
+    TC* C,
+    CStride dC,
+
+    TiledMma mma,
+
+    Alpha alpha,
+    Beta beta
+)
+
+
+There are 11 function arguments, with their concrete types determined by the template arguments.
+
+The three CUDA/C++ function qualifiers have different purposes:
+- __global__ means this is a GPU kernel, launched from the host and executed on the GPU.
+- static gives the function internal linkage at file scope.
+- __launch_bounds__(...) tells the CUDA compiler the maximum number of threads per block for which the kernel is compiled. In this tutorial, that value is derived from the tiled MMA configuration.
+Notice that SmemLayoutA and SmemLayoutB are template type parameters, not direct function arguments. They are used inside the kernel to construct the shared-memory tensors.
+3. Parameters 1 and 2: Problem dimensions versus CTA tile dimensions
+Parameter 1: ProblemShape shape_MNK
+On the host, the code constructs:
+auto prob_shape = make_shape(M, N, K);
+
+
+For the default configuration:
+shape_MNK = (512, 256, 1024)
+
+
+This describes the entire GEMM problem, not a single CTA's work.
+
+Inside the kernel:
+auto [M, N, K] = shape_MNK;
+
+
+This extracts the logical matrix dimensions:
+M = 512;
+N = 256;
+K = 1024;
+
+
+The kernel uses these dimensions to construct full-matrix tensor views.
+Parameter 2: CtaTiler cta_tiler
+On the host:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+
+auto cta_tiler = make_shape(bM, bN, bK);
+
+
+So:
+cta_tiler = (128,128,64)
+
+
+This defines how large a tile one CTA handles.
+
+A CTA computes a 128×128 tile of output C, progressing through K in chunks of 64 elements.
+Entire output matrix C: 512 × 256
+CTA (0,0)
+
+128 × 128
+
+
+CTA (0,1)
+
+128 × 128
+
+
+CTA (1,0)
+
+128 × 128
+
+
+CTA (1,1)
+
+128 × 128
+
+
+CTA (2,0)
+
+128 × 128
+
+
+CTA (2,1)
+
+128 × 128
+
+
+CTA (3,0)
+
+128 × 128
+
+
+CTA (3,1)
+
+128 × 128
+
+
+
+Eight output tiles, typically computed by eight CTAs. Highlighted: CTA (1,0), which computes C rows 128–255 and columns 0–127.
+The distinction is:
+Parameter	Shape	Describes
+shape_MNK	(512,256,1024)	The entire matrix multiplication
+cta_tiler	(128,128,64)	One CTA's tile dimensions
+
+The kernel's grid has dimensions (4,2) for this default problem, with a two-CTA cluster configuration.
+
+One more distinction: the pipeline-stage count of three comes from the shared-memory layouts, not from cta_tiler.
+4. Parameters 3 and 4: Global-memory A pointer and TMA copy atom
+Let's examine these together:
+TA const* A,
+CUTLASS_GRID_CONSTANT TmaA const tma_a,
+
+
+Parameter 3: TA const* A
+TA is the element type of matrix A.
+
+In the default example:
+using TA = cute::half_t;
+
+
+Therefore, this argument is effectively:
+cute::half_t const* A
+
+
+Here:
+- A holds the device-memory address of matrix A.
+- const means the elements cannot be modified through this pointer.
+- TA* means the pointer refers to elements of type TA.
+For the default configuration, A has:
+\[
+512\times1024=524288\text{ elements}
+\]
+
+However, the kernel does not directly dereference A to perform its TMA loads. Instead, it uses the descriptor contained in tma_a.
+
+The pointer remains part of the function interface, but it is not otherwise referenced in this kernel body.
+Parameter 4: CUTLASS_GRID_CONSTANT TmaA const tma_a
+Recall the host-side statement:
+Copy_Atom tmaA = make_tma_atom(
+    SM90_TMA_LOAD{},
+    mA,
+    sA(_,_,0),
+    make_shape(bM,bK));
+
+
+This creates the TMA copy atom used to configure global-to-shared-memory transfers for matrix A.
+
+When the kernel is launched, the host's tmaA object becomes the kernel argument named tma_a.
+
+The naming difference is intentional:
+Host variable:    tmaA
+Kernel parameter: tma_a
+
+
+TmaA is the deduced C++ type of that copy atom.
+
+Inside the kernel:
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+
+
+This creates a descriptor-backed view of the complete global A matrix.
+
+Later:
+copy(tma_a.with(producer_mbar[pipe]),
+     tAgA(_,k_tile),
+     tAsA(_,pipe));
+
+
+initiates the actual TMA transfer.
+
+So tma_a provides the transfer machinery, while tAgA and tAsA identify the source and destination portions to copy.
+What is CUTLASS_GRID_CONSTANT?
+This macro is defined in:
+CUTLASS device_kernel.hOn supported CUDA configurations, it expands to:
+__grid_constant__
+
+
+This modifier marks a const-qualified kernel parameter as read-only and lets the compiler avoid creating unnecessary per-thread local copies when its address is needed.
+
+It does not mean that the TMA object is stored in a user-declared __constant__ memory array, nor does it mean that the CTAs are synchronizing with one another.
+
+NVIDIA documents this behavior in the CUDA Programming Guide — grid-constant parameters. 
+GitHub+1
+
+5. Parameters 5 and 6: Global-memory B pointer and TMA copy atom
+TB const* B,
+CUTLASS_GRID_CONSTANT TmaB const tma_b,
+
+
+These arguments have the same roles as the corresponding A arguments.
+
+On the host:
+Tensor mB = make_tensor(B, make_shape(N,K), dB);
+
+Copy_Atom tmaB = make_tma_atom(
+    SM90_TMA_LOAD{},
+    mB,
+    sB(_,_,0),
+    make_shape(bN,bK));
+
+
+For the default example:
+B logical shape = (256,1024)
+B element type   = cute::half_t
+B stride         = (1,256)
+
+
+Inside the kernel:
+Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
+
+
+This reconstructs a TMA-compatible view of B using the descriptor.
+
+Later:
+copy(tma_b.with(producer_mbar[pipe]),
+     tBgB(_,k_tile),
+     tBsB(_,pipe));
+
+
+initiates the B transfer.
+
+Notice that both tma_a and tma_b are configured with SM90_TMA_LOAD, so neither transfer uses multicast, even though the launch uses clusters of two CTAs.
+6. Parameters 7 and 8: Output C pointer and its stride
+TC* C,
+CStride dC,
+
+
+Parameter 7: TC* C
+This is the GPU global-memory pointer to output matrix C.
+
+Unlike A and B, C will be written by the kernel, so the pointer is not const.
+
+The logical shape is:
+\[
+C:(M,N)=(512,256)
+\]
+
+Inside the kernel:
+Tensor mC = make_tensor(
+    make_gmem_ptr(C),
+    make_shape(M,N),
+    dC);
+
+
+This constructs a CuTe tensor view of the output matrix.
+Parameter 8: CStride dC
+This describes how C's logical coordinates map to physical memory.
+
+The host constructs:
+auto dC = make_stride(Int<1>{}, ldC);
+
+
+For the default example:
+ldC = M;  // 512
+
+
+Thus:
+dC = (1,512)
+
+
+The physical element offset is:
+\[
+\operatorname{offset}_C(m,n)=m+512n
+\]
+
+For example:
+mC(0,0)  // C[0]
+mC(1,0)  // C[1]
+mC(0,1)  // C[512]
+
+
+Therefore, C is stored in column-major order, with the first logical dimension contiguous.
+
+The output tensor view is subsequently partitioned into the CTA's C tile:
+Tensor gC = local_tile(
+    mC,
+    cta_tiler,
+    cta_coord,
+    Step<_1,_1,X>{});
+
+
+gC is a view of the selected output region; it is not a copy of the entire C matrix.
+7. Parameter 9: TiledMma mma
+TiledMma mma,
+
+
+This argument determines how the CTA's threads perform matrix multiplication using Hopper's WGMMA operations.
+
+On the host:
+TiledMMA tiled_mma = make_tiled_mma(
+    SM90_64x64x16_F16F16F16_SS<
+        GMMA::Major::MN,
+        GMMA::Major::MN
+    >{}
+);
+
+
+This configures an SM90 WGMMA operation with an instruction-level matrix shape of 64×64×16 and shared-memory operands A and B. The surrounding tiled MMA abstraction describes the participating thread layout and the operation's partitioning.
+
+Notice the difference:
+Concept	Dimensions	Meaning
+WGMMA instruction shape	64 × 64 × 16	One instruction-level MMA operation
+CTA tile shape	128 × 128 × 64	The tile covered by the overall CTA computation
+Pipeline stages	3	Reusable shared-memory operand buffers
+
+A CTA's full tile generally requires multiple WGMMA operations rather than one 64×64×16 instruction.
+
+Inside the kernel:
+ThrMMA thr_mma = mma.get_thread_slice(threadIdx.x);
+
+
+This obtains the MMA partition associated with the calling thread.
+
+Next:
+Tensor tCsA = thr_mma.partition_A(sA);
+Tensor tCsB = thr_mma.partition_B(sB);
+Tensor tCgC = thr_mma.partition_C(gC);
+
+
+These construct the thread's logical MMA operand and output partitions.
+
+The kernel then creates the accumulator and shared-memory operand descriptor fragments:
+Tensor tCrC = thr_mma.make_fragment_C(tCgC);
+clear(tCrC);
+
+Tensor tCrA = thr_mma.make_fragment_A(tCsA);
+Tensor tCrB = thr_mma.make_fragment_B(tCsB);
+
+
+Later, WGMMA runs:
+gemm(mma,
+     tCrA(_,_,_,read_pipe),
+     tCrB(_,_,_,read_pipe),
+     tCrC);
+
+
+This uses the selected shared-memory stage for A and B and accumulates the matrix product into tCrC.
+
+Important distinction: mma does not contain the numerical elements of A, B, or C. It describes how the matrix multiplication is organized and executed.
+8. Parameters 10 and 11: Alpha alpha and Beta beta
+Alpha alpha,
+Beta beta
+
+
+These are scaling factors used in the output calculation.
+
+The GEMM equation is:
+\[
+C_{\text{out}}=\alpha AB^T+\beta C_{\text{in}}
+\]
+
+For the default example:
+alpha = 1.0;
+beta  = 0.0;
+
+
+Therefore:
+\[
+C_{\text{out}}=AB^T
+\]
+
+Inside the kernel, after the main WGMMA loop finishes:
+axpby(alpha, tCrC, beta, tCgC);
+
+
+Here:
+- tCrC contains the accumulated matrix product.
+- tCgC is the thread's output tensor view into global memory.
+- alpha scales the computed matrix product.
+- beta scales the prior C value.
+Conceptually:
+C[m,n] = alpha * accumulated_result
+       + beta  * C[m,n];
+
+
+The epilogue performs the final output update and stores results to global memory. 
+GitHub
+
+9. How does the host pass all 11 arguments?
+This is the connection between the host-side gemm_nt() function and the GPU-side gemm_device() kernel.
+
+The host uses:
+cutlass::launch_kernel_on_cluster(
+    params,
+    kernel_ptr,
+    prob_shape, cta_tiler,
+    A, tmaA,
+    B, tmaB,
+    C, dC, tiled_mma,
+    alpha, beta);
+
+
+Here, params supplies the cluster launch configuration and kernel_ptr identifies the instantiated kernel. The remaining values become the kernel's 11 arguments. 
+GitHub
+
+Host passes	Kernel receives
+prob_shape	shape_MNK
+cta_tiler	cta_tiler
+A	A
+tmaA	tma_a
+B	B
+tmaB	tma_b
+C	C
+dC	dC
+tiled_mma	mma
+alpha	alpha
+beta	beta
+
+10. Trace one CTA through the kernel
+Suppose we choose:
+blockIdx.x = 1;
+blockIdx.y = 0;
+
+
+Using the default values:
+shape_MNK = (512,256,1024);
+cta_tiler = (128,128,64);
+
+
+The CTA processes output tile:
+\[
+C[128:256,\;0:128]
+\]
+
+To compute that tile, it needs:
+\[
+A[128:256,\;0:1024]
+\]
+
+and:
+\[
+B[0:128,\;0:1024]
+\]
+
+It processes the reduction dimension K in 64-element chunks:
+\[
+1024/64=16\text{ K tiles}
+\]
+
+How the parameters work together
+shape_MNK + cta_tiler
+
+Determine which output tile CTA (1,0) computes.
+
+
+tma_a
+
+Load A's 128×64 K tile
+
+
+tma_b
+
+Load B's 128×64 K tile
+
+
+
+
+Shared-memory pipeline
+
+Three reusable stages for A and B
+
+
+mma
+
+WGMMA consumes the 16 K tiles and accumulates the output
+
+
+alpha, beta, C, dC
+
+Scale and store the 128×128 result tile
+
+
+Each CTA follows the same algorithm but uses its own output coordinates, shared-memory buffers, and synchronization barriers.
+11. One subtle C++ distinction: compile-time versus runtime information
+There are two levels of information in this function:
+
+Compile-time types control how the kernel is generated. Examples include TiledMma, SmemLayoutA, SmemLayoutB, and the compile-time dimensions of CtaTiler. These enable CuTe to construct layouts and select specialized instructions.
+
+Runtime values include the actual problem dimensions M, N, K, device pointers, leading dimensions, CTA coordinates, and the alpha and beta values.
+
+For example:
+auto bM = Int<128>{}; // compile-time constant
+auto M  = int(m);     // runtime dimension
+
+
+This is one of the reasons CuTe uses C++ templates so extensively: much of the memory layout and matrix-operation structure can be resolved during compilation, while the actual data and problem size are provided when the kernel is launched.
+Final summary
+The function signature divides naturally into five responsibilities:
+Responsibility	Parameters
+Problem and CTA dimensions	shape_MNK, cta_tiler
+Input A and its TMA descriptor	A, tma_a
+Input B and its TMA descriptor	B, tma_b
+Output tensor and memory layout	C, dC
+Computation and scaling	mma, alpha, beta
+
+The most important thing to understand is that gemm_device() does not receive complete matrix objects by value. It receives pointers, descriptors, layouts, and execution configuration. It then constructs CuTe tensor views, selects CTA-local tiles, loads input data through TMA, computes through WGMMA, and stores the result.
+
+You can verify the declaration and its implementation directly in NVIDIA CUTLASS — gemm_device() source, lines 60–235
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+Nov 7.
+====================
 Line 42: void
 gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
             TA const* A, CUTLASS_GRID_CONSTANT TmaA const tma_a,
