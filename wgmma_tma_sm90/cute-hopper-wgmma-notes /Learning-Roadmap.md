@@ -723,6 +723,7 @@ single stage; the actual destination stage is determined by tAsA(_,pipe).
 That is the connection between these four host-side statements and the three-stage pipeline you have been studying.
 
 
+start from here Nov 7
 Line 42: void
 gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
             TA const* A, CUTLASS_GRID_CONSTANT TmaA const tma_a,
