@@ -2016,28 +2016,183 @@ __grid_constant__ was not being enabled, allowing the descriptor to be copied in
 memory. The resulting pointer was unsuitable for TMA.
 	
 The issue was confirmed in the discussion. 
- <a href="https://github.com/NVIDIA/cutlass/discussions/2054?utm_source=chatgpt.com">NVIDIA CUTLASS Discussion #2054</a> NVIDIA CUTLASS Discussion #2054 — TMA failure and grid-constant parametersThis does not mean every kernel without __grid_constant__ will fail. The compiler's treatment of the address and where the descriptor ultimately resides determine whether the TMA instruction is valid. But this is a real correctness concern, not merely a performance optimization.
+ <a href="https://github.com/NVIDIA/cutlass/discussions/2054?utm_source=chatgpt.com">NVIDIA 
+CUTLASS Discussion #2054</a> NVIDIA CUTLASS Discussion #2054 — TMA failure and grid-constant
+parametersThis does not mean every kernel without __grid_constant__ will fail. The compiler's 
+treatment of the address and where the descriptor ultimately resides determine whether the TMA
+instruction is valid. But this is a real correctness concern, not merely a performance 
+optimization.
 6. Three addresses you should distinguish
-Because you're tracing the CUDA kernel launch and TMA execution, keep these three addresses separate:
-Address	Meaning
+Because you're tracing the CUDA kernel launch and TMA execution, keep these three addresses
+separate:
+Address	            Meaning
 &tmaA on the CPU	Host address of the copy atom passed to the CUDA launch mechanism
-&tma_a.tma_desc_ on the GPU	Device-side address of the tensor-map descriptor inside the kernel parameter
-Base address of matrix A	GPU global-memory address encoded inside that descriptor
-
-The TMA instruction uses the second address to access the descriptor, then uses the descriptor's contents and the supplied tensor coordinates to read the selected data from the third address.
+&tma_a.tma_desc_ 	Device-side address of the tensor-map descriptor 
+on the GPU          inside the kernel parameter
+Base address 	    GPU global-memory address encoded inside that descriptor
+of matrix A
+	
+The TMA instruction uses the second address to access the descriptor, then uses the 
+descriptor's contents and the supplied tensor coordinates to read the selected data from the
+third address.
 Final takeaway
 In your tutorial:
 CUTLASS_GRID_CONSTANT TmaA const tma_a
-
-
 is important for two reasons:
 1. It prevents unnecessary per-thread copies of the descriptor-bearing kernel parameter.
 2. It keeps the address of the tensor-map descriptor suitable for the TMA instruction.
-TMA cares about the descriptor's address because the hardware reads the descriptor from memory. __grid_constant__ helps ensure that the address points to the original kernel parameter, rather than a potentially invalid thread-local copy.
+TMA cares about the descriptor's address because the hardware reads the descriptor from memory.
+__grid_constant__ helps ensure that the address points to the original kernel parameter, rather
+than a potentially invalid thread-local copy.
 
-This is why CUTLASS_GRID_CONSTANT is more than an ordinary read-only optimization in Hopper TMA programming.
+This is why CUTLASS_GRID_CONSTANT is more than an ordinary read-only optimization in Hopper 
+TMA programming.
+
+Question 4: Why must the parameter be const?
+In the wgmma_tma_sm90.cu tutorial, the parameter must be const because CUDA requires every
+__grid_constant__ kernel parameter to be const-qualified.
+
+But there is a deeper reason: __grid_constant__ allows all threads in the kernel to access the
+same parameter object at the same address, rather than potentially accessing separate per-
+thread copies.
+
+Let's examine why that matters.
+1. Start with your kernel declaration
+CUTLASS_GRID_CONSTANT TmaA const tma_a
+
+Assuming CUTLASS_GRID_CONSTANT expands to __grid_constant__, this becomes:
+__grid_constant__ TmaA const tma_a
+
+There are two separate C++/CUDA concepts:
+Keyword	             Purpose
+const	             Prevents modification of tma_a through this parameter
+__grid_constant__	 Tells CUDA to preserve a single read-only parameter object 
+	                 accessible at the same address by all threads in the grid
+
+NVIDIA explicitly requires __grid_constant__ parameters to have const-qualified, non-reference
+types. 
+
+2. Why does CUDA impose this requirement?
+Imagine 128 GPU threads executing the same kernel.
+
+Without __grid_constant__, CUDA can create separate thread-local copies of a by-value parameter
+when its address is taken. This helps preserve ordinary C++ parameter semantics, under which
+each thread could modify its own copy.
+
+With __grid_constant__, the threads instead access the same read-only parameter object.
+What would happen if shared parameter modification were allowed?
+        One parameter object: tma_a
+        Same address for all GPU threads
+____________________________________________
+Thread 0                          Thread 1
+Attempts to modify tma_a          Reads tma_a
 
 
+Potential conflicting access to the same object
+
+
+Rather than allow these modifications, CUDA defines __grid_constant__ parameters as read-only.
+Modifying such an object or its subobjects—even through a mutable member—is undefined behavior. 
+
+3. What if you remove const?
+For example:
+// Incorrect
+__global__ void kernel(
+    __grid_constant__ TmaA tma_a
+)
+{
+    // ...
+}
+
+This violates CUDA's declaration requirements and should produce a compilation error on a
+conforming CUDA compiler.
+
+The correct declaration is:
+// Correct
+__global__ void kernel(
+    __grid_constant__ TmaA const tma_a
+)
+{
+    // ...
+}
+
+However, an important detail is that const alone does not provide the benefits of 
+__grid_constant__.
+
+Consider:
+__global__ void kernel(TmaA const tma_a)
+This is legal C++, and the parameter is read-only through its name. But the compiler may still
+create a thread-local copy when its address is taken.
+Adding __grid_constant__ prevents that copying behavior.
+	
+4. Why is this especially important for your TMA descriptor?
+Recall the structure of tma_a:
+// Conceptual structure
+struct TmaA {
+    TmaDescriptor tma_desc_;
+    AuxParams aux_params_;
+};
+This is illustrative, not the literal CUTLASS declaration.
+Inside CuTe, the descriptor's address is needed:
+&tma_desc_
+
+The TMA instruction uses the address to find the descriptor in a supported memory address space.
+With:
+__grid_constant__ TmaA const tma_a
+the address refers to the original read-only kernel parameter rather than an unnecessary thread-
+local copy.
+
+The kernel can still execute:
+copy(
+    tma_a.with(producer_mbar[pipe]),
+    tAgA(_,k_tile),
+    tAsA(_,pipe)
+);
+
+because using a const object does not mean you cannot read it or call its const-qualified 
+methods.
+The call creates a separate copy-operation object associated with the selected barrier. 
+It does not require modifying the original tma_a.
+5. Does const mean the matrix A cannot change?
+No. This is another important distinction.
+There are three different things:
+Object	                                Meaning of const
+TA const* A                             Matrix elements cannot be modified through pointer A
+TmaA const tma_a	                    The TMA copy-atom parameter itself cannot be modified
+__grid_constant__  TmaA const tma_a	    The copy-atom parameter is read-only and retains a grid-
+	                                    wide parameter address
+
+Making tma_a const does not automatically make the entire global-memory matrix A immutable.
+The descriptor contains A's address and describes how TMA accesses its data. That is different
+from owning or protecting the matrix contents.
+6. The most important distinction
+Remember these three declarations:
+// 1. Ordinary parameter
+__global__ void kernel(TmaA tma_a);
+
+// 2. Const parameter
+__global__ void kernel(TmaA const tma_a);
+
+// 3. Const grid-constant parameter
+__global__ void kernel(
+    __grid_constant__ TmaA const tma_a
+);
+
+Declaration	                  Read-only through 	 Prevents per-thread parameter 
+	                          parameter?             copy on address-taking?
+
+1. Ordinary	                  No                     No
+2. const                      Yes                    No
+3. const __grid_constant__	  Yes                    Yes
+
+The conclusion: CUDA requires const with __grid_constant__ because the parameter has one
+shared, read-only identity across the grid. For the CUTLASS kernel, this also preserves an
+address suitable for accessing the TMA descriptor.
+
+
+
+
+	
 	
 
 	
