@@ -2730,11 +2730,8 @@ Part B: What does make_shape(M,K) do?
 With the default values:
 make_shape(512,1024)
 
-
 This creates the logical shape:
-\[
-\operatorname{Shape}(mA)=(512,1024)
-\]
+(mA)=(512,1024)
 
 It tells CuTe that the tensor has two logical dimensions, M and K.
 
