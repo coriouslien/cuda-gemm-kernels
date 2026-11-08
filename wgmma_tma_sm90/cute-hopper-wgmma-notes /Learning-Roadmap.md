@@ -5,7 +5,407 @@ Tensor mB = make_tensor(B, make_shape(N,K), dB);
 Copy_Atom tmaA = make_tma_atom(SM90_TMA_LOAD{}, mA, sA(_,_,0), make_shape(bM,bK));
 Copy_Atom tmaB = make_tma_atom(SM90_TMA_LOAD{}, mB, sB(_,_,0), make_shape(bN,bK));
 	
-These four statements are part of the host-side TMA setup in NVIDIA's wgmma_tma_sm90.cu tutorial. They prepare the information that Hopper's 
+These four statements are part of the host-side hese four statements are especially important because they show how CuTe represents matrices A, B, and C differently inside your Hopper gemm_device() kernel.
+
+The biggest distinction is:
+- mA and mB are TMA coordinate tensors. They represent global-memory matrices through coordinates interpreted using TMA descriptors.
+- mC is an ordinary global-memory tensor view. It uses the actual pointer C and its memory strides.
+Let's follow the default gemm_nt() execution path (transA='N', transB='T') in the source code you provided.
+1. First statement: auto [M, N, K] = shape_MNK;
+auto [M, N, K] = shape_MNK;
+
+
+This uses C++17 structured binding to extract three values from a CuTe shape object.
+
+Recall the host-side code:
+auto M = int(m);
+auto N = int(n);
+auto K = int(k);
+
+auto prob_shape = make_shape(M, N, K);
+
+
+The host passes prob_shape to the kernel:
+launch_kernel_on_cluster(
+    params, kernel_ptr,
+    prob_shape, cta_tiler,
+    A, tmaA,
+    B, tmaB,
+    C, dC, tiled_mma,
+    alpha, beta
+);
+
+
+The kernel receives it as:
+ProblemShape shape_MNK
+
+
+For the default tutorial:
+shape_MNK = (512, 256, 1024)
+
+
+Therefore, the structured binding is conceptually equivalent to:
+auto M = get<0>(shape_MNK);  // 512
+auto N = get<1>(shape_MNK);  // 256
+auto K = get<2>(shape_MNK);  // 1024
+
+
+So the three variables represent:
+Variable	Value	Meaning
+M	512	Rows of output matrix C
+N	256	Columns of output matrix C
+K	1024	Reduction dimension
+
+No matrix allocation or data transfer takes place here.
+2. Second statement: Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+Tensor mA =
+    tma_a.get_tma_tensor(make_shape(M,K));
+
+
+We need to understand this statement in three parts.
+Part A: What is tma_a?
+Earlier, the host created:
+Tensor mA = make_tensor(A, make_shape(M,K), dA);
+
+Copy_Atom tmaA = make_tma_atom(
+    SM90_TMA_LOAD{},
+    mA,
+    sA(_,_,0),
+    make_shape(bM,bK)
+);
+
+
+The kernel receives the host-created tmaA as tma_a.
+
+As we discussed previously, this copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
+
+The descriptor contains information about the actual global-memory matrix A, including its base address, dimensions, and strides.
+Part B: What does make_shape(M,K) do?
+With the default values:
+make_shape(512,1024)
+
+
+This creates the logical shape:
+\[
+\operatorname{Shape}(mA)=(512,1024)
+\]
+
+It tells CuTe that the tensor has two logical dimensions, M and K.
+
+It does not allocate or copy matrix elements.
+Part C: What does get_tma_tensor() return?
+This is the most important part.
+
+get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly dereferences the matrix A pointer.
+
+You can verify this in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization is:
+template <class GShape>
+CUTE_HOST_DEVICE constexpr
+auto get_tma_tensor(GShape const& g_shape) const
+{
+    static_assert(
+        is_congruent<
+            decltype(g_shape),
+            decltype(aux_params_.g_stride_)
+        >::value
+    );
+
+    return make_coord_tensor(
+        make_layout(g_shape, aux_params_.g_stride_)
+    );
+}
+
+
+
+GitHub
+Let's examine the return statement:
+make_coord_tensor(
+    make_layout(g_shape, aux_params_.g_stride_)
+);
+
+
+Here:
+Component	Meaning
+g_shape	Logical shape (M,K)
+aux_params_.g_stride_	CuTe's mapping from logical indices to TMA coordinate offsets
+make_layout(...)	Constructs that coordinate-mapping layout
+make_coord_tensor(...)	Creates a tensor whose implicit elements represent TMA coordinates
+
+Important: aux_params_.g_stride_ is not necessarily an ordinary pair of integer element strides such as (1,512). It can encode arithmetic-tuple mappings into the coordinate system of the TMA descriptor.
+
+That is why a TMA tensor differs from an ordinary pointer-based tensor.
+3. Why does mA need TMA coordinates rather than an ordinary pointer?
+Consider the two different methods of accessing matrix A.
+Ordinary global-memory access
+If we constructed:
+Tensor mA = make_tensor(
+    make_gmem_ptr(A),
+    make_shape(M,K),
+    dA
+);
+
+
+then an ordinary CuTe tensor uses its pointer and layout to identify a memory location.
+
+For tightly packed column-major A, with dA = (1,512):
+\[
+\operatorname{offset}_A(m,k)=m+512k
+\]
+
+For example, the logical element A(128,192) has element offset:
+\[
+128+512(192)=98432
+\]
+
+A normal tensor can use that offset to refer to the actual value in global memory.
+TMA coordinate access
+But in your kernel:
+Tensor mA =
+    tma_a.get_tma_tensor(make_shape(M,K));
+
+
+CuTe instead constructs an implicit coordinate tensor.
+
+Why?
+
+Because Hopper's TMA instruction is provided with a descriptor address and tensor coordinates, rather than a separate global-memory pointer to each element.
+
+Conceptually:
+TMA descriptor:
+    Base address of A
+    Tensor dimensions
+    Tensor strides
+    Swizzle and transfer configuration
+
+TMA source:
+    Coordinates identifying the desired tile
+
+
+The TMA hardware combines the descriptor and the coordinates to locate the source data.
+
+This is why CuTe represents the source as a tensor of coordinates that can still be tiled, sliced, and partitioned using ordinary CuTe tensor operations. 
+GitHub
+
+
+For example, when you later select the tile corresponding to logical A rows 128–255 and K columns 192–255, CuTe computes the required TMA source coordinates. Their exact representation depends on the descriptor's coordinate mapping.
+
+The mA tensor does not contain those A matrix elements. It describes the coordinate space from which TMA will load them.
+4. Third statement: Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
+Tensor mB =
+    tma_b.get_tma_tensor(make_shape(N,K));
+
+
+This uses the same mechanism as mA, but for matrix B.
+
+For the default configuration:
+N = 256;
+K = 1024;
+
+
+So:
+make_shape(N,K)
+
+
+gives:
+(256,1024)
+
+
+Why (N,K) instead of (K,N)?
+Recall the default GEMM:
+\[
+C=AB^T
+\]
+
+The logical matrix dimensions are:
+\[
+A:(512,1024)
+\]
+
+\[
+B:(256,1024)
+\]
+
+\[
+B^T:(1024,256)
+\]
+
+\[
+C:(512,256)
+\]
+
+The B tensor represents the original (N,K) matrix stored in global memory. The transpose is part of the mathematical multiplication, not a physical transpose performed by get_tma_tensor().
+
+Just like mA, mB is a TMA coordinate tensor that will later be tiled and partitioned to provide source coordinates for the B transfers.
+5. Fourth statement: Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC);
+Now look at:
+Tensor mC = make_tensor(
+    make_gmem_ptr(C),
+    make_shape(M,N),
+    dC
+);
+
+
+This statement is different from the previous two.
+
+Matrix C is not accessed through a TMA tensor-map descriptor in this tutorial.
+
+Instead, the kernel uses the actual global-memory pointer C.
+
+Let's break it down.
+Part A: make_gmem_ptr(C)
+C is a kernel parameter:
+TC* C
+
+
+It points to output matrix C in GPU global memory.
+make_gmem_ptr(C)
+
+
+wraps that pointer in a CuTe pointer type identifying the global-memory address space.
+
+It does not allocate memory, copy C, or create a new matrix.
+Part B: make_shape(M,N)
+For the default example:
+M = 512
+N = 256
+
+
+Therefore:
+mC shape = (512,256)
+
+
+Part C: dC
+Recall the host-side code:
+auto dC = make_stride(Int<1>{}, ldC);
+
+
+And in main():
+ldC = m;
+
+
+Therefore:
+dC = (1,512)
+
+
+This means C uses column-major storage.
+
+The logical-to-physical address mapping is:
+\[
+\operatorname{offset}_C(m,n)=m+512n
+\]
+
+For example:
+Logical coordinate	Element offset
+mC(0,0)	0
+mC(1,0)	1
+mC(0,1)	512
+mC(1,1)	513
+
+So mC is a real pointer-backed view of output C.
+
+Unlike mA and mB, the tensor's engine refers directly to the data's global-memory address.
+6. Compare all three tensor objects
+This table is the most important part of these four statements.
+Property	mA	mB	mC
+Logical shape	(M,K)	(N,K)	(M,N)
+Default shape	(512,1024)	(256,1024)	(512,256)
+Created by	get_tma_tensor()	get_tma_tensor()	make_tensor()
+Underlying representation	Implicit TMA coordinates	Implicit TMA coordinates	Global-memory pointer
+Associated descriptor	tma_a	tma_b	None
+Purpose	Select A tiles for TMA loads	Select B tiles for TMA loads	Access/store C elements
+Contains matrix elements?	No	No	No; references existing elements
+
+All three are CuTe tensor objects. The difference lies in their underlying engines and coordinate/address mappings.
+7. What happens immediately after these four statements?
+Your source continues:
+auto cta_coord =
+    make_coord(blockIdx.x, blockIdx.y, _);
+
+Tensor gA = local_tile(
+    mA, cta_tiler, cta_coord,
+    Step<_1, X, _1>{}
+);
+
+Tensor gB = local_tile(
+    mB, cta_tiler, cta_coord,
+    Step<X, _1, _1>{}
+);
+
+Tensor gC = local_tile(
+    mC, cta_tiler, cta_coord,
+    Step<_1, _1, X>{}
+);
+
+
+This is where CuTe selects the portion of each full tensor assigned to one CTA.
+
+Suppose:
+blockIdx.x = 1;
+blockIdx.y = 0;
+
+bM = 128;
+bN = 128;
+bK = 64;
+
+
+Then:
+Tensor	CTA-selected logical region	Resulting view
+gA	A rows 128–255, all K tiles	(128,64,16)
+gB	B rows 0–127, all K tiles	(128,64,16)
+gC	C rows 128–255, columns 0–127	(128,128)
+
+How the kernel uses the three tensor views
+A: mA → gA
+
+TMA source coordinates
+
+
+B: mB → gB
+
+TMA source coordinates
+
+
+
+TMA loads selected tiles into shared memory
+
+WGMMA
+
+Computes matrix products and accumulates in tCrC
+
+Epilogue axpby(...)
+
+C: mC → gC → tCgC
+
+Stores output through a global-memory tensor view
+
+
+local_tile() does not transfer any data. It creates subviews with the required logical coordinates and layouts.
+
+TMA executes later through copy(...), while the output is written through the epilogue:
+axpby(alpha, tCrC, beta, tCgC);
+
+
+8. One final distinction: Host mA versus kernel mA
+Although the two variables have the same name, they are created differently.
+
+Host-side gemm_nt():
+Tensor mA = make_tensor(A, make_shape(M,K), dA);
+
+
+This is an ordinary pointer-backed tensor view, used to construct the TMA descriptor.
+
+GPU-side gemm_device():
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+
+
+This is a descriptor-compatible coordinate tensor, used to determine which source coordinates TMA should transfer.
+
+The two objects represent the same logical matrix but serve different purposes.
+
+The essential concept to remember is:
+mA and mB let CuTe calculate the TMA coordinates of input tiles without directly dereferencing global-memory pointers. mC is a conventional global-memory tensor view used to read or write C. All three represent full logical matrices; local_tile() subsequently selects each CTA's portions.
+
+For further reading, NVIDIA's CuTe TMA Tensors documentation is particularly useful because it explains why CuTe uses implicit coordinate tensors rather than conventional pointers for TMA.TMA setup in NVIDIA's wgmma_tma_sm90.cu tutorial. They prepare the information that Hopper's 
 Tensor Memory Accelerator (TMA) will use to move matrix tiles from global memory into shared memory.
 The most important distinction is:
 make_tensor() creates a logical view of an existing matrix, whereas make_tma_atom() creates a TMA copy-operation object using the source 
@@ -2259,12 +2659,21 @@ pointers would still be needed to create their TMA descriptors.
 
 	
 Nov 8, today from here.
-hese four statements are especially important because they show how CuTe represents matrices A, B, and C differently inside your Hopper gemm_device() kernel.
+Line 68 - 71:
+auto [M, N, K] = shape_MNK;
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));                  
+Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));                   
+Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC);  
+
+These four statements are especially important because they show how CuTe represents matrices
+A, B, and C differently inside the Hopper gemm_device() kernel.
 
 The biggest distinction is:
-- mA and mB are TMA coordinate tensors. They represent global-memory matrices through coordinates interpreted using TMA descriptors.
-- mC is an ordinary global-memory tensor view. It uses the actual pointer C and its memory strides.
-Let's follow the default gemm_nt() execution path (transA='N', transB='T') in the source code you provided.
+- mA and mB are TMA coordinate tensors. They represent global-memory matrices through
+coordinates interpreted using TMA descriptors.
+- mC is an ordinary global-memory tensor view. It uses the actual pointer C and its memory
+strides.
+Following the default gemm_nt() execution path (transA='N', transB='T') in the source code.
 1. First statement: auto [M, N, K] = shape_MNK;
 auto [M, N, K] = shape_MNK;
 
