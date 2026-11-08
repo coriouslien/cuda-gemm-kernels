@@ -2732,16 +2732,15 @@ make_shape(512,1024)
 
 This creates the logical shape:
 (mA)=(512,1024)
-
 It tells CuTe that the tensor has two logical dimensions, M and K.
-
 It does not allocate or copy matrix elements.
 Part C: What does get_tma_tensor() return?
-This is the most important part.
 
-get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly dereferences the matrix A pointer.
+get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly
+dereferences the matrix A pointer.
 
-You can verify this in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization is:
+This in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization
+is:
 template <class GShape>
 CUTE_HOST_DEVICE constexpr
 auto get_tma_tensor(GShape const& g_shape) const
@@ -2758,24 +2757,22 @@ auto get_tma_tensor(GShape const& g_shape) const
     );
 }
 
-
-
-GitHub
-Let's examine the return statement:
+The return statement:
 make_coord_tensor(
     make_layout(g_shape, aux_params_.g_stride_)
 );
 
 
 Here:
-Component	Meaning
-g_shape	Logical shape (M,K)
-aux_params_.g_stride_	CuTe's mapping from logical indices to TMA coordinate offsets
-make_layout(...)	Constructs that coordinate-mapping layout
-make_coord_tensor(...)	Creates a tensor whose implicit elements represent TMA coordinates
+Component                Meaning
+g_shape                  Logical shape (M,K)
+aux_params_.g_stride_	 CuTe's mapping from logical indices to TMA coordinate offsets
+make_layout(...)	     Constructs that coordinate-mapping layout
+make_coord_tensor(...)	 Creates a tensor whose implicit elements represent TMA coordinates
 
-Important: aux_params_.g_stride_ is not necessarily an ordinary pair of integer element strides such as (1,512). It can encode arithmetic-tuple mappings into the coordinate system of the TMA descriptor.
-
+Important: aux_params_.g_stride_ is not necessarily an ordinary pair of integer element 
+strides such as (1,512). It can encode arithmetic-tuple mappings into the coordinate system of
+the TMA descriptor.
 That is why a TMA tensor differs from an ordinary pointer-based tensor.
 3. Why does mA need TMA coordinates rather than an ordinary pointer?
 Consider the two different methods of accessing matrix A.
@@ -2786,33 +2783,122 @@ Tensor mA = make_tensor(
     make_shape(M,K),
     dA
 );
-
-
 then an ordinary CuTe tensor uses its pointer and layout to identify a memory location.
-
 For tightly packed column-major A, with dA = (1,512):
-\[
-\operatorname{offset}_A(m,k)=m+512k
-\]
-
+offset_A(m,k)=m+512k
 For example, the logical element A(128,192) has element offset:
-\[
 128+512(192)=98432
-\]
 
 A normal tensor can use that offset to refer to the actual value in global memory.
 TMA coordinate access
-But in your kernel:
+But in the tutorial, the kernel:
 Tensor mA =
     tma_a.get_tma_tensor(make_shape(M,K));
-
-
 CuTe instead constructs an implicit coordinate tensor.
-
 Why?
+Because Hopper's TMA instruction is provided with a descriptor address and tensor coordinates,
+rather than a separate global-memory pointer to each element.
+************************
+A descriptor address:
+is simply a memory address that tells the GPU where the TMA descriptor itself is stored.
+In the Hopper wgmma_tma_sm90.cu tutorial, there are two distinguish addresses:
+1). Descriptor address: The location in memory where the TMA descriptor (the blueprint) is
+stored.
+2). Matrix A base address: The location in GPU global memory where the actual matrix A elements
+begin.
+The important point is that the TMA descriptor contains the base address of matrix A, but the
+descriptor itself also has an address.
+1). A simple example
+Suppose we have these imaginary addresses:
+TMA descriptor
+Descriptor's own address
+0x20000000
+Descriptor contents:
+A base address = 0x80000000
+Shape = (512, 1024)
+Strides, tile box, swizzle, etc.
+Descriptor points to matrix A
+Matrix A in global memory
+Base address: 0x80000000
+Contains the actual FP16 matrix elements
+These addresses are illustrative, not actual addresses from the program.
+When the TMA instruction receives 0x20000000, it knows where to find the descriptor. After
+reading the descriptor, it can discover the base address 0x80000000 and the memory layout of
+matrix A.
+2). How does this relate to the tma_a object?
+The kernel receives:
+CUTLASS_GRID_CONSTANT TmaA const tma_a
+Inside this object is a descriptor member:
+tma_desc_
+In CuTe's TMA copy traits, there is a function conceptually like:
+TmaDescriptor const* get_tma_descriptor() const
+{
+    return &tma_desc_;
+}
+			
+&tma_desc_:
+The & operator means get the memory address of the descriptor object.
+It does not mean get the global-memory address of matrix A.
+Later, the kernel calls:
+copy(tma_a.with(producer_mbar[pipe]),
+     tAgA(_,k_tile),
+     tAsA(_,pipe));
 
-Because Hopper's TMA instruction is provided with a descriptor address and tensor coordinates, rather than a separate global-memory pointer to each element.
+The with() method prepares a copy operation that includes a pointer to the descriptor and the
+selected completion barrier.
+Eventually, CuTe issues a TMA instruction using those addresses. NVIDIA's SM90 TMA instruction
+implementation shows the descriptor-address operand passed into the PTX instruction. 
 
+3). What information does the TMA instruction receive?
+For a two-dimensional TMA load, the instruction conceptually receives:
+TMA load:
+    Descriptor address = 0x20000000
+    Tensor coordinates = (128, 192)
+    Destination        = shared-memory buffer
+    Completion barrier = producer_mbar[pipe]
+
+It performs the following steps conceptually:
+1). Locate the TMA descriptor at 0x20000000.
+2). Use the descriptor's contents to determine the source matrix's base address, strides, and
+tile configuration.
+3). Use coordinates (128,192) to identify the starting position of the requested A tile.
+4). Transfer the tile into the specified shared-memory buffer.
+5). Report completion through the transaction barrier.
+The hardware handles the transfer asynchronously. The exact internal execution sequence is
+implementation-dependent, but these are the information dependencies defined by the PTX
+instruction. 
+*********************************
+
+4. Why not just pass the address of matrix A?
+Because the address of matrix A alone is insufficient.
+For example:
+TA const* A;
+This tells the GPU where the matrix data starts.
+
+But it does not tell TMA:
+- How many dimensions the tensor has.
+- What the dimensions and strides are.
+- How large the transfer box is.
+- How the data should be arranged in shared memory.
+The TMA descriptor provides this additional information.
+
+That is why the TMA instruction receives the descriptor's address plus tensor coordinates, rather than just the base address of A.
+5. Three different addresses to remember
+Expression	Meaning
+&tmaA	Host address of the complete CuTe copy-atom object
+&tma_a.tma_desc_	GPU-side address of the TMA descriptor inside the kernel parameter
+A (stored in the descriptor)	GPU global-memory base address of the actual matrix
+
+The second address is the one supplied to the TMA instruction as its tensor-map address.
+
+The simplest explanation is: The descriptor is the blueprint, and the descriptor address tells TMA where to find that blueprint. The blueprint then tells TMA where the matrix data is located and how to transfer it.
+
+That is also why __grid_constant__ matters in your tutorial: it helps preserve a valid address for the descriptor stored inside the kernel parameter.
+
+
+			
+
+			
 Conceptually:
 TMA descriptor:
     Base address of A
