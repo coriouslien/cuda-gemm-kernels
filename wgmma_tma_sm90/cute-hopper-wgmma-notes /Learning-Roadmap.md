@@ -2676,18 +2676,12 @@ strides.
 Following the default gemm_nt() execution path (transA='N', transB='T') in the source code.
 1. First statement: auto [M, N, K] = shape_MNK;
 auto [M, N, K] = shape_MNK;
-
-
 This uses C++17 structured binding to extract three values from a CuTe shape object.
-
-Recall the host-side code:
+The host-side code:
 auto M = int(m);
 auto N = int(n);
 auto K = int(k);
-
 auto prob_shape = make_shape(M, N, K);
-
-
 The host passes prob_shape to the kernel:
 launch_kernel_on_cluster(
     params, kernel_ptr,
@@ -2698,49 +2692,38 @@ launch_kernel_on_cluster(
     alpha, beta
 );
 
-
 The kernel receives it as:
 ProblemShape shape_MNK
-
-
 For the default tutorial:
 shape_MNK = (512, 256, 1024)
-
-
 Therefore, the structured binding is conceptually equivalent to:
 auto M = get<0>(shape_MNK);  // 512
 auto N = get<1>(shape_MNK);  // 256
 auto K = get<2>(shape_MNK);  // 1024
 
-
 So the three variables represent:
-Variable	Value	Meaning
-M	512	Rows of output matrix C
-N	256	Columns of output matrix C
-K	1024	Reduction dimension
+Variable    Value    Meaning
+M           512      Rows of output matrix C
+N           256      Columns of output matrix C
+K           1024     Reduction dimension
 
 No matrix allocation or data transfer takes place here.
 2. Second statement: Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
 Tensor mA =
     tma_a.get_tma_tensor(make_shape(M,K));
 
-
 We need to understand this statement in three parts.
 Part A: What is tma_a?
-Earlier, the host created:
+The host created:
 Tensor mA = make_tensor(A, make_shape(M,K), dA);
-
 Copy_Atom tmaA = make_tma_atom(
     SM90_TMA_LOAD{},
     mA,
     sA(_,_,0),
     make_shape(bM,bK)
 );
-
-
 The kernel receives the host-created tmaA as tma_a.
-
-As we discussed previously, this copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
+This copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
 
 The descriptor contains information about the actual global-memory matrix A, including its base address, dimensions, and strides.
 Part B: What does make_shape(M,K) do?
