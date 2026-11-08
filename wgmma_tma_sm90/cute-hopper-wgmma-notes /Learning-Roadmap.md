@@ -369,7 +369,7 @@ appropriate TMA partitioning, and correctly initialized barriers in the destinat
 SM90_TMA_LOAD_MULTICAST{} is not sufficient. 
 
 One additional detail: Per NVIDIA/cutlass Discussion #1315 (answer by @thakkarV, Jan 22, 2024): the SMEM layout passed to the TMA creator is 
-that of a single CTA, not of the entire cluster, <a href="https://github.com/NVIDIA/cutlass/discussions/1315?utm_source=chatgpt.com">Source:
+that of a single CTA, not of the entire cluster, <a href="https://github.com/NVIDIA/cutlass/discussions/1315">Source:
 NVIDIA/cutlass Discussion #1315</a>. The SMEM layout passed to the TMA creator is that of a single CTA, not of the entire cluster, even for
 multicast (NVIDIA/cutlass Discussion #1315, accepted answer by @thakkarV, Jan 2024, about make_tma_copy). I expect the same for make_tma_atom
 	
@@ -722,19 +722,26 @@ One subtle point worth remembering: sA(_,_,0) does not mean TMA will always writ
 single stage; the actual destination stage is determined by tAsA(_,pipe).
 That is the connection between these four host-side statements and the three-stage pipeline you have been studying.
 
-Lien 43 - Line 47:
+Line 43 - Line 47:
+gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
+            TA const* A, CUTLASS_GRID_CONSTANT TmaA const tma_a,
+            TB const* B, CUTLASS_GRID_CONSTANT TmaB const tma_b,
+            TC      * C, CStride dC, TiledMma mma,
+            Alpha alpha, Beta beta)
+
 This function is the GPU kernel that performs the actual matrix multiplication in NVIDIA's
 Hopper wgmma_tma_sm90.cu tutorial.
 I have already studied make_tma_atom(), tma_partition(), TMA transfers, shared-memory pipeline
 stages, and WGMMA. This function brings all of those components together.
 
-I checked the current NVIDIA CUTLASS source. I'll follow the default gemm_nt execution path 
+I'll follow the default gemm_nt execution path 
 (transA='N', transB='T') and explain the parameters in the order they appear. 
 
 1. Understand what gemm_device() does
 The kernel computes:
-C=alpha(AB)^T + betaC   ( axpby(alpha, tCrC, beta, tCgC);)
-
+C = alpha * (A * B^T) + beta * C     ( axpby(alpha, tCrC, beta, tCgC);)
+C(m,n) = alpha * sum_k A(m,k)*B(n,k) + beta * C(m,n)
+		
 With the following logical matrix dimensions:
 A:(M,K), B:(N,K), C:(M,N)
 
@@ -748,7 +755,7 @@ Pipeline stages	       3
 Input/output types	   cute::half_t
 Alpha	               1
 Beta	               0
-Thus, in the default run, the result is simply C=(AB)^T. 
+Thus, in the default run, the result is simply C = A·Bᵀ. 
 
 2. The complete function declaration
 The statement is part of a C++ function template. Here is its complete declaration:
@@ -827,8 +834,8 @@ CTA (2,0)        CTA (2,1)
 CTA (3,0)        CTA (3,1)
 128 × 128        128 × 128
 
-Eight output tiles, typically computed by eight CTAs. Highlighted: CTA (1,0), which computes C
-rows 128–255 and columns 0–127.
+Eight output tiles, computed by eight CTAs, one per tile (grid (4,2), the source file Line 
+286–287). Highlighted: CTA (1,0), which computes C rows 128–255 and columns 0–127.
 The distinction is:
 Parameter	Shape	        Describes
 shape_MNK	(512,256,1024)	The entire matrix multiplication
@@ -857,14 +864,15 @@ Here:
 - TA* means the pointer refers to elements of type TA.
 For the default configuration, A has:
 512 x 1024=524288  elements
-However, the kernel does not directly dereference A to perform its TMA loads. Instead, 
+However, the kernel body never refers to A at all. The TMA unit reads A's memory using
+the base address encoded in the descriptor inside tma_a. Instead, 
 it uses the descriptor contained in tma_a.
 The pointer remains part of the function interface, but it is not otherwise referenced in this
 kernel body.
 ******************************
 An additional explanation.
 Why pass A to the GPU kernel if tma_a already contains the address of matrix A?
-That is exactly the issue. Let's trace how it happens.
+Let's trace how it happens.
 1. On the host, A is used to construct tmaA
 In the default gemm_nt() function:
 the first statement:
@@ -888,8 +896,8 @@ A Hopper TMA descriptor includes information such as:
 - The element type.
 - Information needed to handle the destination shared-memory tile, including its swizzle
 configuration.
-NVIDIA explicitly documents that the global-memory base pointer is stored in the TMA 
-descriptor. 
+The base address is an input to the driver call cuTensorMapEncodeTiled (parameter
+globalAddress).
 This means tmaA already carries the information needed to locate A in global memory.
 2. The kernel receives both A and tma_a
 The host launches the kernel with:
@@ -922,8 +930,8 @@ Tensor mA = tma_a.get_tma_tensor(
 );
 
 Notice that it uses tma_a, not the parameter A.
-This creates a TMA-compatible tensor view whose engine represents coordinates relative to the
-descriptor's global tensor, rather than ordinary pointer offsets.
+This creates a TMA-compatible tensor view whose iterator holds coordinates (no pointer) 
+relative to the descriptor's global tensor, rather than ordinary pointer offsets.
 Later, the kernel selects the CTA's tile:
 Tensor gA = local_tile(
     mA,
@@ -966,14 +974,13 @@ A stride       = (1,512)
 To retrieve element A(128,192), the descriptor provides the base address and strides, and the
 TMA operation provides the coordinates.
 Conceptually, the element address is:
-address}=base+2(128+512 x 192)
+ddress = base + 2·(128 + 512·192)
 where two bytes is the size of a cute::half_t.
 TMA handles this address calculation using the descriptor and coordinates. There is no need 
 to pass the ordinary A pointer separately to the TMA instruction.
 NVIDIA's CuTe documentation — TMA Tensors explains precisely this difference between ordinary
-pointer-based tensors and descriptor-based TMA tensors.
+pointer-based tensors and coordinate-based TMA tensors.
 5. So why does gemm_device() still have the A parameter?
-This is the part that the previous explanation did not make clear.
 The tutorial declares:
 void gemm_device(
     ...
@@ -985,10 +992,11 @@ But the kernel body never refers to its A parameter.
 TA const* A: A is a pointer to the original matrix in GPU global memory.
 The statement in the function:
 Tensor sA = make_tensor(
-    make_smem_ptr(smem.A.begin()), // smem.A is a member of the kernel's shared-memory 
-			                       // storage structure.
+    make_smem_ptr(smem.A.begin()), 
     SmemLayoutA{}
 );
+Searching the kernel body (Line 48–230) for the whole word A finds only smem.A (a member of
+SharedStorage, The source Line 28/Line 83) and comments. The parameter A is never referenced.
 So, for this specific implementation, it is an unused kernel parameter.
 We could remove it from the kernel signature, provided us also remove the corresponding
 argument from the kernel launch and update any relevant declarations. The TMA loads would 
@@ -1020,7 +1028,8 @@ Copy_Atom tmaA = make_tma_atom(
     mA,
     sA(_,_,0),
     make_shape(bM,bK));
-This creates the TMA copy atom used to configure global-to-shared-memory transfers for matrix A.
+This creates the TMA copy atom that holds the descriptor and CuTe’s auxiliary parameters for
+global -> shared transfers for matrix A.
 When the kernel is launched, the host's tmaA object becomes the kernel argument named tma_a.
 The naming difference is intentional:
 Host variable:    tmaA
@@ -1029,7 +1038,8 @@ Kernel parameter: tma_a
 TmaA is the deduced C++ type of that copy atom.
 Inside the kernel:
 Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
-This creates a descriptor-backed view of the complete global A matrix.
+This creates a coordinate tensor of shape (M,K): its entries are TMA coordinates, not data 
+and not a pointer.
 Later:
 copy(tma_a.with(producer_mbar[pipe]),
      tAgA(_,k_tile),
@@ -1039,15 +1049,14 @@ initiates the actual TMA transfer.
 So tma_a provides the transfer machinery, while tAgA and tAsA identify the source and
 destination portions to copy.
 What is CUTLASS_GRID_CONSTANT?
-This macro is defined in:
-CUTLASS device_kernel.h supported CUDA configurations, it expands to:
-__grid_constant__
+CUTLASS_GRID_CONSTANT is a macro that expands to __grid_constant__ on supported CUDA versions.
 This modifier marks a const-qualified kernel parameter as read-only and lets the compiler 
-avoid creating unnecessary per-thread local copies when its address is needed.		
+avoid creating unnecessary per-thread local copies when its address is needed. For TMA this is
+a correctness requirement, not only a performance gain: the descriptor's address must be in
+.param/.const/.global, not .local (see Question 3)
 It does not mean that the TMA object is stored in a user-declared __constant__ memory array,
 nor does it mean that the CTAs are synchronizing with one another.
-The statement means that CUTLASS_GRID_CONSTANT controls how the GPU kernel accesses a read-only
-parameter. It does not allocate a user-defined constant-memory variable or synchronize CTAs.
+
 Let's examine this using the wgmma_tma_sm90.cu tutorial.
 1) . Start with the kernel parameter
 CUTLASS_GRID_CONSTANT TmaA const tma_a
@@ -1073,10 +1082,11 @@ Can access tma_a        Can access tma_a      Can access tma_a
 
 Only three of the eight CTAs are shown. They access the same read-only kernel parameter, but
 execute independently.
-This can improve performance by avoiding unnecessary per-thread local copies of the parameter.
+For TMA this is a correctness requirement, not only a performance gain: the descriptor's 
+address must be in .param/.const/.global, not .local (see Question 3)
 It does not mean TMA matrix data is copied to each thread. The descriptor and the matrix data
 are different things. 
-(CUDA C++ Programming Guide)
+(CUDA C++ Programming Guide, the __grid_constant__ section)
 3. Why isn't this the same as __constant__ memory?
 CUDA has another keyword:
 __constant__
@@ -1090,12 +1100,11 @@ Read-only from kernel	 Yes	                  Yes
 Lifetime	             One kernel launch	      CUDA context lifetime
 Passed as a              Yes                      No, accessed as a symbol
 kernel argument
-Requires                 No	                      Common way to initialize it
+Requires                 No	                      Often yes
 cudaMemcpyToSymbol()
-Main purpose	         Preserve a shared,       Provide device constant-memory 
-                         read-only parameter      storage 
-			             object without 
-			             per-thread copies
+Main purpose	         No per-thread copy       Constant-memory storage 
+                         of the parameter          
+			            
 One subtlety: CUDA may place kernel parameters in hardware constant/parameter memory. 
 Therefore, we should not claim that __grid_constant__ never involves constant memory 
 internally.
@@ -1113,7 +1122,7 @@ __global__ void myKernel(float* output)
     output[threadIdx.x] = coefficients[0];
 }
 Here:
-// It does not need to initialize __constant__ float coefficients[4]; at declaration, 
+// We do not have to initialize __constant__ float coefficients[4]; at declaration, 
 // and it cannot be declared inside a kernel function—it must be declared at global (file)
 // scope.
 __constant__ float coefficients[4];
@@ -1127,7 +1136,6 @@ cudaMemcpyToSymbol(
 );
 Notice that coefficients is not passed as a kernel argument. It is a separately declared GPU
 variable that kernels can access.
-This is what I meant by a user-managed __constant__ variable. 
 CUDA C++ Programming Guide
 b. __grid_constant__ marks an existing kernel parameter
 Now consider:
@@ -1152,20 +1160,7 @@ Instead, it tells the compiler:
 This kernel parameter is read-only. All threads in this grid can access the same parameter
 object, without creating unnecessary per-thread copies when its address is needed.
 The parameter exists for that kernel launch. 
-
-c. Compare the two
-Feature	                  __constant__	                 __grid_constant__
-What does it 	          A GPU variable	             An existing kernel parameter
-declare or annotate?
-Where is it written?      Outside the kernel 	         In the kernel parameter list
-	                      function
-How is the value 	      Often cudaMemcpyToSymbol()	 Kernel launch argument
-supplied?
-Lifetime	              CUDA context	                 Kernel launch
-Read-only to GPU kernel?  Yes	                         Yes
-Creates a separate 	      Yes	                         No
-user-managed GPU variable?
-
+c.
 An important hardware detail: kernel parameters may themselves reside in the GPU's
 constant/parameter-memory space. The distinction is about CUDA's programming interface and 
 variable semantics, not a guarantee that they use entirely different physical memory hardware.
@@ -1219,7 +1214,6 @@ rather than making per-thread copies.
 For the CUTLASS tutorial, tma_a is the second case - __grid_constant__
 		
 4. Why doesn't __grid_constant__ synchronize CTAs?
-This is the second part of the statement.
 In the tutorial:
 CUTLASS_GRID_CONSTANT TmaA const tma_a
 means multiple CTAs can access the same read-only descriptor-bearing parameter.
@@ -1277,9 +1271,7 @@ Therefore:
 - Synchronization barriers concern execution ordering and completion.
 These are three distinct CUDA concepts.
 
-We can verify this in NVIDIA's CUDA Programming Guide — `__grid_constant__` parameters.
 NVIDIA documents this behavior in the CUDA Programming Guide — grid-constant parameters. 
-
 
 5. Parameters 5 and 6: Global-memory B pointer and TMA copy atom
 TB const* B,
@@ -1299,7 +1291,8 @@ B element type   = cute::half_t
 B stride         = (1,256)
 Inside the kernel:
 Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
-This reconstructs a TMA-compatible view of B using the descriptor.
+This builds a coordinate tensor of shape (N,K) from the auxiliary parameters in tma_b. It holds
+coordinates, not a pointer.
 Later:
 copy(tma_b.with(producer_mbar[pipe]),
      tBgB(_,k_tile),
@@ -1350,7 +1343,8 @@ gC is a view of the selected output region; it is not a copy of the entire C mat
 7. Parameter 9: TiledMma mma
 TiledMma mma,
 This argument determines how the CTA's threads perform matrix multiplication using Hopper's
-WGMMA operations.
+WGMMA operations. mma is an empty object: all its information is in its type TiledMma (compile
+time). It carries no runtime data.
 
 On the host:
 TiledMMA tiled_mma = make_tiled_mma(
@@ -1391,14 +1385,14 @@ gemm(mma,
 This uses the selected shared-memory stage for A and B and accumulates the matrix product into
 tCrC.
 Important distinction: mma does not contain the numerical elements of A, B, or C. It describes
-how the matrix multiplication is organized and executed.
+how the matrix multiplication is organized and executed. mma is an empty object: all its 
+information is in its type TiledMma (compile time). It carries no runtime data.
 8. Parameters 10 and 11: Alpha alpha and Beta beta
 Alpha alpha,
 Beta beta
 These are scaling factors used in the output calculation.
 The GEMM equation is:
-C_out=alpha(AB)^T+beta C_in
-
+C_out = alpha·(A·Bᵀ) + beta·C_in
 For the default example:
 alpha = 1.0;
 beta  = 0.0;
@@ -1512,7 +1506,7 @@ then constructs CuTe tensor views, selects CTA-local tiles, loads input data thr
 computes through WGMMA, and stores the result.
 
 We can verify the declaration and its implementation directly in NVIDIA CUTLASS — gemm_device()
-source, lines 60–235
+source, lines 43–230
 
 Question and Answer:
 Question 1. Where does tma_a come from? I already know the path from the host: launch_kernel_on_cluster
@@ -1561,19 +1555,20 @@ void gemm_device(
 
 CUDA associates each supplied argument with the corresponding kernel parameter by position, not
 by name.
-Argument position    Host passes            GPU kernel receives
-1                    prob_shape             shape_MNK
-2                    cta_tiler              cta_tiler
-3                    A                      A
-4                    tmaA                   tma_a
-5                    B                      B
-6                    tmaB                   tma_b
+Argument position         Host passes            GPU kernel receives
+(first six of 11 shown)
+1                         prob_shape             shape_MNK
+2                         cta_tiler              cta_tiler
+3                         A                      A
+4                         tmaA                   tma_a
+5                         B                      B
+6                         tmaB                   tma_b
 Therefore, tma_a receives its value from tmaA because both occupy argument position 4.
 The variables do not need to have the same name.
 2. What happens inside launch_kernel_on_cluster()?
 This is the missing step, and we can verify it directly in NVIDIA's CUTLASS implementation.
 Open:
-NVIDIA CUTLASS — cluster_launch.hppThe function is a variadic C++ template. Its implementation
+NVIDIA CUTLASS — cluster_launch.hpp. The function is a variadic C++ template. Its implementation
 includes this code, simplified slightly:
 template<class... Args>
 cutlass::Status launch_kernel_on_cluster(
@@ -1638,7 +1633,7 @@ Copy_Atom tmaA = make_tma_atom(...)
 Constructs the descriptor-bearing TMA copy atom
 Pass tmaA as argument 4
 CUTLASS: launch_kernel_on_cluster()
-Creates kernel_params with &tmaA in position 4
+Creates kernel_params with &tmaA in position 4 (argument position 4 (index 3 in kernel_params))
 cudaLaunchKernelExC(...)
 CUDA kernel parameter space
 Contains the launch-time argument values
@@ -1646,8 +1641,8 @@ GPU kernel begins execution
 GPU: gemm_device()
 TmaA const tma_a
 Receives the value supplied as argument 4
-CUDA deploy the argument values into the kernel's parameter storage. It does not simply make
-the GPU dereference the CPU address &tmaA.
+CUDA copies the bytes of each argument into the kernel’s parameter space, It does not simply
+make the GPU dereference the CPU address &tmaA.
 4. What is the role of kernel_ptr?
 This is another important part of your code:
 void const* kernel_ptr =
@@ -1691,8 +1686,8 @@ It does not change the fact that the argument was passed by value at kernel laun
 Inside the kernel, the first important use is:
 Tensor mA =
     tma_a.get_tma_tensor(make_shape(M,K));
-That function uses the received TMA copy atom to construct the descriptor-backed global-memory
-tensor view.
+This builds a coordinate tensor of shape (M,K) from the auxiliary parameters in the received
+tma_a. It holds coordinates, not a pointer.
 Later:
 copy(
     tma_a.with(producer_mbar[pipe]),
@@ -1731,7 +1726,7 @@ CUDA Runtime
 gemm_device()
   |
   |  Receives tma_a
-  |  Constructs descriptor-backed mA
+  |  Constructs coordinate-tensor mA
   |  Partitions TMA source/destination tensors
   |  Issues TMA loads
   v
@@ -1894,7 +1889,7 @@ initiates the asynchronous TMA transfer.
 
 These details can be verified in NVIDIA's source:
 - copy_traits_sm90_tma.hpp — actual descriptor fields and methods
-- copy_atom.hpp — Copy_Atom inheritance and with() implementation
+- copy_atom.hpp — Copy_Atom inheritance from Copy_Traits and with() implementation
 This distinction between the hardware descriptor, the CuTe copy atom, and the executable copy
 atom is especially important when we study how CuTe ultimately generates Hopper TMA 
 instructions.
@@ -2010,13 +2005,14 @@ The CUDA Programming Guide explicitly states that __grid_constant__ prevents the
 from creating those per-thread local copies when parameter addresses are taken. 
 
 5. Does the problem actually occur?
-Yes. A developer reported exactly this failure in NVIDIA CUTLASS Discussion #2054.
-The developer was debugging a TMA failure when compiling with Clang. They discovered that
-__grid_constant__ was not being enabled, allowing the descriptor to be copied into local 
-memory. The resulting pointer was unsuitable for TMA.
+Yes. In CUTLASS Discussion #2054 (Jan–Mar 2025),
+   Artem-B hit an "Illegal instruction" on SM90_TMA_LOAD_MULTICAST_3D when building
+   with Clang. He found that device_kernel.h disabled CUTLASS_GRID_CONSTANT_SUPPORTED
+   under Clang, so the kernel parameter was copied into local memory and the pointer
+   handed to TMA pointed there. [CUTLASS Discussion #2054, accepted answer, Mar 12 2025]
 	
 The issue was confirmed in the discussion. 
- <a href="https://github.com/NVIDIA/cutlass/discussions/2054?utm_source=chatgpt.com">NVIDIA 
+ <a href="https://github.com/NVIDIA/cutlass/discussions/2054">NVIDIA 
 CUTLASS Discussion #2054</a> NVIDIA CUTLASS Discussion #2054 — TMA failure and grid-constant
 parametersThis does not mean every kernel without __grid_constant__ will fail. The compiler's 
 treatment of the address and where the descriptor ultimately resides determine whether the TMA
@@ -2192,11 +2188,7 @@ address suitable for accessing the TMA descriptor.
 Question 5. Does the kernel body ever use A and B? Check by searching the body (L46–230) for
 whole-word uses of A and B. Be careful: sA, gA and tAgA contain the letter, so they don’t
 count. Compare with C.
-
-I checked the gemm_device() body in the source code, distinguishing whole-word matches from
-actual references to the function parameters.
-Result: The kernel does not use its A or B pointer parameters. It does directly use its C 
-pointer parameter.
+Line 48 – 230 for the whole word A finds it only in smem.A (Line 83) and in comments.
 1. Compare A, B, and C
 Kernel parameter	Appears as a whole word in the body?	Actually uses the parameter?
 TA const* A	        Yes, in smem.A and comments	            No
@@ -2220,8 +2212,6 @@ Tensor sB = make_tensor(
     make_smem_ptr(smem.B.begin()),
     SmemLayoutB{}
 );
-
-
 The same distinction applies. The kernel parameter B is not referenced.
 
 Now compare C:
@@ -2230,7 +2220,6 @@ Tensor mC = make_tensor(
     make_shape(M,N),
     dC
 );
-
 
 Here, C directly refers to the kernel's TC* C parameter.
 
@@ -2246,30 +2235,36 @@ The host-side gemm_nt() function uses A and B pointers when constructing the TMA
 Tensor mA = make_tensor(A, make_shape(M,K), dA);
 Tensor mB = make_tensor(B, make_shape(N,K), dB);
 
-
-But after the descriptors are passed to gemm_device(), the kernel's separately passed A and B pointers are unused.
-
-By contrast, the output C pointer is needed to construct mC and ultimately write the GEMM result through:
+But after the descriptors are passed to gemm_device(), the kernel's separately passed A and B
+pointers are unused.
+By contrast, the output C pointer is needed to construct mC and ultimately write the GEMM 
+result through:
 axpby(alpha, tCrC, beta, tCgC);
 
-
-Here, tCgC is derived from gC, which is derived from mC, which ultimately references the pointer parameter C.
+Here, tCgC is derived from gC, which is derived from mC, which ultimately references the
+pointer parameter C.
 4. One subtle point about whole-word searching
 A regular expression such as:
 \bA\b
+will match A in smem.A, because the period separates identifiers. It will also match 
+occurrences of A in comments.
+Therefore, simply counting whole-word matches is insufficient to establish whether the
+parameter is used. We must identify which C++ object each occurrence refers to.
 
-
-will match A in smem.A, because the period separates identifiers. It will also match occurrences of A in comments.
-
-Therefore, simply counting whole-word matches is insufficient to establish whether the parameter is used. You must identify which C++ object each occurrence refers to.
-
-Conclusion: In this specific NVIDIA tutorial, the A and B kernel parameters are redundant for the current implementation, while C is necessary. You could remove the two unused pointer parameters if you also update the corresponding kernel-launch arguments. The host-side A and B pointers would still be needed to create their TMA descriptors.
+Conclusion: In this specific NVIDIA tutorial, the A and B kernel parameters are redundant for
+the current implementation, while C is necessary. we could remove the two unused pointer
+parameters if we also update the corresponding kernel-launch arguments. The host-side A and B
+pointers would still be needed to create their TMA descriptors.
 
 
 	
 	
 
 	
+
+
+
+
 
 
 
