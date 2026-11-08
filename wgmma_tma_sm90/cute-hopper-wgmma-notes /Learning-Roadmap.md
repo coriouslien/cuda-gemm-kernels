@@ -2258,300 +2258,411 @@ pointers would still be needed to create their TMA descriptors.
 
 
 	
-	
+Nov 8, today from here.
+hese four statements are especially important because they show how CuTe represents matrices A, B, and C differently inside your Hopper gemm_device() kernel.
 
-	
-
-
-
-
-
-
-
-
+The biggest distinction is:
+- mA and mB are TMA coordinate tensors. They represent global-memory matrices through coordinates interpreted using TMA descriptors.
+- mC is an ordinary global-memory tensor view. It uses the actual pointer C and its memory strides.
+Let's follow the default gemm_nt() execution path (transA='N', transB='T') in the source code you provided.
+1. First statement: auto [M, N, K] = shape_MNK;
+auto [M, N, K] = shape_MNK;
 
 
+This uses C++17 structured binding to extract three values from a CuTe shape object.
+
+Recall the host-side code:
+auto M = int(m);
+auto N = int(n);
+auto K = int(k);
+
+auto prob_shape = make_shape(M, N, K);
+
+
+The host passes prob_shape to the kernel:
+launch_kernel_on_cluster(
+    params, kernel_ptr,
+    prob_shape, cta_tiler,
+    A, tmaA,
+    B, tmaB,
+    C, dC, tiled_mma,
+    alpha, beta
+);
+
+
+The kernel receives it as:
+ProblemShape shape_MNK
+
+
+For the default tutorial:
+shape_MNK = (512, 256, 1024)
+
+
+Therefore, the structured binding is conceptually equivalent to:
+auto M = get<0>(shape_MNK);  // 512
+auto N = get<1>(shape_MNK);  // 256
+auto K = get<2>(shape_MNK);  // 1024
+
+
+So the three variables represent:
+Variable	Value	Meaning
+M	512	Rows of output matrix C
+N	256	Columns of output matrix C
+K	1024	Reduction dimension
+
+No matrix allocation or data transfer takes place here.
+2. Second statement: Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+Tensor mA =
+    tma_a.get_tma_tensor(make_shape(M,K));
+
+
+We need to understand this statement in three parts.
+Part A: What is tma_a?
+Earlier, the host created:
+Tensor mA = make_tensor(A, make_shape(M,K), dA);
+
+Copy_Atom tmaA = make_tma_atom(
+    SM90_TMA_LOAD{},
+    mA,
+    sA(_,_,0),
+    make_shape(bM,bK)
+);
+
+
+The kernel receives the host-created tmaA as tma_a.
+
+As we discussed previously, this copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
+
+The descriptor contains information about the actual global-memory matrix A, including its base address, dimensions, and strides.
+Part B: What does make_shape(M,K) do?
+With the default values:
+make_shape(512,1024)
+
+
+This creates the logical shape:
+\[
+\operatorname{Shape}(mA)=(512,1024)
+\]
+
+It tells CuTe that the tensor has two logical dimensions, M and K.
+
+It does not allocate or copy matrix elements.
+Part C: What does get_tma_tensor() return?
+This is the most important part.
+
+get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly dereferences the matrix A pointer.
+
+You can verify this in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization is:
+template <class GShape>
+CUTE_HOST_DEVICE constexpr
+auto get_tma_tensor(GShape const& g_shape) const
+{
+    static_assert(
+        is_congruent<
+            decltype(g_shape),
+            decltype(aux_params_.g_stride_)
+        >::value
+    );
+
+    return make_coord_tensor(
+        make_layout(g_shape, aux_params_.g_stride_)
+    );
+}
 
 
 
+GitHub
+Let's examine the return statement:
+make_coord_tensor(
+    make_layout(g_shape, aux_params_.g_stride_)
+);
 
-	
+
+Here:
+Component	Meaning
+g_shape	Logical shape (M,K)
+aux_params_.g_stride_	CuTe's mapping from logical indices to TMA coordinate offsets
+make_layout(...)	Constructs that coordinate-mapping layout
+make_coord_tensor(...)	Creates a tensor whose implicit elements represent TMA coordinates
+
+Important: aux_params_.g_stride_ is not necessarily an ordinary pair of integer element strides such as (1,512). It can encode arithmetic-tuple mappings into the coordinate system of the TMA descriptor.
+
+That is why a TMA tensor differs from an ordinary pointer-based tensor.
+3. Why does mA need TMA coordinates rather than an ordinary pointer?
+Consider the two different methods of accessing matrix A.
+Ordinary global-memory access
+If we constructed:
+Tensor mA = make_tensor(
+    make_gmem_ptr(A),
+    make_shape(M,K),
+    dA
+);
 
 
+then an ordinary CuTe tensor uses its pointer and layout to identify a memory location.
+
+For tightly packed column-major A, with dA = (1,512):
+\[
+\operatorname{offset}_A(m,k)=m+512k
+\]
+
+For example, the logical element A(128,192) has element offset:
+\[
+128+512(192)=98432
+\]
+
+A normal tensor can use that offset to refer to the actual value in global memory.
+TMA coordinate access
+But in your kernel:
+Tensor mA =
+    tma_a.get_tma_tensor(make_shape(M,K));
 
 
+CuTe instead constructs an implicit coordinate tensor.
+
+Why?
+
+Because Hopper's TMA instruction is provided with a descriptor address and tensor coordinates, rather than a separate global-memory pointer to each element.
+
+Conceptually:
+TMA descriptor:
+    Base address of A
+    Tensor dimensions
+    Tensor strides
+    Swizzle and transfer configuration
+
+TMA source:
+    Coordinates identifying the desired tile
 
 
-Nov 7.
-====================
-Line 42: void
-gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
-            TA const* A, CUTLASS_GRID_CONSTANT TmaA const tma_a,
-            TB const* B, CUTLASS_GRID_CONSTANT TmaB const tma_b,
-            TC      * C, CStride dC, TiledMma mma,
-            Alpha alpha, Beta beta)
+The TMA hardware combines the descriptor and the coordinates to locate the source data.
 
-TA and TB are template type parameters of gemm_device (L37–38), so the kernel works with any
-element type. In this program they become cute::half_t (FP16) because main sets using TA =
-cute::half_t;. FP16 is this instantiation, not a fixed property of the kernel.
-1. They are virtual, not physical, addresses, the same point as with L271.
-2. In this kernel they tell the kernel nothing, because they are never used. Search the body of
-gemm_device (L46–219): A and B never appear. The kernel reaches A and B only through tma_a and
-tma_b, which already hold the base addresses inside their descriptors. Compare C (L47), which is
-used, at L71 to build mC. So A and B are dead parameters, kept for signature symmetry.
-  
-CUTLASS_GRID_CONSTANT TmaA const tma_a:
-tma_a is the whole Copy_Atom built at L275, and TmaA is its type, deduced as decltype(tmaA) at
-L289. The atom contains the descriptor (CUtensorMap, 128 bytes) plus CuTe’s aux params.
-• TmaA is a type; the object tma_a holds the values.
-• The descriptor holds encoded numbers, not CuTe layouts: global dims, global strides in bytes, 
-box dims, and a swizzle mode (an enum such as 128B), not “instructions.”
-• The aux params hold CuTe’s mapping from gmem modes to TMA coordinates, which get_tma_tensor
-uses at L68.
+This is why CuTe represents the source as a tensor of coordinates that can still be tiled, sliced, and partitioned using ordinary CuTe tensor operations. 
+GitHub
 
-CUTLASS_GRID_CONSTANT / __grid_constant__
-“Maps to __grid_constant__”: (CUTLASS, cutlass/detail/helper_macros.hpp).
-“Read-only”: as a requirement. __grid_constant__ may only be applied to const-qualified kernel
-parameters, which is why the signature says TmaA const.
 
-Every kernel parameter is identical for the whole grid. All parameters are passed once per
-launch and shared by all threads.
-  
-So the purpose isn’t saving registers. It’s making the descriptor’s address usable by the TMA
-hardware. This connects back to the hardware/software distinction: the TMA unit reads the 
-descriptor directly from memory, so the descriptor must sit somewhere the TMA unit can address.
-Summary:
-</pre>
-|claim|	Verdict|
-|:----|:-------|
-|TA/TB are FP16|They are template type parameters;<br> FP16 (half_t) is this instantiation,<br> set in main.|
-|A/B tell the kernel where<br> data starts in physical memory|Base pointers, yes, but virtual<br> addresses, and unused in this kernel.<br> The addresses travel inside the descriptors.|
-|tma_a is the TMA descriptor|	It’s the whole Copy_Atom:<br> the 128-byte descriptor plus<br> CuTe aux params.|
-|TmaA|The object holds encoded dims,<br> byte strides, box dims, a swizzle mode,<br> and CuTe’s coordinate mapping.|
-|__grid_constant__ means<br> read-only|	 requires const.|
-|… identical for the whole grid|True of all kernel parameters;<br> not specific to __grid_constant__.|
-|Params are always<br> in param/constant space.| __grid_constant__ guarantees that taking<br> its address gives the param-space<br> address instead of a local-memory copy,<br> which the TMA instruction requires.|
+For example, when you later select the tile corresponding to logical A rows 128–255 and K columns 192–255, CuTe computes the required TMA source coordinates. Their exact representation depends on the descriptor's coordinate mapping.
 
-</pre>
-<pre>
-Explaining where kernel parameters live and why they get copied.
-Step 1: Where kernel parameters live
-When you launch a kernel, its arguments (shape_MNK, tma_a, C, alpha, …) are copied once per
-launch into a special memory region called parameter space. On the hardware, this is a constant
-bank; in SASS you see reads like c[0x0][0x210].
+The mA tensor does not contain those A matrix elements. It describes the coordinate space from which TMA will load them.
+4. Third statement: Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
+Tensor mB =
+    tma_b.get_tma_tensor(make_shape(N,K));
 
-All threads in the grid read the same copy, and this is true of every kernel parameter, with or 
-without __grid_constant__. That’s what “params are always in param/constant space” means.
-__grid_constant__ does not move the parameter anywhere.
-Step 2: Two ways to use a parameter
-(a) Use its value. For example, int M = get<0>(shape_MNK);. The thread reads the bytes from
-param space into a register. No problem, no copy.
-(b) Take its address. For example, &tma_a, or passing tma_a by reference to a function that
-needs a pointer to it. Now the code needs a pointer to the parameter, and this is where the
-issue arises.
-Step 3: Why taking the address normally produces a copy
-In C++, a function parameter is an ordinary object. Code holding a pointer to it could, in
-principle, write through that pointer. But param space is read-only and shared by the whole
-grid, so it can’t be handed out as an ordinary writable per-thread object.
-So without __grid_constant__, when the code takes the address, the compiler plays it safe:
-it allocates space in local memory, the thread’s private stack;
-it copies the parameter’s bytes from param space into that local copy;
-it gives us the address of the local copy.
-Each thread now has its own private copy, and the pointer points there, not to param space.
-With __grid_constant__, we promise the parameter is const and will never be modified. That’s why
-the qualifier requires const. Given that promise, no private copy is needed, so taking the
-address gives us the address of the original in param space.
-Step 4: Why TMA cares
-The TMA instruction does not receive the descriptor’s contents. It receives the address of the
-descriptor. The TMA hardware unit then reads the 128 bytes itself, from that address.
-The PTX documentation for cp.async.bulk.tensor requires that address to be in .param (a kernel
-parameter), .const, or .global memory. Local memory is not allowed. Local memory is a thread’s
-private stack, and the TMA unit is a separate engine, not that thread.
-Putting it together:
-Without __grid_constant__: &tma_a points to a local-memory copy, and the TMA instruction gets 
-an address it cannot use.
-With __grid_constant__: &tma_a points into param space, and the TMA instruction gets a valid
-address.
 
-An analogy: the descriptor is a notice posted on a shared board (param space). Without
-__grid_constant__, each thread photocopies the notice into its own desk drawer (local memory)
-and points to the drawer. The TMA unit can’t open anyone’s drawer; it can only read the board.
-__grid_constant__ tells each thread to point at the board directly.
+This uses the same mechanism as mA, but for matrix B.
 
-How you can verify this yourself on your 5080
-This doesn’t need TMA, so it works on SM120. Write two tiny kernels that take the address of 
-a large const struct parameter:
+For the default configuration:
+N = 256;
+K = 1024;
 
-struct alignas(64) Blob { int v[32]; };            // 128 bytes, like a CUtensorMap
-__device__ int sink(Blob const* p) { return p->v[threadIdx.x % 32]; }
-__global__ void no_gc(Blob const b, int* out)                 { out[threadIdx.x] = sink(&b); }
-__global__ void with_gc(__grid_constant__ Blob const b, int* out) { out[threadIdx.x] = sink(&b); }
 
-Mark sink with __noinline__ so the compiler can’t optimize the address away.
-Compile with nvcc -arch=sm_120 -Xptxas -v, and inspect with cuobjdump -sass. 
-The two outputs to compare:
-ptxas -v reports bytes stack frame per kernel. I expect no_gc to show a nonzero stack frame 
-(the local copy) and with_gc to show 0.
-In the SASS, no_gc should contain local stores (STL) copying the struct onto the stack, and
-with_gc should not.
+So:
+make_shape(N,K)
 
-That’s my expectation from how the feature is specified. The compiler output is the real answer,
-and it’s the kind of profiling-anchored check that makes this concrete.
 
-Summary:
-Step 1: all kernel parameters live in param space (a constant bank). __grid_constant__ doesn’t
-change that.
-Step 2: reading a parameter’s value is fine; the issue only arises when its address is taken.
-Step 3: without __grid_constant__, taking the address makes the compiler copy the parameter
-into per-thread local memory and return that copy’s address. With it (and const), you get the
-original’s param-space address.
-Step 4: the TMA instruction takes the descriptor’s address, which must be in param, const, or
-global memory, never local. So __grid_constant__ is what makes tma_a usable by TMA.
-Verify: compare the -Xptxas -v stack frame size and the STL instructions in SASS for the two
-test kernels.
+gives:
+(256,1024)
 
-Line 46:   TC * C, CStride dC, TiledMma mma,
-Checking the stride types for the output matrix.
-Reviewing how the epilogue and the TiledMma argument are handled.
-TC * C
-“Raw base pointer for C”: As with A/B:
-• TC is a template type parameter. It is half_t in this program only because main sets using 
-TC = cute::half_t;.
-• The address is virtual, not physical.
-Unlike A and B, C is used: at L71 it becomes mC = make_tensor(make_gmem_ptr(C), make_shape(M,N),
-dC). It is non-const because the kernel writes C.
-CStride dC
-• dC is the whole stride tuple, not the leading dimension. In gemm_nt it’s make_stride(Int<1>{},
-ldC) (L248). The leading dimension is ldC, one component of it. main sets ldC = m.
-• So mC is M-major: (M,N):(_1,ldC), counted in elements, not bytes.
-• CStride is the type of that tuple: a template parameter deduced as decltype(dC), with a static
-_1 and a dynamic int.
-“C is written with ordinary stores, not TMA”
-The source is the last line of gemm_device:
-axpby(alpha, tCrC, beta, tCgC);
-Each thread computes C = alpha·acc + beta·C on its own partition tCgC (from
-thr_mma.partition_C(gC)) and writes it with ordinary per-thread global stores.
 
-1. It may also read C. The beta·C term means C may be loaded as well. I’m not sure whether
-CuTe’s axpby skips the load when beta == 0 (it is 0 here). Checking the SASS for LDG alongside
-STG would settle it.
-2. “Often” applies to tutorials, not production. Production CUTLASS SM90 epilogues commonly
-stage C/D through shared memory and write it with TMA stores (SM90_TMA_STORE). This tutorial 
-uses direct stores for simplicity, which is why C needs only a pointer and stride. That’s a
-design choice of this example, not a general Hopper rule.
-tma_a is the hardware descriptor for memory movement, mma is the hardware descriptor for 
-math.These two parameters are fundamentally different kinds of objects.
-</pre>
-||tma_a|	mma (TiledMma)|
-|:---|:----|:------------|
-|Runtime data?|	Yes: a 128-byte CUtensorMap<br> built on the host with real values<br> (address, dims, strides)|	No: an empty object. All its<br> information is in its type.|
-|Read by hardware?|	Yes: the TMA unit reads the<br> descriptor from param space|	No: it never reaches hardware.<br> It exists only at compile time.|
-|Why pass it?|	To deliver the descriptor’s bytes|	Only so the kernel gets<br> the type (template deduction).<br> The value carries nothing.|
-<pre>
-Evidence it’s compile-time: __launch_bounds__(decltype(size(TiledMma{}))::value) (L40)
-constructs a fresh TiledMma{} from the type alone and gets the thread count as a compile-time
-constant.
+Why (N,K) instead of (K,N)?
+Recall the default GEMM:
+\[
+C=AB^T
+\]
 
-WGMMA’s actual hardware descriptors are something else. They are the 64-bit shared-memory matrix
-descriptors that encode the smem start address, layout type, and swizzle for each operand.
-They’re built inside the kernel, by thr_mma.make_fragment_A(tCsA) / make_fragment_B(tCsB). The
-tutorial comment above those lines says it: tCrA and tCrB are tensors of MMA descriptors, not
-register data. So the closest analogue to tma_a’s descriptor is the contents of tCrA/tCrB, not
-mma.
-What TiledMma does encode:
-Which instruction: SM90_64x64x16_F16F16F16_SS<MN, MN> (L264):
-a 64×64×16 tile per instruction;
-FP16 inputs and FP16 accumulator;
-SS means both A and B are read from shared memory;
-both operands are MN-major.
-Thread arrangement: one warpgroup of 128 threads. With no extra tiling in make_tiled_mma,
-size(tiled_mma) == 128, which sets dimBlock (L281) and __launch_bounds__.
-Data mapping: how partition_A/B/C split smem and the accumulators among the 128 threads.
-Matrix shapes are passed in explicitly. shape_MNK carries the dynamic (M,N,K) (L238 prob_shape),
-and the kernel uses it at L67 (auto [M, N, K] = shape_MNK). It’s an input, not something the
-kernel avoids.
+The logical matrix dimensions are:
+\[
+A:(512,1024)
+\]
 
-What the template parameters actually decouple is the mechanics: memory layout, major-ness,
-swizzle, and instruction choice. Evidence: gemm_nt and gemm_tn launch the same gemm_device body 
-with different dA/dB, smem layouts, TMA atoms, and MMA atoms. The kernel code doesn’t change 
-between NT and TN.
+\[
+B:(256,1024)
+\]
 
-It is also not fully decoupled from tile shapes. The static asserts at L54–57 tie the smem 
-layouts to cta_tiler. And the kernel still hard-codes assumptions:
+\[
+B^T:(1024,256)
+\]
 
-ConsumerBarType::init(&consumer_mbar[pipe], 128) hard-codes 128 consumer threads.
-The epilogue is labeled unpredicated: there’s no bounds check, so it assumes M and N are
-multiples of the 128×128 CTA tile.
-Summary:
-</pre>
-|Claim|	Verdict|
-|:----|:-------|
-|C is the raw base pointer<br> of the output|template type TC = half_t here;<br> virtual address;<br> non-const; used at L71).|
-|dC | the same issue as dA. dC is the<br> full tuple (_1, ldC); ldC <br>is the leading dimension;<br> units are elements.|
-|C is written by ordinary<br> stores, so no TMA descriptor|	for this kernel<br> (axpby, which may also read C for beta).<br> Production SM90 epilogues often use TMA stores.|
-|mma, it never reaches hardware.<br> It exists only at compile time |TiledMma is an empty compile-time<br> type that never reaches hardware.<br> WGMMA’s hardware descriptors are<br> the smem descriptors in tCrA/tCrB.|
-|TiledMma encodes the instruction,<br> the 128-thread arrangement,<br> the data mapping|	SM90_64x64x16_F16F16F16_SS,<br> one warpgroup, partition_*.|
-|The kernel assumes 128 threads| Shapes come in via shape_MNK.<br> Templates decouple the mechanics <br>(layout, major-ness, instructions),<br> and the kernel still assumes<br> 128 threads and tile-multiple M and N.|
-<pre>
-Line 68: auto [M, N, K] = shape_MNK;
-Line 69: Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));               
-Line 70: Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));   
-Line 71: Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC); 
-  
-L68: auto [M, N, K] = shape_MNK;
-It is a C++17 structured binding that unpacks the CuTe tuple shape_MNK (built at L238 as
-make_shape(M, N, K)). M, N, K are plain runtime ints (L241–243), so they are dynamic,
-not Int<…> static constants.
+\[
+C:(512,256)
+\]
 
-mA / mB: Represents the full extent of A and B, ready to be sliced: local_tile at L76–77 tiles
-them. But they are not views of memory:
-mC (a pointer tensor): mC(m,n) is a reference to an actual half_t in global memory.
-mA (a coordinate tensor): mA(m,k) is a TMA coordinate tuple, just integers. There is no pointer
-inside mA, and indexing it never touches memory.
-The TMA instruction takes descriptor + coordinates, not addresses, so the kernel-side
-representation of A only needs coordinates.
+The B tensor represents the original (N,K) matrix stored in global memory. The transpose is part of the mathematical multiplication, not a physical transpose performed by get_tma_tensor().
 
-tma_a.get_tma_tensor(...):
-tma_a is the Copy_Atom. It contains the 128-byte descriptor plus CuTe’s aux params. It’s kernel
-param space, implemented as a constant bank.
-The descriptor contains the base address, the strides in bytes (not dA itself, which is in 
-elements, and only for dims ≥1), the box dims, and the swizzle mode.
+Just like mA, mB is a TMA coordinate tensor that will later be tiled and partitioned to provide source coordinates for the B transfers.
+5. Fourth statement: Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC);
+Now look at:
+Tensor mC = make_tensor(
+    make_gmem_ptr(C),
+    make_shape(M,N),
+    dC
+);
 
-get_tma_tensor(make_shape(M,K)) builds a coordinate tensor of shape (M,K) from the atom’s aux 
-params. Each element is the TMA coordinate of that position. Sliced tiles of it (tAgA(_,k_tile)) 
-provide the box coordinates the TMA instruction needs. The address of A lives only in the 
-descriptor.
 
+This statement is different from the previous two.
+
+Matrix C is not accessed through a TMA tensor-map descriptor in this tutorial.
+
+Instead, the kernel uses the actual global-memory pointer C.
+
+Let's break it down.
+Part A: make_gmem_ptr(C)
+C is a kernel parameter:
+TC* C
+
+
+It points to output matrix C in GPU global memory.
 make_gmem_ptr(C)
-make_gmem_ptr(C) wraps the raw half_t* in CuTe’s gmem_ptr<…> type. It is a compile-time tag 
-with no runtime cost. print(mC) would show the iterator as a gmem pointer.
+
+
+wraps that pointer in a CuTe pointer type identifying the global-memory address space.
+
+It does not allocate memory, copy C, or create a new matrix.
+Part B: make_shape(M,N)
+For the default example:
+M = 512
+N = 256
+
+
+Therefore:
+mC shape = (512,256)
+
+
+Part C: dC
+Recall the host-side code:
+auto dC = make_stride(Int<1>{}, ldC);
+
+
+And in main():
+ldC = m;
+
+
+Therefore:
+dC = (1,512)
+
+
+This means C uses column-major storage.
+
+The logical-to-physical address mapping is:
+\[
+\operatorname{offset}_C(m,n)=m+512n
+\]
+
+For example:
+Logical coordinate	Element offset
+mC(0,0)	0
+mC(1,0)	1
+mC(0,1)	512
+mC(1,1)	513
+
+So mC is a real pointer-backed view of output C.
+
+Unlike mA and mB, the tensor's engine refers directly to the data's global-memory address.
+6. Compare all three tensor objects
+This table is the most important part of these four statements.
+Property	mA	mB	mC
+Logical shape	(M,K)	(N,K)	(M,N)
+Default shape	(512,1024)	(256,1024)	(512,256)
+Created by	get_tma_tensor()	get_tma_tensor()	make_tensor()
+Underlying representation	Implicit TMA coordinates	Implicit TMA coordinates	Global-memory pointer
+Associated descriptor	tma_a	tma_b	None
+Purpose	Select A tiles for TMA loads	Select B tiles for TMA loads	Access/store C elements
+Contains matrix elements?	No	No	No; references existing elements
+
+All three are CuTe tensor objects. The difference lies in their underlying engines and coordinate/address mappings.
+7. What happens immediately after these four statements?
+Your source continues:
+auto cta_coord =
+    make_coord(blockIdx.x, blockIdx.y, _);
+
+Tensor gA = local_tile(
+    mA, cta_tiler, cta_coord,
+    Step<_1, X, _1>{}
+);
+
+Tensor gB = local_tile(
+    mB, cta_tiler, cta_coord,
+    Step<X, _1, _1>{}
+);
+
+Tensor gC = local_tile(
+    mC, cta_tiler, cta_coord,
+    Step<_1, _1, X>{}
+);
+
+
+This is where CuTe selects the portion of each full tensor assigned to one CTA.
+
+Suppose:
+blockIdx.x = 1;
+blockIdx.y = 0;
+
+bM = 128;
+bN = 128;
+bK = 64;
+
+
+Then:
+Tensor	CTA-selected logical region	Resulting view
+gA	A rows 128–255, all K tiles	(128,64,16)
+gB	B rows 0–127, all K tiles	(128,64,16)
+gC	C rows 128–255, columns 0–127	(128,128)
+
+How the kernel uses the three tensor views
+A: mA → gA
+
+TMA source coordinates
+
+
+B: mB → gB
+
+TMA source coordinates
 
 
 
+TMA loads selected tiles into shared memory
 
-make_tensor(..., make_shape(M,N), dC)
-dC is the stride tuple (_1, ldC), counted in elements, not a “physical stride.” The epilogue
-writes with ordinary per-thread stores, not TMA, so a real address-producing tensor is needed.
+WGMMA
 
-</pre>
-||	mA / mB|	mC|
-|:--|:----|:----|
-|Built from|	Atom aux params plus the shape|	Pointer C plus the shape<br> plus stride dC|
-|Iterator|	Counting iterator (ArithTuple)|	gmem_ptr<half_t>|
-|tensor(i,j) yields|	A TMA coordinate tuple (integers)|	A reference to a half_t in<br> global memory|
-|Consumer|	TMA instruction (via tAgA), plus the descriptor|	Threads’ ordinary loads<br> and stores (axpby)|
-|Where the address lives|	Only inside the descriptor|	In the tensor itself|
-<pre>
-Summary
-</pre>
-|claim	|Verdict|
-|:-----|:-------|
-|mA/mB represent the full<br> A and B, ready to slice|yes, extent and slicing. they’re<br> coordinate tensors with no pointer.|
-|tma_a is the 128-byte descriptor| It’s the atom containing the descriptor<br> plus aux params, in param space.|
-|The descriptor contains A, dA, and the swizzle|	Address, byte strides (dims ≥1), <br>box dims, and swizzle mode.|
-get_tma_tensor doesn't read the descriptor|It doesn’t read the opaque descriptor;<br> it uses the aux params plus the shape<br> to build coordinates. The address<br? stays in the descriptor.
-|make_gmem_ptr attaches a<br> memory-space tag| yes.|
-|mC is built from pointer,<br> shape, and stride because C<br> isn’t written with TMA.| dC is the stride tuple<br> in elements, not a “physical stride.”|
+Computes matrix products and accumulates in tCrC
+
+Epilogue axpby(...)
+
+C: mC → gC → tCgC
+
+Stores output through a global-memory tensor view
+
+
+local_tile() does not transfer any data. It creates subviews with the required logical coordinates and layouts.
+
+TMA executes later through copy(...), while the output is written through the epilogue:
+axpby(alpha, tCrC, beta, tCgC);
+
+
+8. One final distinction: Host mA versus kernel mA
+Although the two variables have the same name, they are created differently.
+
+Host-side gemm_nt():
+Tensor mA = make_tensor(A, make_shape(M,K), dA);
+
+
+This is an ordinary pointer-backed tensor view, used to construct the TMA descriptor.
+
+GPU-side gemm_device():
+Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
+
+
+This is a descriptor-compatible coordinate tensor, used to determine which source coordinates TMA should transfer.
+
+The two objects represent the same logical matrix but serve different purposes.
+
+The essential concept to remember is:
+mA and mB let CuTe calculate the TMA coordinates of input tiles without directly dereferencing global-memory pointers. mC is a conventional global-memory tensor view used to read or write C. All three represent full logical matrices; local_tile() subsequently selects each CTA's portions.
+
+For further reading, NVIDIA's CuTe TMA Tensors documentation is particularly useful because it explains why CuTe uses implicit coordinate tensors rather than conventional pointers for TMA.
+
+Nov 8, today end here.
+
 <pre>
 Line 98:  auto [tAgA, tAsA] = tma_partition(tma_a, Int<0>{}, Layout<_1>{},
           group_modes<0,2>(sA), group_modes<0,2>(gA)); 
