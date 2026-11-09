@@ -2904,64 +2904,54 @@ Prologue    TMA loads tile 0    TMA loads tile 1
 
 When stage 0 is reused for tile 2, TMA has roughly one WGMMA tile-computation interval to finish its transfer before the 
 consumer needs stage 0 again.
-
 If TMA takes longer, WGMMA stalls waiting for the data.
+	
 4. Three-stage pipeline: Triple buffering
 Now use your actual configuration:
 bP = Int<3>{};
-
-
 The prologue issues TMA loads for K tiles 0, 1, and 2.
-
 After that, the kernel consumes the tiles and refills the vacated stages.
 Follow the three-stage pipeline
+Prefetch
+Stage 0                   Stage 1                Stage 2
+Loading tile 0            Loading tile 1         Loading tile 2
+TMA initiates loads for the first three K tiles before WGMMA consumption begins.
+	
+Iteration 0         
+Stage 0                   Stage 1                  Stage 2
+Loading tile 3            Tile 1: prefetched       Tile 2: prefetched
+WGMMA consumes tile 0. After the consumer releases stage 0, TMA begins loading tile 3 into that stage.
+	
 Iteration 1
-
-3 / 5
-
-Stage 0
-
-Loading tile 3
-
-
-Stage 1
-
-Loading tile 4
-
-
-Stage 2
-
-Tile 2: prefetched
-
-
-
+Stage 0                   Stage 1                  Stage 2
+Loading tile 3            Loading tile 4           Tile 2: prefetched
 WGMMA consumes tile 1 while the TMA transfer for tile 3 can progress. Stage 1 is then reused for tile 4.
- PreviousNext 
+	
+Iteration 2        
+Stage 0                   Stage 1                  Stage 2
+Tile 3: pending/ready     Tile 4: pending/ready    Loading tile 5
+WGMMA consumes tile 2. Tile 3 has had two intervening tile computations to make progress before it is needed.
+	
+Iteration 3
+Stage 0                   Stage 1                  Stage 2
+Computing tile 3          Tile 4: pending/read     Tile 5: pending/ready
+The consumer waits for stage 0's new TMA transfer if needed, then computes tile 3.
+
 Logical execution order; asynchronous loads can finish at different times. The real barriers determine when each stage is ready.
 The crucial observation is:
-
 When TMA starts loading tile 3 into stage 0, WGMMA still has tile 1 and tile 2 to compute before it needs tile 3.
-
 That gives the TMA operation more opportunity to finish without making WGMMA wait.
+
 5. Why not use four or five stages?
 Because more stages require more shared memory.
-
-In your default half-precision GEMM:
-\[
-bM=128,\quad bN=128,\quad bK=64
-\]
-
+In the tutorial default half-precision GEMM:
+bM=128, bN=128, bK=64
 Each A tile requires:
-\[
-128\times64\times2=16384\text{ bytes}
-\]
+128 x 64 x 2=16384 bytes
 
 Each B tile requires the same amount.
-
 Therefore, each pipeline stage requires:
-\[
-16384+16384=32768\text{ bytes}=32\text{ KiB}
-\]
+16384+16384=32768 bytes =32 KiB
 
 Compare different stage counts:
 Pipeline stages	A + B shared memory	Potential overlap
@@ -2972,31 +2962,25 @@ Pipeline stages	A + B shared memory	Potential overlap
 5	160 KiB	Four intervening computation intervals
 
 These sizes exclude barrier storage and alignment overhead.
-
-Adding stages can increase the amount of useful work in flight, but also consumes shared memory that could otherwise allow more CTAs to reside on an SM.
-
+Adding stages can increase the amount of useful work in flight, but also consumes shared memory that could otherwise allow more CTAs 
+to reside on an SM.
 This tradeoff is why NVIDIA and CUTLASS recommend profiling different pipeline depths rather than always maximizing the stage count. 
-Colfax Research+1
 
 6. How many stages are enough?
 A useful conceptual rule is:
-\[
-\text{Pipeline depth} \approx
-1+\left\lceil
-\frac{\text{TMA load latency}}
-{\text{WGMMA time per K tile}}
-\right\rceil
-\]
+Pipeline depth approx
+1+(ceiling(TMA load latency / WGMMA time per K tile))
 
-This is only a rough intuition for your tutorial's scheduling pattern, not a CUTLASS formula or guarantee. It assumes a load starts after a stage is consumed, and it ignores scheduling overhead, bandwidth contention, and variation in execution times.
+This is only a rough intuition for the tutorial's scheduling pattern, not a CUTLASS formula or guarantee. It assumes a 
+load starts after a stage is consumed, and it ignores scheduling overhead, bandwidth contention, and variation in execution times.
 
-The reasoning is straightforward: if a TMA load takes about as long as two WGMMA tile computations, a three-stage pipeline may give that load enough time to finish before the buffer is needed again.
-
+The reasoning is straightforward: if a TMA load takes about as long as two WGMMA tile computations, a three-stage pipeline may 
+give that load enough time to finish before the buffer is needed again.
 But if the TMA latency is already hidden with two stages, a third might add shared-memory overhead without improving performance.
-
 Conversely, if TMA is substantially slower, four stages might help.
-7. One subtle point about your specific tutorial
-Your kernel contains:
+	
+7. One subtle point about the specific tutorial
+the kernel contains:
 warpgroup_arrive();
 
 gemm(mma,
@@ -3007,34 +2991,32 @@ gemm(mma,
 warpgroup_commit_batch();
 warpgroup_wait<0>();
 
+Because warpgroup_wait<0>() is called in every iteration, the kernel waits for the current committed WGMMA work before releasing that 
+stage and moving forward.
+This tutorial therefore demonstrates a relatively simple pipeline where TMA transfers can overlap with WGMMA computation, 
+but WGMMA batches are not deeply pipelined across successive iterations.
+More advanced Hopper GEMM implementations can use warp specialization and different scheduling strategies. Their optimal stage count 
+may differ. 
 
-Because warpgroup_wait<0>() is called in every iteration, the kernel waits for the current committed WGMMA work before releasing that stage and moving forward.
-
-This tutorial therefore demonstrates a relatively simple pipeline where TMA transfers can overlap with WGMMA computation, but WGMMA batches are not deeply pipelined across successive iterations.
-
-More advanced Hopper GEMM implementations can use warp specialization and different scheduling strategies. Their optimal stage count may differ. 
-GitHub
-
-8. Connection to your PipelineState question
+8. Connection to the PipelineState question
 When using three stages:
 K tile:        0  1  2 | 3  4  5 | 6  7  8
 index():       0  1  2 | 0  1  2 | 0  1  2
 phase():       0  0  0 | 1  1  1 | 0  0  0
 
-
 The phase changes because the PipelineState index wraps around after three advances.
-
-If you changed the pipeline to two stages, the software sequence would instead be:
+If we changed the pipeline to two stages, the software sequence would instead be:
 K tile:        0  1 | 2  3 | 4  5 | 6  7
 index():       0  1 | 0  1 | 0  1 | 0  1
 phase():       0  0 | 1  1 | 0  0 | 1  1
 
-
 The phase still alternates between 0 and 1. Only the number of stages between toggles changes.
-
-The main takeaway: NVIDIA chose three stages in this tutorial because they provide a useful demonstration of overlapping TMA loads and WGMMA computations without using excessive shared memory. Three is a reasonable design choice, not a universal optimum.
-
-For your performance-engineering practice, a valuable experiment on a Hopper GPU would be to compile the same kernel with bP = 2, 3, and 4, then use Nsight Compute to compare GEMM throughput, shared-memory usage, and stalls waiting for TMA completion. That would show you exactly when an additional pipeline stage helps.
+The main takeaway: NVIDIA chose three stages in this tutorial because they provide a useful demonstration of overlapping 
+TMA loads and WGMMA computations without using excessive shared memory. Three is a reasonable design choice, 
+not a universal optimum.
+For the performance-engineering practice, a valuable experiment on a Hopper GPU would be to compile the same kernel 
+with bP = 2, 3, and 4, then use Nsight Compute to compare GEMM throughput, shared-memory usage, and stalls waiting 
+for TMA completion. That would show us exactly when an additional pipeline stage helps.
 **************************************
 
 The with() method prepares a copy operation that includes a pointer to the descriptor and the
@@ -3172,19 +3154,24 @@ mC(1,0)	1
 mC(0,1)	512
 mC(1,1)	513
 
-So mC is a real pointer-backed view of output C.
-
-Unlike mA and mB, the tensor's engine refers directly to the data's global-memory address.
+So mC is an ordinary global-memory tensor view. It uses the actual pointer C and its memory strides.
+Unlike mA and mB are TMA coordinate tensors, the tensor's engine refers directly to the data's global-memory address, they represent 
+global-memory matrices through coordinates interpreted using TMA descriptors.
+	
 6. Compare all three tensor objects
 This table is the most important part of these four statements.
-Property	mA	mB	mC
-Logical shape	(M,K)	(N,K)	(M,N)
-Default shape	(512,1024)	(256,1024)	(512,256)
-Created by	get_tma_tensor()	get_tma_tensor()	make_tensor()
-Underlying representation	Implicit TMA coordinates	Implicit TMA coordinates	Global-memory pointer
-Associated descriptor	tma_a	tma_b	None
-Purpose	Select A tiles for TMA loads	Select B tiles for TMA loads	Access/store C elements
-Contains matrix elements?	No	No	No; references existing elements
+Property           mA                  mB                  mC
+Logical shape      (M,K)               (N,K)              (M,N)
+Default shape      (512,1024)          (256,1024)         (512,256)
+Created by         get_tma_tensor()    get_tma_tensor()   make_tensor()
+Underlying         Implicit TMA        Implicit TMA       Global-memory pointer
+representation     coordinates         coordinates
+Associated         tma_a               tma_b              None
+descriptor
+	
+Purpose      Select A tiles for TMA loads    Select B tiles for TMA loads   Access/store C elements
+Contains	 No	                             No                             No; references existing elements
+descriptor
 
 All three are CuTe tensor objects. The difference lies in their underlying engines and coordinate/address mappings.
 7. What happens immediately after these four statements?
@@ -3207,79 +3194,62 @@ Tensor gC = local_tile(
     Step<_1, _1, X>{}
 );
 
-
 This is where CuTe selects the portion of each full tensor assigned to one CTA.
-
 Suppose:
 blockIdx.x = 1;
 blockIdx.y = 0;
-
 bM = 128;
 bN = 128;
 bK = 64;
-
-
 Then:
-Tensor	CTA-selected logical region	Resulting view
-gA	A rows 128–255, all K tiles	(128,64,16)
-gB	B rows 0–127, all K tiles	(128,64,16)
-gC	C rows 128–255, columns 0–127	(128,128)
+Tensor    CTA-selected logical region     Resulting view
+gA        A rows 128–255, all K tiles     (128,64,16)
+gB        B rows 0–127, all K tiles       (128,64,16)
+gC        C rows 128–255, columns 0–127   (128,128)
 
 How the kernel uses the three tensor views
-A: mA → gA
-
+A: mA --> gA
 TMA source coordinates
-
-
-B: mB → gB
-
+B: mB --> gB
 TMA source coordinates
-
-
-
 TMA loads selected tiles into shared memory
 
 WGMMA
-
 Computes matrix products and accumulates in tCrC
 
 Epilogue axpby(...)
-
-C: mC → gC → tCgC
+C: mC --> gC --> tCgC
 
 Stores output through a global-memory tensor view
 
-
 local_tile() does not transfer any data. It creates subviews with the required logical coordinates and layouts.
-
 TMA executes later through copy(...), while the output is written through the epilogue:
 axpby(alpha, tCrC, beta, tCgC);
 
-
 8. One final distinction: Host mA versus kernel mA
 Although the two variables have the same name, they are created differently.
-
 Host-side gemm_nt():
 Tensor mA = make_tensor(A, make_shape(M,K), dA);
-
-
-This is an ordinary pointer-backed tensor view, used to construct the TMA descriptor.
+This is an ordinary pointer tensor view, used to construct the TMA descriptor.
 
 GPU-side gemm_device():
 Tensor mA = tma_a.get_tma_tensor(make_shape(M,K));
-
-
 This is a descriptor-compatible coordinate tensor, used to determine which source coordinates TMA should transfer.
-
 The two objects represent the same logical matrix but serve different purposes.
 
 The essential concept to remember is:
-mA and mB let CuTe calculate the TMA coordinates of input tiles without directly dereferencing global-memory pointers. mC is a conventional global-memory tensor view used to read or write C. All three represent full logical matrices; local_tile() subsequently selects each CTA's portions.
+mA and mB let CuTe calculate the TMA coordinates of input tiles without directly dereferencing global-memory pointers. 
+mC is a conventional global-memory tensor view used to read or write C. All three represent full logical matrices; 
+local_tile() subsequently selects each CTA's portions.
 
-For further reading, NVIDIA's CuTe TMA Tensors documentation is particularly useful because it explains why CuTe uses implicit coordinate tensors rather than conventional pointers for TMA.
 
+		
 Nov 8, today end here.
 
+
+
+
+		
 <pre>
 Line 98:  auto [tAgA, tAsA] = tma_partition(tma_a, Int<0>{}, Layout<_1>{},
           group_modes<0,2>(sA), group_modes<0,2>(gA)); 
