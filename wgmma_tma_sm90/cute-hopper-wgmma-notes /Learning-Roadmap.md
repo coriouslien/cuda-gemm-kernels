@@ -5,7 +5,7 @@ Tensor mB = make_tensor(B, make_shape(N,K), dB);
 Copy_Atom tmaA = make_tma_atom(SM90_TMA_LOAD{}, mA, sA(_,_,0), make_shape(bM,bK));
 Copy_Atom tmaB = make_tma_atom(SM90_TMA_LOAD{}, mB, sB(_,_,0), make_shape(bN,bK));
 	
-These four statements are part of the host-side hese four statements are especially important because they show how CuTe represents matrices A, B, and C differently inside your Hopper gemm_device() kernel.
+These four statements are part of the host-side hese four statements are especially important because they show how CuTe represents matrices A, B, and C differently inside the Hopper gemm_device() kernel.
 
 The biggest distinction is:
 - mA and mB are TMA coordinate tensors. They represent global-memory matrices through coordinates interpreted using TMA descriptors.
@@ -13,7 +13,6 @@ The biggest distinction is:
 Let's follow the default gemm_nt() execution path (transA='N', transB='T') in the source code you provided.
 1. First statement: auto [M, N, K] = shape_MNK;
 auto [M, N, K] = shape_MNK;
-
 
 This uses C++17 structured binding to extract three values from a CuTe shape object.
 
@@ -42,7 +41,6 @@ ProblemShape shape_MNK
 
 For the default tutorial:
 shape_MNK = (512, 256, 1024)
-
 
 Therefore, the structured binding is conceptually equivalent to:
 auto M = get<0>(shape_MNK);  // 512
@@ -74,10 +72,9 @@ Copy_Atom tmaA = make_tma_atom(
     make_shape(bM,bK)
 );
 
-
 The kernel receives the host-created tmaA as tma_a.
 
-As we discussed previously, this copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
+Previously, this copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
 
 The descriptor contains information about the actual global-memory matrix A, including its base address, dimensions, and strides.
 Part B: What does make_shape(M,K) do?
@@ -86,16 +83,11 @@ make_shape(512,1024)
 
 
 This creates the logical shape:
-\[
-\operatorname{Shape}(mA)=(512,1024)
-\]
-
+(mA)=(512,1024)
 It tells CuTe that the tensor has two logical dimensions, M and K.
-
 It does not allocate or copy matrix elements.
 Part C: What does get_tma_tensor() return?
 This is the most important part.
-
 get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly dereferences the matrix A pointer.
 
 You can verify this in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization is:
@@ -2723,9 +2715,11 @@ Copy_Atom tmaA = make_tma_atom(
     make_shape(bM,bK)
 );
 The kernel receives the host-created tmaA as tma_a.
-This copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping information.
-
-The descriptor contains information about the actual global-memory matrix A, including its base address, dimensions, and strides.
+This copy atom contains a TMA tensor-map descriptor and auxiliary coordinate-mapping
+information.
+The descriptor contains information about the actual global-memory matrix A, including its base
+address, dimensions, and strides.
+	
 Part B: What does make_shape(M,K) do?
 With the default values:
 make_shape(512,1024)
@@ -2734,11 +2728,10 @@ This creates the logical shape:
 (mA)=(512,1024)
 It tells CuTe that the tensor has two logical dimensions, M and K.
 It does not allocate or copy matrix elements.
+	
 Part C: What does get_tma_tensor() return?
-
 get_tma_tensor() constructs a tensor of implicit TMA coordinates, not a tensor that directly
 dereferences the matrix A pointer.
-
 This in NVIDIA's copy_traits_sm90_tma.hpp. Its implementation for this TMA load specialization
 is:
 template <class GShape>
@@ -2799,13 +2792,14 @@ Why?
 Because Hopper's TMA instruction is provided with a descriptor address and tensor coordinates,
 rather than a separate global-memory pointer to each element.
 ************************
-A descriptor address:
+What is "A descriptor address"?
 is simply a memory address that tells the GPU where the TMA descriptor itself is stored.
 In the Hopper wgmma_tma_sm90.cu tutorial, there are two distinguish addresses:
 1). Descriptor address: The location in memory where the TMA descriptor (the blueprint) is
 stored.
 2). Matrix A base address: The location in GPU global memory where the actual matrix A elements
 begin.
+			
 The important point is that the TMA descriptor contains the base address of matrix A, but the
 descriptor itself also has an address.
 1). A simple example
