@@ -2755,7 +2755,6 @@ make_coord_tensor(
     make_layout(g_shape, aux_params_.g_stride_)
 );
 
-
 Here:
 Component                Meaning
 g_shape                  Logical shape (M,K)
@@ -2793,7 +2792,7 @@ Because Hopper's TMA instruction is provided with a descriptor address and tenso
 rather than a separate global-memory pointer to each element.
 ************************
 What is "A descriptor address"?
-is simply a memory address that tells the GPU where the TMA descriptor itself is stored.
+It is simply a memory address that tells the GPU where the TMA descriptor itself is stored.
 In the Hopper wgmma_tma_sm90.cu tutorial, there are two distinguish addresses:
 1). Descriptor address: The location in memory where the TMA descriptor (the blueprint) is
 stored.
@@ -2837,6 +2836,206 @@ Later, the kernel calls:
 copy(tma_a.with(producer_mbar[pipe]),
      tAgA(_,k_tile),
      tAsA(_,pipe));
+**************************************
+About pipeline stages = 3:
+We often use 3 pipeline stages because triple buffering provides a useful balance between hiding TMA memory-transfer latency 
+and conserving shared memory.
+However, 3 is not a hardware requirement or always the optimal number. CUDA GEMM kernels may use 2, 3, 4, or more stages, 
+depending on the kernel and GPU.
+Let's examine why NVIDIA chose 3 stages in the wgmma_tma_sm90.cu tutorial.
+1. What does bP = 3 mean?
+In the default gemm_nt() function:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};  // Pipeline stages
+
+The shared-memory layouts are constructed as:
+auto sA = tile_to_shape(
+    GMMA::Layout_MN_SW128_Atom<TA>{},
+    make_shape(bM,bK,bP));
+		
+auto sB = tile_to_shape(
+    GMMA::Layout_MN_SW128_Atom<TB>{},
+    make_shape(bN,bK,bP));
+
+This creates three reusable storage slots for A and B, inside each CTA's shared memory. 
+Each stage stores one A tile and one B tile.
+Three-stage shared-memory pipeline
+Stage 0        Stage 1        Stage 2
+A              A              A
+128 × 64       128 x 64       128 x 64
+B              B              B
+128 × 64       128 x 64       128 x 64
+
+Each stage has separate A and B buffers. This is triple buffering, not three CTAs or three WGMMA instructions.
+		
+2. Why not use just one stage?
+Suppose you have nine K tiles to process.
+With one pipeline stage, the simplified execution would be:
+TMA load tile 0
+Wait for TMA
+WGMMA compute tile 0
+
+TMA load tile 1
+Wait for TMA
+WGMMA compute tile 1
+
+TMA load tile 2
+Wait for TMA
+WGMMA compute tile 2
+...
+
+TMA and WGMMA would spend much of their time waiting on each other.
+The problem is that the next tile cannot be written into the shared-memory buffer while WGMMA is still consuming the previous tile.
+We want to overlap TMA loading with WGMMA computation.
+		
+3. Two-stage pipeline: Double buffering
+Now suppose:
+bP = Int<2>{};
+We have two shared-memory stages.
+The execution might look like this:
+Step        Stage 0             Stage 1
+Prologue    TMA loads tile 0    TMA loads tile 1
+	
+1	WGMMA computes tile 0, then TMA starts tile 2	Tile 1 ready or loading
+2	TMA loading tile 2	WGMMA computes tile 1, then TMA starts tile 3
+3	WGMMA needs tile 2	TMA loading tile 3
+
+When stage 0 is reused for tile 2, TMA has roughly one WGMMA tile-computation interval to finish its transfer before the 
+consumer needs stage 0 again.
+
+If TMA takes longer, WGMMA stalls waiting for the data.
+4. Three-stage pipeline: Triple buffering
+Now use your actual configuration:
+bP = Int<3>{};
+
+
+The prologue issues TMA loads for K tiles 0, 1, and 2.
+
+After that, the kernel consumes the tiles and refills the vacated stages.
+Follow the three-stage pipeline
+Iteration 1
+
+3 / 5
+
+Stage 0
+
+Loading tile 3
+
+
+Stage 1
+
+Loading tile 4
+
+
+Stage 2
+
+Tile 2: prefetched
+
+
+
+WGMMA consumes tile 1 while the TMA transfer for tile 3 can progress. Stage 1 is then reused for tile 4.
+ PreviousNext 
+Logical execution order; asynchronous loads can finish at different times. The real barriers determine when each stage is ready.
+The crucial observation is:
+
+When TMA starts loading tile 3 into stage 0, WGMMA still has tile 1 and tile 2 to compute before it needs tile 3.
+
+That gives the TMA operation more opportunity to finish without making WGMMA wait.
+5. Why not use four or five stages?
+Because more stages require more shared memory.
+
+In your default half-precision GEMM:
+\[
+bM=128,\quad bN=128,\quad bK=64
+\]
+
+Each A tile requires:
+\[
+128\times64\times2=16384\text{ bytes}
+\]
+
+Each B tile requires the same amount.
+
+Therefore, each pipeline stage requires:
+\[
+16384+16384=32768\text{ bytes}=32\text{ KiB}
+\]
+
+Compare different stage counts:
+Pipeline stages	A + B shared memory	Potential overlap
+1	32 KiB	Minimal
+2	64 KiB	One intervening computation interval
+3	96 KiB	Two intervening computation intervals
+4	128 KiB	Three intervening computation intervals
+5	160 KiB	Four intervening computation intervals
+
+These sizes exclude barrier storage and alignment overhead.
+
+Adding stages can increase the amount of useful work in flight, but also consumes shared memory that could otherwise allow more CTAs to reside on an SM.
+
+This tradeoff is why NVIDIA and CUTLASS recommend profiling different pipeline depths rather than always maximizing the stage count. 
+Colfax Research+1
+
+6. How many stages are enough?
+A useful conceptual rule is:
+\[
+\text{Pipeline depth} \approx
+1+\left\lceil
+\frac{\text{TMA load latency}}
+{\text{WGMMA time per K tile}}
+\right\rceil
+\]
+
+This is only a rough intuition for your tutorial's scheduling pattern, not a CUTLASS formula or guarantee. It assumes a load starts after a stage is consumed, and it ignores scheduling overhead, bandwidth contention, and variation in execution times.
+
+The reasoning is straightforward: if a TMA load takes about as long as two WGMMA tile computations, a three-stage pipeline may give that load enough time to finish before the buffer is needed again.
+
+But if the TMA latency is already hidden with two stages, a third might add shared-memory overhead without improving performance.
+
+Conversely, if TMA is substantially slower, four stages might help.
+7. One subtle point about your specific tutorial
+Your kernel contains:
+warpgroup_arrive();
+
+gemm(mma,
+     tCrA(_,_,_,read_pipe),
+     tCrB(_,_,_,read_pipe),
+     tCrC);
+
+warpgroup_commit_batch();
+warpgroup_wait<0>();
+
+
+Because warpgroup_wait<0>() is called in every iteration, the kernel waits for the current committed WGMMA work before releasing that stage and moving forward.
+
+This tutorial therefore demonstrates a relatively simple pipeline where TMA transfers can overlap with WGMMA computation, but WGMMA batches are not deeply pipelined across successive iterations.
+
+More advanced Hopper GEMM implementations can use warp specialization and different scheduling strategies. Their optimal stage count may differ. 
+GitHub
+
+8. Connection to your PipelineState question
+When using three stages:
+K tile:        0  1  2 | 3  4  5 | 6  7  8
+index():       0  1  2 | 0  1  2 | 0  1  2
+phase():       0  0  0 | 1  1  1 | 0  0  0
+
+
+The phase changes because the PipelineState index wraps around after three advances.
+
+If you changed the pipeline to two stages, the software sequence would instead be:
+K tile:        0  1 | 2  3 | 4  5 | 6  7
+index():       0  1 | 0  1 | 0  1 | 0  1
+phase():       0  0 | 1  1 | 0  0 | 1  1
+
+
+The phase still alternates between 0 and 1. Only the number of stages between toggles changes.
+
+The main takeaway: NVIDIA chose three stages in this tutorial because they provide a useful demonstration of overlapping TMA loads and WGMMA computations without using excessive shared memory. Three is a reasonable design choice, not a universal optimum.
+
+For your performance-engineering practice, a valuable experiment on a Hopper GPU would be to compile the same kernel with bP = 2, 3, and 4, then use Nsight Compute to compare GEMM throughput, shared-memory usage, and stalls waiting for TMA completion. That would show you exactly when an additional pipeline stage helps.
+**************************************
 
 The with() method prepares a copy operation that includes a pointer to the descriptor and the
 selected completion barrier.
@@ -2868,30 +3067,25 @@ Because the address of matrix A alone is insufficient.
 For example:
 TA const* A;
 This tells the GPU where the matrix data starts.
-
 But it does not tell TMA:
 - How many dimensions the tensor has.
 - What the dimensions and strides are.
 - How large the transfer box is.
 - How the data should be arranged in shared memory.
 The TMA descriptor provides this additional information.
-
 That is why the TMA instruction receives the descriptor's address plus tensor coordinates, rather than just the base address of A.
+			
 5. Three different addresses to remember
-Expression	Meaning
-&tmaA	Host address of the complete CuTe copy-atom object
-&tma_a.tma_desc_	GPU-side address of the TMA descriptor inside the kernel parameter
-A (stored in the descriptor)	GPU global-memory base address of the actual matrix
+Expression                      Meaning
+&tmaA                           Host address of the complete CuTe copy-atom object
+&tma_a.tma_desc_                GPU-side address of the TMA descriptor inside the kernel parameter
+A (stored in the descriptor)    GPU global-memory base address of the actual matrix
 
 The second address is the one supplied to the TMA instruction as its tensor-map address.
-
-The simplest explanation is: The descriptor is the blueprint, and the descriptor address tells TMA where to find that blueprint. The blueprint then tells TMA where the matrix data is located and how to transfer it.
-
-That is also why __grid_constant__ matters in your tutorial: it helps preserve a valid address for the descriptor stored inside the kernel parameter.
-
-
-			
-
+The simplest explanation is: The descriptor is the blueprint, and the descriptor address tells TMA where to find that blueprint. 
+The blueprint then tells TMA where the matrix data is located and how to transfer it.
+That is also why __grid_constant__ matters in the tutorial: it helps preserve a valid address for the descriptor stored inside 
+the kernel parameter.
 			
 Conceptually:
 TMA descriptor:
@@ -2903,62 +3097,36 @@ TMA descriptor:
 TMA source:
     Coordinates identifying the desired tile
 
-
 The TMA hardware combines the descriptor and the coordinates to locate the source data.
-
-This is why CuTe represents the source as a tensor of coordinates that can still be tiled, sliced, and partitioned using ordinary CuTe tensor operations. 
-GitHub
-
-
-For example, when you later select the tile corresponding to logical A rows 128–255 and K columns 192–255, CuTe computes the required TMA source coordinates. Their exact representation depends on the descriptor's coordinate mapping.
-
+This is why CuTe represents the source as a tensor of coordinates that can still be tiled, sliced, and partitioned using 
+ordinary CuTe tensor operations. 
+For example, when we later select the tile corresponding to logical A rows 128–255 and K columns 192–255, CuTe computes the 
+required TMA source coordinates. Their exact representation depends on the descriptor's coordinate mapping.
 The mA tensor does not contain those A matrix elements. It describes the coordinate space from which TMA will load them.
+
 4. Third statement: Tensor mB = tma_b.get_tma_tensor(make_shape(N,K));
 Tensor mB =
     tma_b.get_tma_tensor(make_shape(N,K));
-
-
 This uses the same mechanism as mA, but for matrix B.
-
 For the default configuration:
 N = 256;
 K = 1024;
-
-
 So:
 make_shape(N,K)
-
-
 gives:
 (256,1024)
-
-
 Why (N,K) instead of (K,N)?
-Recall the default GEMM:
-\[
+The default GEMM:
 C=AB^T
-\]
-
 The logical matrix dimensions are:
-\[
 A:(512,1024)
-\]
-
-\[
 B:(256,1024)
-\]
-
-\[
 B^T:(1024,256)
-\]
-
-\[
 C:(512,256)
-\]
-
-The B tensor represents the original (N,K) matrix stored in global memory. The transpose is part of the mathematical multiplication, not a physical transpose performed by get_tma_tensor().
-
-Just like mA, mB is a TMA coordinate tensor that will later be tiled and partitioned to provide source coordinates for the B transfers.
+The B tensor represents the original (N,K) matrix stored in global memory. The transpose is part of the mathematical 
+multiplication, not a physical transpose performed by get_tma_tensor().
+Just like mA, mB is a TMA coordinate tensor that will later be tiled and partitioned to provide source coordinates for the 
+B transfers.
 5. Fourth statement: Tensor mC = make_tensor(make_gmem_ptr(C), make_shape(M,N), dC);
 Now look at:
 Tensor mC = make_tensor(
@@ -2966,56 +3134,36 @@ Tensor mC = make_tensor(
     make_shape(M,N),
     dC
 );
-
-
 This statement is different from the previous two.
-
 Matrix C is not accessed through a TMA tensor-map descriptor in this tutorial.
-
 Instead, the kernel uses the actual global-memory pointer C.
-
 Let's break it down.
+			
 Part A: make_gmem_ptr(C)
 C is a kernel parameter:
 TC* C
-
-
 It points to output matrix C in GPU global memory.
 make_gmem_ptr(C)
-
-
 wraps that pointer in a CuTe pointer type identifying the global-memory address space.
-
 It does not allocate memory, copy C, or create a new matrix.
+			
 Part B: make_shape(M,N)
 For the default example:
 M = 512
 N = 256
-
-
 Therefore:
 mC shape = (512,256)
-
 
 Part C: dC
 Recall the host-side code:
 auto dC = make_stride(Int<1>{}, ldC);
-
-
 And in main():
 ldC = m;
-
-
 Therefore:
 dC = (1,512)
-
-
 This means C uses column-major storage.
-
 The logical-to-physical address mapping is:
-\[
-\operatorname{offset}_C(m,n)=m+512n
-\]
+offset_C(m,n)=m+512n
 
 For example:
 Logical coordinate	Element offset
