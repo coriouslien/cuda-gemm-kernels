@@ -38,68 +38,57 @@ gmake[1]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90
 /usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles 0
 
 
-    Detailed analysis of your wgmma_sm90.cu compilation output
-Your compilation output confirms that you successfully built Hopper-specific CUDA machine code (sm_90a) on your RTX 5080 desktop.
+Detailed analysis of the wgmma_sm90.cu compilation output
+The compilation output confirms that I successfully built Hopper-specific CUDA machine code
+(sm_90a) on my RTX 5080 Blackwell SM120 desktop.
 
-The most interesting discovery is that the compiler generated two specialized GEMM kernels, using 112 and 114 registers per thread. Your earlier Nsight Compute report from the H100 showed 114 registers per thread, so we can connect the compilation output directly to the kernel you profiled.
+The most interesting discovery is that the compiler generated two specialized GEMM kernels,
+using 112 and 114 registers per thread. The earlier Nsight Compute report from the H100 showed
+114 registers per thread, so I can connect the compilation output directly to the kernel I
+profiled.
 
-I'll explain the build process first, then the compiler flags, the two GEMM specializations, register usage, and finally their relationship to the H100 performance results.
+Explaning the build process first, then the compiler flags, the two GEMM specializations,
+register usage, and finally their relationship to the H100 performance results.
 1. Understand the compilation process
-Your build follows this sequence:
+The build follows this sequence:
 CMake + GNU Make
-
 Check dependencies and determine which files require rebuilding
-
 NVIDIA CUDA compiler — nvcc
-
 Compile CUDA C++ templates for compute_90a and sm_90a
-
 PTX assembler — ptxas
-
 Generate Hopper machine code; allocate registers and barrier resources
-
 Host linker — g++
-
 Link objects and required libraries into one executable
-
 build/wgmma_sm90
-
 Executable containing the host application and Hopper device code
-
-
 The stages are conceptually separate, although nvcc orchestrates several of them internally.
 
-Your RTX 5080 does not have to execute the Hopper instructions during compilation. The compiler only needs to support their instruction set and architecture target.
-
-This is why your approach of compiling locally and executing on Lambda H100 works.
+My desktop RTX 5080 Blackwell SM120 does not have to execute the Hopper instructions during
+compilation. The compiler only needs to support their instruction set and architecture target.
+This is why my approach of compiling locally and executing on Lambda H100 works.
+    
 2. The first part: CMake and GNU Make
-Your log begins with commands such as:
+The log begins with commands such as:
 /usr/bin/cmake -S... -B... --check-build-system ...
-
-
 This tells CMake to check whether the generated build system is still valid.
-
 Next:
 /usr/bin/gmake -f CMakeFiles/Makefile2 all
-
-
 This invokes GNU Make to build the default target.
+The nested gmake[1] and gmake[2] messages reflect recursively invoked Make processes. They do
+not indicate two different GPUs or two compiler executions.
 
-The nested gmake[1] and gmake[2] messages reflect recursively invoked Make processes. They do not indicate two different GPUs or two compiler executions.
-
-Your build then reaches:
+The build then reaches:
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
-
-
-This means CMake is compiling your source file into an object file:
+This means CMake is compiling the source file into an object file:
 wgmma_sm90.cu
-       ↓
+       |
+       V
 wgmma_sm90.cu.o
 
-
-The object file is not yet the final executable. It contains compiled code and information needed by the linker.
-
-The percentage is CMake's build progress, not an indication that half of the CUDA kernel is executing.
+The object file is not yet the final executable. It contains compiled code and information 
+needed by the linker.
+The percentage is CMake's build progress, not an indication that half of the CUDA kernel is 
+executing.
 
 3. Understand the exact nvcc command
 The central command is:
@@ -120,17 +109,20 @@ The central command is:
     -x cu -c wgmma_sm90.cu \
     -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
 
-
-I've shortened the absolute source path for readability. The following explanation covers each group of options.
+It has been shortened the absolute source path for readability. The following explanation
+covers each group of options.
 3.1 Optimization and language options
-Option	Meaning	Why it matters
--O3	Enable aggressive host compiler optimization	Appropriate for performance experiments
--DNDEBUG	Define the NDEBUG macro	Disables standard C/C++ assert() checks
--std=c++17	Compile using C++17	Required by this CUTLASS/CuTe build
---expt-relaxed-constexpr	Relax certain host/device constexpr restrictions	Useful for template-heavy CUDA C++
--forward-unknown-to-host-compiler	Forward qualifying unknown options to the host compiler	Helps CMake manage mixed host/CUDA flags
--UCUTLASS_ENABLE_SYNCLOG	Undefine the macro	Controls conditional compilation of CUTLASS synchronization logging
-
+</pre>
+|Option| Meaning|Why it matters|
+|:-----|:-------|:-------------|
+|-O3|Enable aggressive host compiler optimization|Appropriate for performance experiments|
+|-DNDEBUG|Define the NDEBUG macro|Disables standard C/C++ assert() checks|
+|-std=c++17|Compile using C++17|Required by this CUTLASS/CuTe build|
+|--expt-relaxed-constexpr|Relax certain host/device<br> constexpr restrictions|	Useful for<br> 
+template-heavy CUDA C++|
+|-forward-unknown-to-host-compiler|Forward qualifying unknown<br> options to the host compiler|	Helps CMake manage<br> mixed host/CUDA flags|
+|-UCUTLASS_ENABLE_SYNCLOG|Undefine the macro|Controls conditional compilation<br> of CUTLASS synchronization logging|
+<pre>
 A distinction worth understanding is that the host compiler and GPU assembler have their own optimization processes. -O3 does not expose a single optimization setting for every CUDA compilation stage.
 
 Also, -DNDEBUG affects assert() behavior. It should not be confused with removing all CUDA runtime error checking.
