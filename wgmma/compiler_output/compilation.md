@@ -298,13 +298,10 @@ template <
     class Beta
 >
 __global__ void gemm_device(...);
-
-
 This is a template, not a single fixed kernel implementation.
-
-When different template arguments are supplied, the compiler can generate different machine-code specializations.
-
-Your source contains two host-side configurations:
+When different template arguments are supplied, the compiler can generate different machine-
+code specializations.
+The source contains two host-side configurations:
 
 NT GEMM:
 auto dA = make_stride(Int<1>{}, ldA);
@@ -335,59 +332,43 @@ TiledMMA tiled_mma = make_tiled_mma(
 
 
 These are distinct compile-time configurations.
-
-Although both compute GEMM, they use different memory layouts and WGMMA operand major modes. That can change address-generation instructions, copy partitioning, register lifetimes, and other generated code.
-
+Although both compute GEMM, they use different memory layouts and WGMMA operand major modes.
+That can change address-generation instructions, copy partitioning, register lifetimes, and 
+other generated code.
 That explains why one specialization requires 112 registers while the other requires 114.
 
-NVIDIA's source defines these two modes explicitly. 
-GitHub+1
-
 6.2 How can we identify the specializations in the mangled names?
-Your first specialization contains a stride type corresponding to:
+The first specialization contains a stride type corresponding to:
 make_stride(ldA, Int<1>{})
-
-
 That is the TN path, where K is the contiguous dimension.
-
+    
 The second specialization contains a stride type corresponding to:
 make_stride(Int<1>{}, ldA)
-
-
 That is the NT path, where M is the contiguous dimension.
 
 The long mangled symbols also encode CuTe layouts, swizzle types, and MMA atoms.
-
 For example:
 SwizzleILi3ELi4ELi3E
-
-
 corresponds to the compile-time swizzle type:
 Swizzle<3,4,3>
-
-
 And:
 MMA_64x64x16_F16F16F16_SS
-
-
 represents the selected Hopper WGMMA atom.
-
-The enormous kernel names result from C++ template instantiation and name mangling. They are not errors.
-6.3 Why compile both if you normally execute NT?
-Your host program supports both configurations through runtime arguments:
+The enormous kernel names result from C++ template instantiation and name mangling. 
+They are not errors.
+    
+6.3 Why compile both if we normally execute NT?
+The host program supports both configurations through runtime arguments:
 if (transA == 'N' && transB == 'T') {
     return gemm_nt(...);
 }
 else if (transA == 'T' && transB == 'N') {
     return gemm_tn(...);
 }
-
-
 Both call paths exist in the compiled application.
-
-Consequently, both template specializations are instantiated and compiled, even if you normally run with the default N T configuration.
-
-At runtime, your application chooses the appropriate specialization.
+Consequently, both template specializations are instantiated and compiled, even if we normally 
+run with the default N T configuration.
+At runtime, the application chooses the appropriate specialization.
 
 This distinction is important:
 - Tile shape and CuTe layouts are compile-time specializations.
@@ -395,18 +376,15 @@ This distinction is important:
 - The NT versus TN execution path is selected using the runtime arguments.
 Changing the matrix dimensions does not necessarily require recompiling the program.
 
-7. Understand the resource usage of your actual GEMM kernel
+7. Understand the resource usage of the actual GEMM kernel
 Now focus on these two outputs:
 Function properties for gemm_device ... TN
-
 0 bytes stack frame
 0 bytes spill stores
 0 bytes spill loads
 Used 112 registers, used 1 barriers
 
-
 Function properties for gemm_device ... NT
-
 0 bytes stack frame
 0 bytes spill stores
 0 bytes spill loads
@@ -415,7 +393,6 @@ Used 114 registers, used 1 barriers
 
 7.1 Used 114 registers — What does that mean?
 A CUDA thread has access to a set of physical registers.
-
 The compiler uses them to hold temporary values, including:
 - Address calculations.
 - Loop counters.
@@ -423,75 +400,59 @@ The compiler uses them to hold temporary values, including:
 - Accumulator values.
 - Intermediate computation results.
 - Synchronization and pipeline bookkeeping.
-Your default NT specialization requires:
-\[
-\boxed{114\text{ registers per thread}}
-\]
+The default NT specialization requires:
+114 registers per thread
 
 With 128 threads per CTA:
-\[
-114\times128
-=\boxed{14,592\text{ registers}}
-\]
-
+114 x 128 =14,592 registers
 That is the unrounded logical register demand per CTA.
-
-The hardware allocates registers at a defined granularity, so the actual allocation can be slightly larger.
-7.2 Connect this to your Nsight Compute report
-Your previous Launch Statistics screenshot reported:
+The hardware allocates registers at a defined granularity, so the actual allocation can be 
+slightly larger.
+    
+7.2 Connect this to the Nsight Compute report
+The previous Launch Statistics screenshot reported:
 Registers Per Thread: 114
-
-
-Your assembler reports:
+The assembler reports:
 Used 114 registers
-
-
 Local compiler — ptxas114
 registers/thread
-
 H100 — Nsight Compute114
 registers/thread
 
-
-
-The profiler's register count matches the NT kernel compiled on your desktop.
-
+The profiler's register count matches the NT kernel compiled on my desktop RTX 5080 
+Blackwell SM120.
 This is a particularly useful verification.
-
-It supports the conclusion that the H100 executed the expected specialization with the resource usage reported by your local compiler.
+It supports the conclusion that the H100 executed the expected specialization with the 
+resource usage reported by my local compiler.
+    
 7.3 Is 114 registers per thread too high?
 Not necessarily.
-
-An advanced Tensor Core GEMM can deliberately use many registers to keep its accumulators and intermediate values close to the compute units.
-
+An advanced Tensor Core GEMM can deliberately use many registers to keep its accumulators and
+intermediate values close to the compute units.
 High register usage is not inherently bad.
+It becomes a problem when it restricts occupancy enough to prevent the GPU from hiding 
+important latencies.
 
-It becomes a problem when it restricts occupancy enough to prevent the GPU from hiding important latencies.
-
-But your Nsight Compute Occupancy section reported:
+But The Nsight Compute Occupancy section reported:
 Resource	Maximum resident CTAs
 Registers	4
 Shared memory	2
-
 This is important.
-
-Even though the kernel uses 114 registers per thread, register usage is not the resource limiting your current kernel to two CTAs per SM.
-
+Even though the kernel uses 114 registers per thread, register usage is not the resource
+limiting the current kernel to two CTAs per SM.
 Shared memory is.
-
-Therefore, reducing register usage alone is unlikely to improve your current theoretical occupancy unless another resource requirement also changes.
+Therefore, reducing register usage alone is unlikely to improve your current theoretical
+occupancy unless another resource requirement also changes.
 
 8. Your zero register spills are a positive result
 Your compiler reports:
 0 bytes stack frame
 0 bytes spill stores
 0 bytes spill loads
-
-
 Let's interpret these carefully.
+    
 8.1 Stack frame: 0 bytes
 The compiler reports no per-thread stack-frame allocation for these kernel specializations.
-
 This means it does not require a stack frame for the compiled kernel in the way reported by ptxas.
 
 It does not prove that every possible memory access uses registers or shared memory.
