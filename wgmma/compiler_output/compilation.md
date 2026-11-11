@@ -123,123 +123,112 @@ template-heavy CUDA C++|
 |-forward-unknown-to-host-compiler|Forward qualifying unknown<br> options to the host compiler|	Helps CMake manage<br> mixed host/CUDA flags|
 |-UCUTLASS_ENABLE_SYNCLOG|Undefine the macro|Controls conditional compilation<br> of CUTLASS synchronization logging|
 <pre>
-A distinction worth understanding is that the host compiler and GPU assembler have their own optimization processes. -O3 does not expose a single optimization setting for every CUDA compilation stage.
+A distinction worth understanding is that the host compiler and GPU assembler have their own
+optimization processes. -O3 does not expose a single optimization setting for every CUDA
+compilation stage.
 
-Also, -DNDEBUG affects assert() behavior. It should not be confused with removing all CUDA runtime error checking.
+Also, -DNDEBUG affects assert() behavior. It should not be confused with removing all CUDA 
+runtime error checking.
+    
 3.2 The most important flag: compute_90a and sm_90a
-Your command includes:
+The command includes:
 --generate-code=arch=compute_90a,code=[compute_90a,sm_90a]
-
-
 This tells nvcc to generate both:
-Target	Output	Purpose
-compute_90a	Architecture-specific PTX	Intermediate virtual GPU instruction representation
-sm_90a	Compiled GPU machine code	Native Hopper instructions executable on H100
-
+</pre>
+|Target|Output|Purpose|
+|:-----|:-----|:------|
+|compute_90a|Architecture-specific PTX|Intermediate virtual GPU<br> instruction representation|
+|sm_90a|Compiled GPU machine code|Native Hopper instructions<br> executable on H100|
+<pre>
 The important distinction is:
+compute_90a describes the virtual instruction target; sm_90a describes the actual GPU code
+generation target.
+The compiler first lowers CUDA C++ to lower-level device instructions, then ptxas assembles 
+and optimizes code for Hopper.
 
-compute_90a describes the virtual instruction target; sm_90a describes the actual GPU code generation target.
-
-The compiler first lowers CUDA C++ to lower-level device instructions, then ptxas assembles and optimizes code for Hopper.
-
-NVIDIA documents the distinction between virtual and real GPU architectures and the use of both PTX and machine-code images in the executable. 
-NVIDIA CUDA Compiler Driver 13.5 documentation
+NVIDIA documents the distinction between virtual and real GPU architectures and the use of both
+PTX and machine-code images in the executable. 
 
 3.3 Why is 90a different from 90?
-The a suffix identifies architecture-specific features that are not guaranteed to work on later GPU architectures.
-
-Your WGMMA instruction family is one of the reasons for targeting sm_90a.
-
-You should not think of it as just a newer spelling of sm_90.
-H100 — Hopper
-
-sm_90a compatible
-
-
-RTX 5080 — Blackwell
-
-Cannot execute SM90a WGMMA
-
-
-This is precisely why your desktop can compile the executable but cannot run that Hopper WGMMA kernel.
-
+The a suffix identifies architecture-specific features that are not guaranteed to work on later
+GPU architectures.
+The WGMMA instruction family is one of the reasons for targeting sm_90a.
+We should not think of it as just a newer spelling of sm_90.
+H100 — Hopper  sm_90a compatible
+RTX 5080 — Blackwell   Cannot execute SM90a WGMMA
+This is precisely why my desktop RTX 5080 Blackwell SM120 can compile the executable but cannot
+run that Hopper WGMMA kernel.
 The compiled machine code is for the target architecture, not the GPU doing the compilation.
+    
 3.4 Why include both PTX and machine code?
-Your build retains the architecture-specific PTX in addition to generating the sm_90a machine code.
-
-This can be useful for inspecting the intermediate representation and for compatible driver JIT scenarios.
-
-However, the compute_90a PTX is not a general forward-compatible fallback for your Blackwell RTX 5080. Architecture-specific PTX features are restricted to compatible targets.
-
-For the H100, the driver can use the native sm_90a machine code embedded in your executable.
-3.5 --generate-line-info: Essential for your Nsight studies
-Your compiler command contains:
+The build retains the architecture-specific PTX in addition to generating the sm_90a machine
+code.
+This can be useful for inspecting the intermediate representation and for compatible driver JIT
+scenarios.
+However, the compute_90a PTX is not a general forward-compatible fallback for the Blackwell RTX
+5080 SM120. Architecture-specific PTX features are restricted to compatible targets.
+For the H100, the driver can use the native sm_90a machine code embedded in the executable.
+    
+3.5 --generate-line-info: Essential for the Nsight studies
+The compiler command contains:
 --generate-line-info
-
-
 This generates device-code source-line information.
-
-That is especially useful because you want to connect:
+That is especially useful because we want to connect:
 CUDA C++ source
-       ↓
+       |
+       V
 PTX
-       ↓
+       |
+       V
 SASS
-       ↓
+       |
+       V
 Profiler metrics
 
-
-Your earlier Nsight Compute screenshots displayed source references such as wgmma_sm90.cu:235 and axpby.hpp:90.
-
+The earlier Nsight Compute screenshots displayed source references such as wgmma_sm90.cu:235
+and axpby.hpp:90.
 That is consistent with having useful line-number information in the binary.
-
-One important distinction: line information does not necessarily embed the full source text. For source-level browsing on a different computer, the source files may still need to be accessible or embedded during profiling.
-
-NVIDIA recommends line information rather than disabling device optimization with -G for performance profiling. 
-NVIDIA CUDA Compiler Driver 13.5 documentation
+One important distinction: line information does not necessarily embed the full source text.
+For source-level browsing on a different computer, the source files may still need to be 
+accessible or embedded during profiling.
+NVIDIA recommends line information rather than disabling device optimization with -G for
+performance profiling. 
 
 3.6 -Xptxas=-v and --resource-usage
 These two options explain why your build prints detailed resource information.
 -Xptxas=-v
 --resource-usage
-
-
 -Xptxas forwards the specified option to the PTX assembler.
-
 -v requests verbose assembler output.
-
---resource-usage asks nvcc to show information such as register and memory usage. For a non-relocatable-device-code build, this also enables verbose assembler reporting, so there is some redundancy. 
-NVIDIA CUDA Compiler Driver 13.5 documentation
-
-
-That is how you obtained:
+--resource-usage asks nvcc to show information such as register and memory usage. For a 
+non-relocatable-device-code build, this also enables verbose assembler reporting, so there is
+some redundancy. 
+That is how we obtained:
 Used 114 registers, used 1 barriers
 
-
-Without verbose resource reporting, you might still compile successfully but not see these valuable details.
+Without verbose resource reporting, we might still compile successfully but not see these
+valuable details.
 3.7 -Xptxas=-warn-spills
 This enables warnings about register spilling.
-
 It does not prevent spilling.
-
-Register spilling occurs when the compiler needs to place values in memory because they cannot all remain in physical registers.
-
-For GPU optimization, this matters because spilled values can introduce additional loads and stores, often involving local memory.
-
-We will examine your actual spill counts shortly.
+Register spilling occurs when the compiler needs to place values in memory because they cannot
+all remain in physical registers.
+For GPU optimization, this matters because spilled values can introduce additional loads and
+stores, often involving local memory.
+We will examine the actual spill counts shortly.
+    
 3.8 --options-file, -MD, -MT, and -MF
 These are primarily build-system options.
-
---options-file reads additional compilation options from the response file generated by CMake, often including a long list of header search paths.
-
--MD, -MT, and -MF are used to generate and manage dependency information so the build system knows when changing a header requires recompilation.
-
-For example, if you edit an included CUTLASS header, CMake and Make need to know that wgmma_sm90.cu.o may be out of date.
-
+--options-file reads additional compilation options from the response file generated by CMake,
+often including a long list of header search paths.
+-MD, -MT, and -MF are used to generate and manage dependency information so the build system
+knows when changing a header requires recompilation.
+For example, if we edit an included CUTLASS header, CMake and Make need to know that
+wgmma_sm90.cu.o may be out of date.
 These options do not themselves change the CUDA kernel's tile shape or pipeline behavior.
+    
 3.9 -x cu, -c, and -o
 -x cu -c wgmma_sm90.cu -o wgmma_sm90.cu.o
-
 
 These specify:
 - -x cu: Treat the input as CUDA source.
@@ -248,36 +237,26 @@ These specify:
 This completes the object-compilation stage.
 
 4. Understand ptxas info: 47 bytes gmem
-Your output contains:
+The output contains:
 ptxas info : 47 bytes gmem
-
-
-This is not the amount of global memory your GEMM uses to store A, B and C.
-
-It describes statically allocated global-memory storage associated with the compiled device module.
-
-NVIDIA explicitly distinguishes module-level global-memory allocations from per-kernel resource usage in its compiler documentation. 
-NVIDIA CUDA Compiler Driver 13.5 documentation
-
-
-Your actual GEMM matrices are dynamically allocated at runtime.
-
-For a \(5120\times5120\times4096\) FP16 GEMM, the matrix data alone is vastly larger than 47 bytes.
-
+This is not the amount of global memory the GEMM uses to store A, B and C.
+It describes statically allocated global-memory storage associated with the compiled device
+module.
+NVIDIA explicitly distinguishes module-level global-memory allocations from per-kernel resource
+usage in its compiler documentation. 
+The actual GEMM matrices are dynamically allocated at runtime.
+For a 5120 x 5120 x 4096 FP16 GEMM, the matrix data alone is vastly larger than 47 bytes.
 Therefore, this line tells us little about your GEMM's memory bandwidth or memory footprint.
 
 5. Why does the compiler build cub::EmptyKernel?
-Your log shows:
+The log shows:
 Compiling entry function
 '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv'
 for 'sm_90a'
-
-
 This is a CUB library-generated CUDA kernel.
-
 CUB is part of NVIDIA's CUDA ecosystem and provides reusable GPU primitives.
-
-Your application includes CUDA-related template libraries, and some of their generated code can produce additional kernel entry points.
+The application includes CUDA-related template libraries, and some of their generated code 
+can produce additional kernel entry points.
 
 Its resource usage is:
 0 bytes stack frame
@@ -285,23 +264,21 @@ Its resource usage is:
 0 bytes spill loads
 Used 4 registers, used 0 barriers
 
-
-This is not your WGMMA matrix multiplication kernel.
-
-You should not compare its four registers with the 114 registers reported for your GEMM.
-
+This is not the WGMMA matrix multiplication kernel.
+We should not compare its four registers with the 114 registers reported for the GEMM.
 It is simply another device entry function that the compiler generated.
 
 6. Why does ptxas compile gemm_device twice?
-This is the most interesting part of your compilation output.
-
 The assembler reports two device kernels:
-Specialization	Registers/thread	Barriers	Assembler time
-TN GEMM — K-major layout	112	1	57.885 ms
-NT GEMM — MN-major layout	114	1	51.020 ms
-
+</pre>
+|Specialization|Registers/thread|Barriers|Assembler time|
+|:-------------|:---------------|:-------|:-------------|
+|TN GEMM — K-major layout|112|1|57.885 ms|
+|NT GEMM — MN-major layout|114|1|51.020 ms|
+<pre>
 Both target sm_90a.
-6.1 Your source uses C++ templates
+    
+6.1 The source uses C++ templates
 The kernel is declared approximately as:
 template <
     class ProblemShape,
