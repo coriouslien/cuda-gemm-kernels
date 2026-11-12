@@ -2,7 +2,7 @@
 The following is the compiling output of wgmma_sm90.cu in my desktop RTX 5080 Blackwell SM120, not Lambda.
 make --build build
 /usr/bin/cmake -S/home/chialan/cuda-learning/cute_hopper/lambda_sm90 -B/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build --check-build-system CMakeFiles/Makefile.cmake 0
-/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles/progress.marks
+/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles8./progress.marks
 /usr/bin/gmake  -f CMakeFiles/Makefile2 all
 gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/depend
@@ -463,26 +463,23 @@ ptxas info:
     0 bytes spill stores
     0 bytes spill loads
 
-
 0 bytes stack frame means the compiler did not need to allocate a per-thread stack frame for that GPU kernel.
-
 To understand this, we need to distinguish registers, local memory, and the stack in CUDA.
 1. What is a stack frame?
-In C++, when a function is called, the compiler may need somewhere to store information associated with that particular function invocation.
-
+In C++, when a function is called, the compiler may need somewhere to store information associated with that 
+particular function invocation.
 Examples include:
 - Local variables that cannot be kept in registers.
 - Certain temporary objects and arrays.
 - Saved information needed when calling another function.
 - Information needed to return to the calling function.
+    
 The memory region reserved for one function invocation is called a stack frame.
-
 For example, imagine a CPU function:
 void calculate(int x) {
     int a = x + 10;
     int b = a * 2;
 }
-
 
 Conceptually, a compiler could use a stack frame to hold a and b.
 CPU memory stack
@@ -499,58 +496,49 @@ CPU memory stack
       └─────────────────┘
        Lower addresses
 
-
-However, an optimizing compiler would likely keep a and b in registers instead, and might eliminate some calculations entirely.
-
+However, an optimizing compiler would likely keep a and b in registers instead, and might eliminate some 
+calculations entirely.
 A function does not automatically require a nonzero stack frame just because it contains local variables.
+    
 2. How does this work on a CUDA GPU?
 CUDA is similar conceptually, but GPU stack storage is different from CPU stack storage.
-
 Each CUDA thread has its own execution state and can have its own stack.
-
-When a GPU thread needs stack storage, that storage is part of its per-thread local-memory address space, rather than shared memory.
+When a GPU thread needs stack storage, that storage is part of its per-thread local-memory address space, rather than 
+shared memory.
 Simplified CUDA thread storage
-Registers
-
+Registers:
 Fast storage for values such as indices, pointers, and accumulators
-
-Local memory / thread stack
-
+    
+Local memory / thread stack:
 Per-thread address space that can hold stack frames, certain local objects, and spilled values
 
-Shared memory
-
+Shared memory:
 Storage shared among threads in a CTA, such as your staged matrix tiles sA and sB
 
-CUDA local memory is logically private to a thread, but physically resides in device memory and is accessed through the GPU cache hierarchy.
-A GPU thread does not need to place every C++ local variable on the stack. The compiler tries to use registers when practical.
+CUDA local memory is logically private to a thread, but physically resides in device memory and is accessed through 
+the GPU cache hierarchy.
+A GPU thread does not need to place every C++ local variable on the stack. The compiler tries to use registers 
+when practical.
 3. Example: When a CUDA function might need a stack frame
 Consider:
 __device__ __noinline__
 float process(int index) {
     float values[128];
-
     for (int i = 0; i < 128; ++i) {
         values[i] = i * 0.5f;
     }
-
     return values[index];
 }
-
 __global__ void kernel(float* output) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
     output[tid] = process(tid % 128);
 }
-
 
 Notice two things:
 1. process() is a separate device function, with inlining explicitly disabled.
 2. values[index] uses a runtime index.
 The compiler may need addressable per-thread storage for values, rather than keeping everything in registers.
-
 A possible implementation requires stack storage for the function's local data.
-
 Conceptually, for one CUDA thread:
 Thread 0
 ┌─────────────────────────┐
@@ -576,9 +564,7 @@ Thread 1
 │ Function call state     │
 └─────────────────────────┘
 
-
 Each thread's stack storage is logically independent.
-
 The exact stack allocation depends on compiler optimization and generated code. This example illustrates why stack storage might be needed; it does not guarantee a particular ptxas stack-frame size.
 4. Now return to your wgmma_sm90.cu
 Your compiler reports:
