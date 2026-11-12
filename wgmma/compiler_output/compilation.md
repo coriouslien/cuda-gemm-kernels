@@ -1,18 +1,18 @@
 <pre>
 The following is the compiling output of wgmma_sm90.cu in my desktop RTX 5080 Blackwell SM120, not Lambda.
 make --build build
-/usr/bin/cmake -S/home/chialan/cuda-learning/cute_hopper/lambda_sm90 -B/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build --check-build-system CMakeFiles/Makefile.cmake 0
-/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles8./progress.marks
+/usr/bin/cmake -S/home/xxx/cuda-learning/cute_hopper/lambda_sm90 -B/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build --check-build-system CMakeFiles/Makefile.cmake 0
+/usr/bin/cmake -E cmake_progress_start /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles8./progress.marks
 /usr/bin/gmake  -f CMakeFiles/Makefile2 all
-gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[1]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/depend
-gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
-cd /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build && /usr/bin/cmake -E cmake_depends "Unix Makefiles" /home/chialan/cuda-learning/cute_hopper/lambda_sm90 /home/chialan/cuda-learning/cute_hopper/lambda_sm90 /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles/wgmma_sm90.dir/DependInfo.cmake "--color="
-gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
+cd /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build && /usr/bin/cmake -E cmake_depends "Unix Makefiles" /home/xxx/cuda-learning/cute_hopper/lambda_sm90 /home/xxx/cuda-learning/cute_hopper/lambda_sm90 /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles/wgmma_sm90.dir/DependInfo.cmake "--color="
+gmake[2]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/build
-gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
-/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" --expt-relaxed-constexpr --generate-line-info -Xptxas=-v -Xptxas=-warn-spills --resource-usage -UCUTLASS_ENABLE_SYNCLOG -MD -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d -x cu -c /home/chialan/cuda-learning/cute_hopper/lambda_sm90/wgmma_sm90.cu -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" --expt-relaxed-constexpr --generate-line-info -Xptxas=-v -Xptxas=-warn-spills --resource-usage -UCUTLASS_ENABLE_SYNCLOG -MD -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d -x cu -c /home/xxx/cuda-learning/cute_hopper/lambda_sm90/wgmma_sm90.cu -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
 ptxas info    : 47 bytes gmem
 ptxas info    : Compiling entry function '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' for 'sm_90a'
 ptxas info    : Function properties for _ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv
@@ -32,10 +32,10 @@ ptxas info    : Compile time = 51.020 ms
 [100%] Linking CUDA executable wgmma_sm90
 /usr/bin/cmake -E cmake_link_script CMakeFiles/wgmma_sm90.dir/link.txt --verbose=1
 /usr/bin/g++ @CMakeFiles/wgmma_sm90.dir/objects1.rsp -o wgmma_sm90 @CMakeFiles/wgmma_sm90.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"
-gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 [100%] Built target wgmma_sm90
-gmake[1]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
-/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles 0
+gmake[1]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
+/usr/bin/cmake -E cmake_progress_start /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles 0
 
 
 Detailed analysis of the wgmma_sm90.cu compilation output
@@ -565,15 +565,16 @@ Thread 1
 └─────────────────────────┘
 
 Each thread's stack storage is logically independent.
-The exact stack allocation depends on compiler optimization and generated code. This example illustrates why stack storage might be needed; it does not guarantee a particular ptxas stack-frame size.
-4. Now return to your wgmma_sm90.cu
-Your compiler reports:
+The exact stack allocation depends on compiler optimization and generated code. This example illustrates why stack storage
+might be needed; it does not guarantee a particular ptxas stack-frame size.
+        
+4. Now return to the wgmma_sm90.cu
+the compiler reports:
 Function properties for gemm_device:
     0 bytes stack frame
     0 bytes spill stores
     0 bytes spill loads
     Used 114 registers, used 1 barriers
-
 
 Let's interpret each line separately.
 Compiler output	Meaning
@@ -584,191 +585,148 @@ Used 114 registers	Each thread requires 114 registers
 Used 1 barriers	One hardware barrier resource reported for the kernel
 
 The key point is that these describe different resources.
-
-Your WGMMA kernel has many C++ variables and CuTe tensor objects, but many are compile-time abstractions or are optimized into registers and address calculations.
+The WGMMA kernel has many C++ variables and CuTe tensor objects, but many are compile-time abstractions or are optimized 
+into registers and address calculations.
 
 For example:
 Tensor tCrC = thr_mma.partition_C(gC);
-
-
 This defines a CuTe tensor view. It does not automatically mean the compiler creates a stack allocation for the entire tensor.
-
 Likewise, the accumulator fragment may occupy registers without needing stack storage.
-
-And your shared-memory tensors sA and sB reside in shared memory. They are not per-thread stack frames.
+And the shared-memory tensors sA and sB reside in shared memory. They are not per-thread stack frames.
+        
 5. Does a zero-byte stack frame mean the kernel never accesses local memory?
 Not necessarily.
-
 This is an important distinction:
 - Stack-frame allocation is one reason a kernel may use local memory.
 - Register spilling is another.
 - Certain thread-local arrays or compiler-generated objects may also use local memory.
 Therefore, 0 bytes stack frame by itself does not prove that all local-memory traffic is absent.
-
-However, combining a zero-byte stack frame with zero spill loads and stores is encouraging: the compiler is not reporting those common sources of additional per-thread memory traffic.
+However, combining a zero-byte stack frame with zero spill loads and stores is encouraging: the compiler is not 
+reporting those common sources of additional per-thread memory traffic.
+        
 6. Why does this matter for GPU performance?
 If a kernel needs extra local-memory accesses, those accesses can introduce memory traffic and latency.
-
 By contrast, registers provide very fast operand access.
+The WGMMA kernel uses 114 registers per thread without reported spills. That is generally preferable to a version 
+that spills frequently.
 
-Your WGMMA kernel uses 114 registers per thread without reported spills. That is generally preferable to a version that spills frequently.
-
-But remember that high register usage can reduce occupancy. In your particular Nsight Compute report, shared memory—not registers—was the resource limiting occupancy to 12.5%.
-The distinction I want you to remember
+High register usage can reduce occupancy. In the particular Nsight Compute report, shared memory—not registers—was 
+the resource limiting occupancy to 12.5%.
+The distinction we should know and remember:
 A CUDA thread can have local variables without having a stack frame.
-
 A C++ local variable is defined by its scope. That does not determine its physical storage location.
-
 The compiler decides whether a value is held in a register, placed in memory, or optimized away.
-
 And a stack frame is just one way the compiler can organize per-thread memory needed for a function invocation.
-
-That is exactly what 0 bytes stack frame tells you: for the compiled gemm_device kernel, ptxas did not require such a frame.
+That is exactly what 0 bytes stack frame tells us: for the compiled gemm_device kernel, ptxas did not require such a frame.
     
 **************************************************
 8.2 Spill stores: 0 bytes
 The compiler did not generate register spill stores for these specializations.
 8.3 Spill loads: 0 bytes
 The compiler did not generate register spill loads.
-
 Taken together:
-
-Your GEMM successfully keeps its compiler-managed register values in registers without register spilling.
-
+The GEMM successfully keeps its compiler-managed register values in registers without register spilling.
 That is useful because spills could add substantial local-memory traffic.
+        
 8.4 Connect this to the Long Scoreboard stalls
-Earlier, your Nsight Compute report showed approximately:
+Earlier, the Nsight Compute report showed approximately:
 Long Scoreboard: 8.3 cycles per issued instruction
-
-
 One possible explanation for memory-dependency stalls in some kernels is register spilling.
-
-But your compiler reports zero spills.
-
-Therefore, we can rule out compiler-generated register spilling as the direct explanation for your kernel's high Long Scoreboard stall count.
-
+But the compiler reports zero spills.
+Therefore, we can rule out compiler-generated register spilling as the direct explanation for the kernel's 
+high Long Scoreboard stall count.
 We should instead investigate the kernel's actual memory instructions and their consumers.
-
-This does not prove that every long-scoreboard stall is caused by cp.async; the dependency attribution still needs source-level analysis.
+This does not prove that every long-scoreboard stall is caused by cp.async; the dependency attribution still needs 
+source-level analysis.
 
 9. What does used 1 barriers mean?
-Your compiler reports:
+The compiler reports:
 Used 1 barriers
-
-
 This is a per-kernel resource-usage statistic.
-
 It means the compiled kernel reserves one hardware barrier resource of the type counted by ptxas.
-
 It does not mean:
 - The kernel performs only one synchronization operation.
 - The kernel has only one pipeline stage.
 - The kernel executes __syncthreads() exactly once.
 - WGMMA executes only once.
 A kernel can reuse a barrier many times during execution.
-
 For example:
 for (int k = 0; k < K; ++k) {
     // Work performed by several warps
     __syncthreads();
 }
-
-
 The barrier instruction can execute repeatedly even if only one barrier resource is allocated.
-
-Likewise, Hopper's WGMMA synchronization mechanisms should not be treated as identical to the resource count displayed in this particular assembler statistic.
-
-Your source uses asynchronous copies and WGMMA coordination. The compiler's resource number does not describe the total dynamic synchronization activity.
+Likewise, Hopper's WGMMA synchronization mechanisms should not be treated as identical to the resource count displayed 
+in this particular assembler statistic.
+The source uses asynchronous copies and WGMMA coordination. The compiler's resource number does not describe the total
+dynamic synchronization activity.
 
 10. Why is shared-memory usage missing from the compiler output?
-Your assembler output reports registers and barriers, but does not print the 96 KiB of shared memory we saw in Nsight Compute.
-
-That is expected because your source allocates its A/B pipeline storage dynamically.
-
+The assembler output reports registers and barriers, but does not print the 96 KiB of shared memory we saw in Nsight Compute.
+That is expected because the source allocates its A/B pipeline storage dynamically.
 The kernel uses a declaration like:
 extern __shared__ char shared_memory[];
-
-
 Then the host-side launch supplies a shared-memory size:
 int smemBytes =
     sizeof(SharedStorage<
         TA, TB,
         decltype(sA),
         decltype(sB)>);
-
-
-The compiler knows the shared-memory layout types, but the allocation is requested as dynamic shared memory at launch time.
-
-The assembler's static shared-memory resource report is therefore not a complete representation of the actual shared-memory allocation used by the launch.
-
-Your Nsight Compute screenshot gives that value:
+The compiler knows the shared-memory layout types, but the allocation is requested as dynamic shared memory 
+at launch time.
+The assembler's static shared-memory resource report is therefore not a complete representation of the actual 
+shared-memory allocation used by the launch.
+The Nsight Compute screenshot gives that value:
 Dynamic Shared Memory Per Block: 98.30 KB
-
-
 We already derived it:
-\[
-3\times(128\times64+128\times64)\times2
-\]
-
-\[
-=\boxed{98,304\text{ bytes}}
-\]
-
+3 x (128 x 64+128 x 64) x 2
+=98,304 bytes
 This is one of the reasons you should use both compiler resource reports and runtime profiler information.
 
 11. The most important optimization insight from the compiler output
-Let's combine the compilation results with your H100 measurements.
-Property	Source of information	Value
-Registers/thread	ptxas	114
-Register spills	ptxas	0
-Threads/CTA	Nsight Compute	128
-Dynamic shared memory/CTA	Nsight Compute	96 KiB
-Theoretical occupancy	Nsight Compute	12.50%
-Achieved occupancy	Nsight Compute	12.42%
-Eligible warps/scheduler	Nsight Compute	0.15
-Long-scoreboard stalls	Nsight Compute	~8.3 cycles/instruction
+Let's combine the compilation results with the H100 measurements.
+Property                      Source of information    Value
+Registers/thread              ptxas                    114
+Register spills               ptxas                    0
+Threads/CTA                   Nsight Compute           28
+Dynamic shared memory/CTA    Nsight Compute            96 KiB
+Theoretical occupancy        Nsight Compute            12.50%
+Achieved occupancy           Nsight Compute            12.42%
+Eligible warps/scheduler     Nsight Compute            0.15
+Long-scoreboard stalls       Nsight Compute           ~8.3 cycles/instruction
 
 Here is the combined reasoning:
-
 First, the compiler produces an optimized Hopper kernel using 114 registers per thread with no register spills.
-
 Second, the launch uses three shared-memory stages, consuming approximately 96 KiB per CTA.
-
 Third, shared-memory resource limits restrict the H100 to two resident CTAs per SM.
-
 Fourth, those two CTAs provide eight resident warps, corresponding to 12.5% theoretical occupancy.
-
-Fifth, the schedulers frequently cannot issue new instructions, and memory dependencies account for a large portion of the observed stalls.
-
+Fifth, the schedulers frequently cannot issue new instructions, and memory dependencies account for a large 
+portion of the observed stalls.
 This creates an interesting research question:
-Would reducing the shared-memory pipeline from three stages to two increase resident CTAs sufficiently to improve latency hiding, or would losing a stage reduce copy/computation overlap enough to make performance worse?
-
+Would reducing the shared-memory pipeline from three stages to two increase resident CTAs sufficiently to 
+improve latency hiding, or would losing a stage reduce copy/computation overlap enough to make performance worse?
 We can estimate the resource tradeoff before changing the code.
-
 Assuming the same tile dimensions and roughly the same other resources:
-Stages	A/B shared memory	Potential resident CTAs/SM	Theoretical occupancy
-2	64 KiB	Up to 3	Up to 18.75%
-3	96 KiB	2	12.50%
-4	128 KiB	1	6.25%
+Stages    A/B shared memory   Potential resident CTAs/SM     Theoretical occupancy
+2         64 KiB              Up to 3                        Up to 18.75%
+3         96 KiB              2                              12.50%
+4         128 KiB             1                              6.25%
 
 These are resource-model estimates, not measured performance results.
 
-The actual compiler register count and synchronization implementation can change when you modify the number of stages.
-
-Also, higher occupancy does not guarantee higher GEMM throughput. More stages may enable better prefetching and memory/computation overlap, while fewer stages may increase residency.
-
+The actual compiler register count and synchronization implementation can change when we modify the number of stages.
+Also, higher occupancy does not guarantee higher GEMM throughput. More stages may enable better prefetching and
+memory/computation overlap, while fewer stages may increase residency.
 This is a good candidate for a controlled experiment later.
 
 12. Understand the compilation-time numbers
-Your output contains:
+The output contains:
 Compile time = 7.958 ms    // CUB EmptyKernel
 Compile time = 57.885 ms   // TN GEMM
 Compile time = 51.020 ms   // NT GEMM
-
-
+        
 These are ptxas compilation times for the individual functions.
-
-They are not the total time required to build your entire CUDA program.
+They are not the total time required to build the entire CUDA program.
 
 The whole build includes:
 - CMake dependency checks.
@@ -778,17 +736,14 @@ The whole build includes:
 - Device-code generation.
 - PTX assembly.
 - Host linking.
-CUTLASS and CuTe use substantial template metaprogramming, so the total build time can be much greater than the short assembler times shown here.
-
+CUTLASS and CuTe use substantial template metaprogramming, so the total build time can be much greater than 
+the short assembler times shown here.
 For reference, 57.885 ms is approximately 0.058 seconds.
-
 It is a compilation measurement, not a kernel execution measurement.
 
 13. Understand the final linking step
-Your log finishes with:
+The log finishes with:
 [100%] Linking CUDA executable wgmma_sm90
-
-
 Then:
 /usr/bin/g++ \
     @CMakeFiles/wgmma_sm90.dir/objects1.rsp \
@@ -797,21 +752,15 @@ Then:
     -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" \
     -L"/usr/local/cuda/targets/x86_64-linux/lib"
 
-
 The linker combines the object files and required libraries.
-
-The response files supply lists of objects and link options without putting everything directly on one enormous command line.
-
+The response files supply lists of objects and link options without putting everything directly on one enormous 
+command line.
 The CUDA library paths tell the linker where to find the required CUDA-related libraries.
-
 The final result is:
 [100%] Built target wgmma_sm90
 
-
-Your executable is located at:
-/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/wgmma_sm90
-
-
+The executable is located at:
+/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/wgmma_sm90
 This executable includes the host-side application along with device-code images for the requested GPU architecture.
 
 That is the file you successfully transferred to Lambda and executed on the H100.
@@ -897,18 +846,18 @@ Convert to PDF
 
 The following is the compiling output of wgmma_sm90.cu in my desktop, not Lambda, please analyze it in detail, and explain it.
 make --build build
-/usr/bin/cmake -S/home/chialan/cuda-learning/cute_hopper/lambda_sm90 -B/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build --check-build-system CMakeFiles/Makefile.cmake 0
-/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles/progress.marks
+/usr/bin/cmake -S/home/xxx/cuda-learning/cute_hopper/lambda_sm90 -B/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build --check-build-system CMakeFiles/Makefile.cmake 0
+/usr/bin/cmake -E cmake_progress_start /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build//CMakeFiles/progress.marks
 /usr/bin/gmake  -f CMakeFiles/Makefile2 all
-gmake[1]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[1]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/depend
-gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
-cd /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build && /usr/bin/cmake -E cmake_depends "Unix Makefiles" /home/chialan/cuda-learning/cute_hopper/lambda_sm90 /home/chialan/cuda-learning/cute_hopper/lambda_sm90 /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles/wgmma_sm90.dir/DependInfo.cmake "--color="
-gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
+cd /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build && /usr/bin/cmake -E cmake_depends "Unix Makefiles" /home/xxx/cuda-learning/cute_hopper/lambda_sm90 /home/xxx/cuda-learning/cute_hopper/lambda_sm90 /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles/wgmma_sm90.dir/DependInfo.cmake "--color="
+gmake[2]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 /usr/bin/gmake  -f CMakeFiles/wgmma_sm90.dir/build.make CMakeFiles/wgmma_sm90.dir/build
-gmake[2]: Entering directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Entering directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 [ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
-/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" --expt-relaxed-constexpr --generate-line-info -Xptxas=-v -Xptxas=-warn-spills --resource-usage -UCUTLASS_ENABLE_SYNCLOG -MD -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d -x cu -c /home/chialan/cuda-learning/cute_hopper/lambda_sm90/wgmma_sm90.cu -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" --expt-relaxed-constexpr --generate-line-info -Xptxas=-v -Xptxas=-warn-spills --resource-usage -UCUTLASS_ENABLE_SYNCLOG -MD -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d -x cu -c /home/xxx/cuda-learning/cute_hopper/lambda_sm90/wgmma_sm90.cu -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
 ptxas info    : 47 bytes gmem
 ptxas info    : Compiling entry function '_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv' for 'sm_90a'
 ptxas info    : Function properties for _ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv
@@ -928,10 +877,10 @@ ptxas info    : Compile time = 51.020 ms
 [100%] Linking CUDA executable wgmma_sm90
 /usr/bin/cmake -E cmake_link_script CMakeFiles/wgmma_sm90.dir/link.txt --verbose=1
 /usr/bin/g++ @CMakeFiles/wgmma_sm90.dir/objects1.rsp -o wgmma_sm90 @CMakeFiles/wgmma_sm90.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"
-gmake[2]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
+gmake[2]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
 [100%] Built target wgmma_sm90
-gmake[1]: Leaving directory '/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build'
-/usr/bin/cmake -E cmake_progress_start /home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles 0
+gmake[1]: Leaving directory '/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build'
+/usr/bin/cmake -E cmake_progress_start /home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/CMakeFiles 0
 
 
 
@@ -1394,7 +1343,7 @@ The final message:
 means the build succeeded.
 
 The result is located at:
-/home/chialan/cuda-learning/cute_hopper/lambda_sm90/build/wgmma_sm90
+/home/xxx/cuda-learning/cute_hopper/lambda_sm90/build/wgmma_sm90
 
 
 This is the file you transferred to Lambda and successfully ran on the H100.
