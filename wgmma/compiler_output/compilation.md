@@ -454,8 +454,192 @@ Let's interpret these carefully.
 8.1 Stack frame: 0 bytes
 The compiler reports no per-thread stack-frame allocation for these kernel specializations.
 This means it does not require a stack frame for the compiled kernel in the way reported by ptxas.
-
 It does not prove that every possible memory access uses registers or shared memory.
+**************************************************
+A stack frame for the compiled kernel:
+In your compilation output:
+ptxas info:
+    0 bytes stack frame
+    0 bytes spill stores
+    0 bytes spill loads
+
+
+0 bytes stack frame means the compiler did not need to allocate a per-thread stack frame for that GPU kernel.
+
+To understand this, we need to distinguish registers, local memory, and the stack in CUDA.
+1. What is a stack frame?
+In C++, when a function is called, the compiler may need somewhere to store information associated with that particular function invocation.
+
+Examples include:
+- Local variables that cannot be kept in registers.
+- Certain temporary objects and arrays.
+- Saved information needed when calling another function.
+- Information needed to return to the calling function.
+The memory region reserved for one function invocation is called a stack frame.
+
+For example, imagine a CPU function:
+void calculate(int x) {
+    int a = x + 10;
+    int b = a * 2;
+}
+
+
+Conceptually, a compiler could use a stack frame to hold a and b.
+CPU memory stack
+
+       Higher addresses
+      ┌─────────────────┐
+      │ Calling function│
+      ├─────────────────┤
+      │ Return data     │
+      ├─────────────────┤
+      │ Local variable a│
+      ├─────────────────┤
+      │ Local variable b│
+      └─────────────────┘
+       Lower addresses
+
+
+However, an optimizing compiler would likely keep a and b in registers instead, and might eliminate some calculations entirely.
+
+A function does not automatically require a nonzero stack frame just because it contains local variables.
+2. How does this work on a CUDA GPU?
+CUDA is similar conceptually, but GPU stack storage is different from CPU stack storage.
+
+Each CUDA thread has its own execution state and can have its own stack.
+
+When a GPU thread needs stack storage, that storage is part of its per-thread local-memory address space, rather than shared memory.
+Simplified CUDA thread storage
+Registers
+
+Fast storage for values such as indices, pointers, and accumulators
+
+Local memory / thread stack
+
+Per-thread address space that can hold stack frames, certain local objects, and spilled values
+
+Shared memory
+
+Storage shared among threads in a CTA, such as your staged matrix tiles sA and sB
+
+CUDA local memory is logically private to a thread, but physically resides in device memory and is accessed through the GPU cache hierarchy.
+A GPU thread does not need to place every C++ local variable on the stack. The compiler tries to use registers when practical.
+3. Example: When a CUDA function might need a stack frame
+Consider:
+__device__ __noinline__
+float process(int index) {
+    float values[128];
+
+    for (int i = 0; i < 128; ++i) {
+        values[i] = i * 0.5f;
+    }
+
+    return values[index];
+}
+
+__global__ void kernel(float* output) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    output[tid] = process(tid % 128);
+}
+
+
+Notice two things:
+1. process() is a separate device function, with inlining explicitly disabled.
+2. values[index] uses a runtime index.
+The compiler may need addressable per-thread storage for values, rather than keeping everything in registers.
+
+A possible implementation requires stack storage for the function's local data.
+
+Conceptually, for one CUDA thread:
+Thread 0
+┌─────────────────────────┐
+│ kernel() invocation     │
+│                         │
+│ Calls process()         │
+├─────────────────────────┤
+│ process() stack frame   │
+│                         │
+│ Local array storage     │
+│ Function call state     │
+└─────────────────────────┘
+
+Thread 1
+┌─────────────────────────┐
+│ kernel() invocation     │
+│                         │
+│ Calls process()         │
+├─────────────────────────┤
+│ process() stack frame   │
+│                         │
+│ Local array storage     │
+│ Function call state     │
+└─────────────────────────┘
+
+
+Each thread's stack storage is logically independent.
+
+The exact stack allocation depends on compiler optimization and generated code. This example illustrates why stack storage might be needed; it does not guarantee a particular ptxas stack-frame size.
+4. Now return to your wgmma_sm90.cu
+Your compiler reports:
+Function properties for gemm_device:
+    0 bytes stack frame
+    0 bytes spill stores
+    0 bytes spill loads
+    Used 114 registers, used 1 barriers
+
+
+Let's interpret each line separately.
+Compiler output	Meaning
+0 bytes stack frame	No per-thread stack frame required by this compiled kernel
+0 bytes spill stores	No compiler-generated register-spill stores
+0 bytes spill loads	No compiler-generated register-spill loads
+Used 114 registers	Each thread requires 114 registers
+Used 1 barriers	One hardware barrier resource reported for the kernel
+
+The key point is that these describe different resources.
+
+Your WGMMA kernel has many C++ variables and CuTe tensor objects, but many are compile-time abstractions or are optimized into registers and address calculations.
+
+For example:
+Tensor tCrC = thr_mma.partition_C(gC);
+
+
+This defines a CuTe tensor view. It does not automatically mean the compiler creates a stack allocation for the entire tensor.
+
+Likewise, the accumulator fragment may occupy registers without needing stack storage.
+
+And your shared-memory tensors sA and sB reside in shared memory. They are not per-thread stack frames.
+5. Does a zero-byte stack frame mean the kernel never accesses local memory?
+Not necessarily.
+
+This is an important distinction:
+- Stack-frame allocation is one reason a kernel may use local memory.
+- Register spilling is another.
+- Certain thread-local arrays or compiler-generated objects may also use local memory.
+Therefore, 0 bytes stack frame by itself does not prove that all local-memory traffic is absent.
+
+However, combining a zero-byte stack frame with zero spill loads and stores is encouraging: the compiler is not reporting those common sources of additional per-thread memory traffic.
+6. Why does this matter for GPU performance?
+If a kernel needs extra local-memory accesses, those accesses can introduce memory traffic and latency.
+
+By contrast, registers provide very fast operand access.
+
+Your WGMMA kernel uses 114 registers per thread without reported spills. That is generally preferable to a version that spills frequently.
+
+But remember that high register usage can reduce occupancy. In your particular Nsight Compute report, shared memory—not registers—was the resource limiting occupancy to 12.5%.
+The distinction I want you to remember
+A CUDA thread can have local variables without having a stack frame.
+
+A C++ local variable is defined by its scope. That does not determine its physical storage location.
+
+The compiler decides whether a value is held in a register, placed in memory, or optimized away.
+
+And a stack frame is just one way the compiler can organize per-thread memory needed for a function invocation.
+
+That is exactly what 0 bytes stack frame tells you: for the compiled gemm_device kernel, ptxas did not require such a frame.
+    
+**************************************************
 8.2 Spill stores: 0 bytes
 The compiler did not generate register spill stores for these specializations.
 8.3 Spill loads: 0 bytes
