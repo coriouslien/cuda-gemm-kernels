@@ -98,20 +98,20 @@ For performance optimization, use the unprofiled benchmark to compare actual run
 understand hardware behavior. NVIDIA documents that collecting counters may require multiple kernel 
 replay passes.
 
-GPU Speed of Light Throughput
+1. GPU Speed of Light Throughput 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/98974c2d-5772-4ded-965e-0236c73e5a56" />
-GPU Speed of Light Throughput
+2. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/8c770961-e5d1-48e3-acbe-b89fca78a7dd" />
-GPU Speed of Light Throughput
+3. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f0f68aa2-a4cd-49f2-aad9-131f2750cc68" />
-GPU Speed of Light Throughput
+4. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f3a321dc-7f3d-4388-82ae-5eba4816c98c" />
-GPU Speed of Light Throughput
+5. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/4f7ef757-21d5-40ab-82ae-1f90e9a0c949" />
-GPU Speed of Light Throughput
+6. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/001ab819-58ad-4e76-b451-a5cbf1d03ef8" />
 
-GPU Speed of Light Throughput
+7. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2b9ede8b-2aba-4769-9163-348fd6f80cf0" />
 
 Metric	                             Value
@@ -210,8 +210,116 @@ The H100 is using 72.77% of its maximum HBM bandwidth.
 The actual DRAM throughput is only 16.41%.
 This is the first important distinction:
 The memory system is significantly utilized, but external HBM bandwidth is not saturated.
+
  
 3.3 Compare the memory levels
+3.3 Compare the memory levels
+L1/TEX     82.82%
+L2 Cache   48.23%
+DRAM       16.41%
+Reported throughput relative to each unit's respective peak. These are not percentages of one common bandwidth.
+Notice the ordering:
+82.82% > 48.23% > 16.41%
+This suggests that internal memory activity is more significant than external memory bandwidth pressure.
+It does not yet prove that L1 is the final bottleneck. For that, we need the Memory Workload Analysis and 
+scheduler-stall information.
+3.4 Interpret NVIDIA's High Memory Throughput warning
+Nsight Compute states that memory is more heavily utilized than compute and recommends examining memory 
+access patterns.
+This is a diagnostic clue.
+The investigation should be:
+1. Is DRAM bandwidth saturated? No.
+2. Is the L1/TEX subsystem heavily utilized? Yes.
+3. Are there inefficient memory accesses? The later screenshots suggest yes, especially global stores.
+4. Are warps waiting for memory operations? Yes, strongly.
+The fourth observation is especially important because it connects memory behavior to lost compute performance.
+
+Step 4. Understand the Tensor Core Roofline
+Screenshots 2–4 — Tensor Core Operations Roofline and operation tables
+We selected the correct chart: Roofline Tensor Core.
+4.1 The mathematics behind the roofline
+The fundamental roofline equation is:
+
+P less or equal min(P_peak,B_peak x I)
+Where:
+Symbol              	Meaning
+P	                   Achieved computational throughput
+P_peak	              Theoretical peak compute throughput
+B_peak	              Peak memory bandwidth
+I	                   Arithmetic intensity, in operations per byte
+ 
+The chart's vertical axis is computational performance, while the horizontal axis is arithmetic intensity.
+The diagonal lines represent memory-bandwidth limitations. The horizontal lines represent compute-throughput ceilings.
+The Tensor Core chart includes different memory-hierarchy levels, so multiple points or roofs can describe the 
+same kernel using different measured traffic.
+
+4.2 Why are there three colored points?
+The screenshot shows three measured points at approximately the same vertical position but different arithmetic 
+intensities.
+The hierarchical roofline analyzes computation relative to different memory traffic levels, principally L1, L2, and DRAM.
+The calculation is conceptually:
+I_level= Tensor Core operations / Bytes transferred at that memory level
+For example:
+I_L1 = Operations / L1 traffic 
+I_DRAM = Operations / DRAM traffic
+ 
+The kernel's compute throughput is the same in these representations, but the denominator changes.
+That is why the points share essentially the same height while appearing at different horizontal locations.
+Important: These are different views of one kernel, not three separate kernels.
+
+4.3 Why is the measured point below the roofline?
+The measured Tensor Core rate is approximately:
+329.43 TFLOP/s
+The important question is whether the distance to a particular ceiling represents unused compute throughput, 
+memory bandwidth limitation, or instruction and dependency latency.
+
+The other counters show:
+- Moderate Tensor Core pipeline utilization.
+- Low issue-slot utilization.
+- Very few eligible warps.
+- Large long-scoreboard stalls.
+
+Together, these suggest that Tensor Cores are not being supplied with work continuously enough to approach their 
+dense-operation ceiling.
+This is more informative than simply saying the roofline point is below the maximum.
+ 
+4.4 Understand the Op:hgmma Src:fp16 Sparsity:off row
+The third screenshot contains: (GPU Speed of Light Throughput)
+Counter                                  Value
+Number of operations                     214,748,364,800
+Operations per cycle                     228,673.44
+Operations per second, in gigaops/s      329,433.33
+Peak utilization                         42.29%
+Peak operations per cycle                540,672
+
+The peak utilization mathematically: 
+228,673.44 / 540,672 x 100 = 42.29%
+This is excellent confirmation: The Nsight Compute throughput is based on Hopper FP16 WGMMA operations.
+Notice the exact operation count:
+214,748,364,800=2MNK
+The profiler's Tensor Core operation count agrees with the expected GEMM workload.
+That establishes consistency between the algorithm and what the hardware counter reports.
+ 
+4.5 Why does the general Src:fp16 row show 21.15%?
+Your fourth screenshot reports:
+Metric                       Value
+FP16 operations              214,748,364,800
+Achieved operations/cycle    228,673.44
+Peak operations/cycle        1,081,344
+Peak percentage              21.15%
+
+Compare its peak with the non-sparse HGMMA peak:
+1,081,344=2 x 540,672
+The general FP16 maximum used for this row is twice the dense HGMMA FP16 peak, reflecting the higher supported 
+sparse Tensor Core operation rate.
+Your kernel uses:
+
+
+
+
+ 
+ 
+ 
 The a suffix identifies architecture-specific features that are not guaranteed to work on later GPU architectures.
 The WGMMA instruction family is one of the reasons for targeting sm_90a.
 We should not think of it as just a newer spelling of sm_90.
