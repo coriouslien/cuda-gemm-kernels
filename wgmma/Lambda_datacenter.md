@@ -478,7 +478,7 @@ Estimated cost
 
 For the exact duration and cost, check the Lambda dashboard's billing or usage history after termination.
 
-<img width="1000" height="550" alt="image" src="https://github.com/user-attachments/assets/80b52127-0a76-4a56-bce4-16182e6e1bc6" />
+<img width="800" height="350" alt="image" src="https://github.com/user-attachments/assets/80b52127-0a76-4a56-bce4-16182e6e1bc6" />
 
 
 </pre>
