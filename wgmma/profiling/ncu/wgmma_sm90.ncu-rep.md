@@ -226,6 +226,9 @@ The build retains the architecture-specific PTX in addition to generating the sm
 This can be useful for inspecting the intermediate representation and for compatible driver JIT scenarios.
 However, the compute_90a PTX is not a general forward-compatible fallback for your Blackwell RTX 5080. 
 Architecture-specific PTX features are restricted to compatible targets.
+
+ 3.5 --generate-line-info: Essential for your Nsight studies
+The compiler command contains:
 --generate-line-info
 This generates device-code source-line information.
 
@@ -248,15 +251,14 @@ browsing on a different computer, the source files may still need to be accessib
 
 NVIDIA recommends line information rather than disabling device optimization with -G for performance profiling. 
 NVIDIA CUDA Compiler Driver 13.5 documentation
-
+ 
 3.6 -Xptxas=-v and --resource-usage
 These two options explain why your build prints detailed resource information.
 -Xptxas=-v
 --resource-usage
-
 For the H100, the driver can use the native sm_90a machine code embedded in your executable.
-3.5 --generate-line-info: Essential for your Nsight studies
-Your compiler command contains:
+ 
+
  
 
 
