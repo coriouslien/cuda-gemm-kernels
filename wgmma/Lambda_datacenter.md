@@ -14,47 +14,48 @@ id_rsa.pub
 If developer already have an SSH key, developer can reuse it. However, It recommendind creating a dedicated 
 SSH key for Lambda to keep the cloud experiments organized.
 
-Step 2. Generate your Lambda SSH key
-Run the following command on your Linux desktop:
+Step 2. Generate the Lambda SSH key
+Run the following command on the Linux desktop:
 ssh-keygen -t ed25519 -f ~/.ssh/lambda_h100 -C "lambda-h100"
-You will see:
+We will see:
 Generating public/private ed25519 key pair.
 Enter passphrase (empty for no passphrase):
-Recommending entering a passphrase to protect your private key.
-Next, you will see:
+Recommending entering a passphrase to protect the private key.
+Next, we will see:
 Enter same passphrase again:
 Enter the same passphrase again and press Enter.
-After that, you should see output similar to:
-Your identification has been saved in
+After that, we should see output similar to:
+The identification has been saved in
 /home/xxx/.ssh/lambda_h100
 
-Your public key has been saved in
+The public key has been saved in
 /home/xxx/.ssh/lambda_h100.pub
 
 The key fingerprint is:
 SHA256:...
 
-Step 3. Verify your new SSH keys
+Step 3. Verify the new SSH keys
 Run:
 ls -la ~/.ssh
-You should now see three files:
+We should now see three files:
 authorized_keys
 lambda_h100
 lambda_h100.pub
 Their purposes are:
 lambda_h100 — Private key
-Keep this file on your desktop. Never upload it to Lambda or share it with anyone.
+Keep this file on the desktop. Never upload it to Lambda or share it with anyone.
 
 lambda_h100.pub — Public key
-This is the key you will copy into your Lambda Cloud account.
-Step 4. Display your public key
+This is the key we will copy into the Lambda Cloud account.
+Step 4. Display The public key
 Run:
 cat ~/.ssh/lambda_h100.pub
-You will see something like:
+We will see something like:
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... lambda-h100
+    
 Copy the entire line.
-Then go to the Lambda Cloud console, navigate to SSH Keys, and add your public key.
-Once you have generated your SSH keys, run ls -la ~/.ssh again to verify the two new files. You do not need 
+Then go to the Lambda Cloud console, navigate to SSH Keys, and add The public key.
+Once we have generated the SSH keys, run ls -la ~/.ssh again to verify the two new files. We do not need 
 to rent the H100 yet.
 Output confirms that everything looks correct:
 File              Permissions          Status
@@ -62,62 +63,62 @@ lambda_h100       -rw------- (600)     Private key — correct
 lambda_h100.pub   -rw-r--r-- (644)     Public key — correct
 authorized_keys   -rw------- (600)     Leave it unchanged
 
-Step 1. Display your public key
-On your Linux desktop, execute:
+Step 1. Display the public key
+On the Linux desktop, execute:
 cat ~/.ssh/lambda_h100.pub
 
-You should see a single line that looks similar to this:
+We should see a single line that looks similar to this:
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... lambda-h100
 
 Select and copy the entire line, including ssh-ed25519 at the beginning and lambda-h100 at the end.
-In your Ubuntu terminal, you can use Ctrl+Shift+C to copy the selected text.
-Important: Copy only the contents of lambda_h100.pub. Never upload or share the contents of your private key file, 
+In the Ubuntu terminal, we can use Ctrl+Shift+C to copy the selected text.
+Important: Copy only the contents of lambda_h100.pub. Never upload or share the contents of the private key file, 
 lambda_h100.
-Step 2. Add your public key to Lambda
+Step 2. Add the public key to Lambda
 Open the Lambda Cloud console and sign in.
 1. Navigate to SSH Keys.
 2. Click Add SSH Key.
 3. Choose the option to add an existing public key.
 4. Enter the following information:
 Example — Add SSH Key
-Key Namelambda-h100
+Key Name lambda-h100
 
 Public Keyssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... lambda-h100
-Paste your actual complete public key here, not this example.
+Paste the actual complete public key here, not this example.
 
 5. Save the SSH key.
-Lambda officially supports adding an existing public key and using it to access your GPU instances.
+Lambda officially supports adding an existing public key and using it to access the GPU instances.
 
-Step 3. Verify your preparation
-Once Lambda displays your key named lambda-h100, you will have completed the SSH setup.
-Step 4. Later, when you rent your H100
-When you launch your single H100 PCIe instance, select your saved SSH key named lambda-h100.
+Step 3. Verify the preparation
+Once Lambda displays the key named lambda-h100, we will have completed the SSH setup.
+Step 4. Later, when we rent the H100
+When we launch the single H100 PCIe instance, select the saved SSH key named lambda-h100.
 
-Lambda will provide an IP address for your server. Then you can connect using:
+Lambda will provide an IP address for the server. Then we can connect using:
 ssh -i ~/.ssh/lambda_h100 ubuntu@SERVER_IP
 
-Replace SERVER_IP with your actual Lambda server's IP address.
+Replace SERVER_IP with the actual Lambda server's IP address.
 
-For now, your next step is simply to execute:
+For now, the next step is simply to execute:
 cat ~/.ssh/lambda_h100.pub
 
-You can also begin configuring your GPU instance first.
+We can also begin configuring your GPU instance first.
 1. Click Launch instance in Lambda Cloud.
 2. Select 1 × H100 PCIe (80 GB).
-3. Select your region and operating system image.
-4. When prompted for an SSH key, choose to add your existing public key.
+3. Select the region and operating system image.
+4. When prompted for an SSH key, choose to add the existing public key.
 5. Paste the contents of lambda_h100.pub and name it lambda-h100.
 6. Review the configuration and confirm the launch.
 
-The important distinction: Clicking "Launch instance" to begin the configuration wizard does not mean you have 
-already started renting the GPU. You can add your SSH key during this configuration process, 
+The important distinction: Clicking "Launch instance" to begin the configuration wizard does not mean we have 
+already started renting the GPU. We can add the SSH key during this configuration process, 
 before the final launch.
-Once your H100 instance is running, Lambda will provide an IP address. You can then connect 
-from your Linux desktop:
+Once the H100 instance is running, Lambda will provide an IP address. The can then connect 
+from the Linux desktop:
 ssh -i ~/.ssh/lambda_h100 ubuntu@SERVER_IP
-Replace SERVER_IP with your actual Lambda IP address.
+Replace SERVER_IP with the actual Lambda IP address.
 
-Entering ssh key name, using the following name for your SSH key in Lambda:
+Entering ssh key name, using the following name for the SSH key in Lambda:
 lambda-h100
 
 Fill in Lambda's SSH key form
@@ -125,15 +126,15 @@ Field             What to enter
 SSH Key Name      lambda-h100
 Public Key        Contents of ~/.ssh/lambda_h100.pub
 
-If your goal is to rent one NVIDIA H100 PCIe GPU, connect to it using SSH, run your Hopper programs, and collect 
+If the goal is to rent one NVIDIA H100 PCIe GPU, connect to it using SSH, run the Hopper programs, and collect 
 Nsight profiling reports.
-You do not need multiple GPUs, a cluster of servers, or an H100 SXM.
+We do not need multiple GPUs, a cluster of servers, or an H100 SXM.
 The Lambda setup, one screen at a time.
 Step 1. Click Instances
-Go to your Lambda Cloud dashboard.
-
+Go to the Lambda Cloud dashboard.
 Click Instances in the navigation menu, then click Launch instance.
-Step 2. Select your GPU
+    
+Step 2. Select the GPU
 Look for the following option:
 1 × NVIDIA H100 PCIe
 Hopper architecture — SM90a  $3.29/hour
@@ -141,14 +142,16 @@ Hopper architecture — SM90a  $3.29/hour
 GPU memory80 GB     CPU26 vCPUs
 System RAM225 GiB   Local storage1 TiB SSD
 
-
-Connect to your new H100
+Connect to the new H100
 Once the instance is running, Lambda will show its public IP address.
-On your Linux desktop, run:
+On the Linux desktop, run:
 ssh -i ~/.ssh/lambda_h100 ubuntu@YOUR_SERVER_IP
-Replace YOUR_SERVER_IP with the actual IP address shown in your Lambda dashboard.
+Replace YOUR_SERVER_IP with the actual IP address shown in the Lambda dashboard.
 
-After connecting, your first command should be:
+It is possible developer receive the connecting information:
+<img width="913" height="1018" alt="image" src="https://github.com/user-attachments/assets/e3a83db6-fa8d-49ac-9d63-48e7aa7bb6bf" />
+
+After connecting, the first command should be:
 nvidia-smi
 Then verify the profiling tools:
 ncu --version
@@ -157,39 +160,41 @@ nsys --version
 Recommendation:
 Click the dropdown arrow on the right and check whether Lambda Stack 24.04 is available.
 Operating system      Recommendation
-Lambda Stack 24.04    Preferred, if available, if your desktop uses Ubuntu 24.04
+Lambda Stack 24.04    Preferred, if available, if the desktop uses Ubuntu 24.04
 Lambda Stack 22.04    Also fine for running and profiling Hopper programs
 
+<img width="913" height="637" alt="image" src="https://github.com/user-attachments/assets/bdf3db63-5615-461c-8658-c5a9e2a65427" />
+Select the first option: “Don't attach a filesystem.” It is the black button in the screenshot.
+    
 One important note: the CUDA Toolkit is preinstalled, confirmed the exact Nsight Compute and Nsight 
-Systems versions installed in this particular image. Once you connect through SSH, we will check:
+Systems versions installed in this particular image. Once we connect through SSH, we will check:
 nvidia-smi
 nvcc --version
 ncu --version
 nsys --version
 
-SCP your executable to Lambda
-On your Linux desktop, navigate to your project directory and execute:
+SCP the executable to Lambda
+On your Linux desktop, navigate to the project directory and execute:
 scp -i ~/.ssh/lambda_h100 \
     ./build/wgmma_sm90 \
     ubuntu@SERVER_IP:~/
 
-Verify your GPU and executable:
+Verify the GPU and executable:
 nvidia-smi
 ls -lh ~/wgmma_sm90
 
-Step 4. Execute your Hopper program
+Step 4. Execute the Hopper program
 On Lambda:
 cd ~
 chmod +x wgmma_sm90
 ./wgmma_sm90
 
-You can use the default GEMM dimensions. No command-line arguments are required.
+We can use the default GEMM dimensions. No command-line arguments are required.
 Make sure the program executes successfully before profiling.
 
-Step 5. Generate your Nsight Compute report
+Step 5. Generate the Nsight Compute report
 First, check that Nsight Compute is installed:
 ncu --version
-
 
 Then execute:
 ncu \
@@ -204,11 +209,9 @@ ncu \
 This generates:
 wgmma_sm90.ncu-rep
 
-
-Step 6. Generate your Nsight Systems report
+Step 6. Generate the Nsight Systems report
 Check the version:
 nsys --version
-
 
 Then execute:
 nsys profile \
@@ -218,23 +221,20 @@ nsys profile \
     --output=wgmma_sm90 \
     ./wgmma_sm90
 
-
 This generates:
 wgmma_sm90.nsys-rep
-
 
 wgmma_sm90 executable will work on H100 SXM5 too, assuming it was compiled for sm_90a and has compatible 
 library dependencies.
 Both H100 PCIe and H100 SXM5 support WGMMA, TMA, TMA multicast.
 We do not need to change the CUDA source code or recompile specifically for SXM5.
 
-Here is the cost comparison using the prices you provided:
-Rental duration	H100 PCIe ($3.29/hr)	H100 SXM5 ($4.29/hr)	Extra cost
-30 minutes	$1.65	$2.15	$0.50
-1 hour	$3.29	$4.29	$1.00
-2 hours	$6.58	$8.58	$2.00
-3 hours	$9.87	$12.87	$3.00
-
+Here is the cost comparison using the prices:
+Rental duration     H100 PCIe ($3.29/hr)        H100 SXM5 ($4.29/hr)      Extra cost
+30 minutes          $1.65                        $2.15                     $0.50
+1 hour              $3.29                        $4.29                     $1.00
+2 hours             $6.58	                     $8.58                     $2.00
+3 hours             $9.87                        $12.87                    $3.00
 
 nvidia-smi
 Wed Nov 11 10:11:59 2026       
@@ -261,9 +261,9 @@ Wed Nov 11 10:11:59 2026
 CUTE_GEMM:     [378214.7]GFlop/s  (0.5678)ms
 
 Next step: Install Nsight Compute and Nsight Systems
-Since your earlier commands showed that ncu and nsys were missing, let's address that next.
+Since the earlier commands showed that ncu and nsys were missing, let's address that next.
 
-On your Lambda SSH terminal, execute:
+On the Lambda SSH terminal, execute:
 apt-cache policy cuda-nsight-compute-12-8 cuda-nsight-systems-12-8
 
 
@@ -283,7 +283,7 @@ whoami
 echo "$SSH_CONNECTION"
 nvidia-smi -L
 
-If the installation succeeds, you can generate your first reports:
+If the installation succeeds, we can generate the first reports:
 
 Nsight Compute:
 ncu --set full \
@@ -347,7 +347,7 @@ nsys profile \
 
 Then verify the report:
 ls -lh ~/wgmma_sm90.nsys-rep
-If successful, you have your first Hopper GPU execution timeline ready for analysis.
+If successful, we have the first Hopper GPU execution timeline ready for analysis.
 
 Step 2. Get Nsight Compute working
 First, check the two standard NVIDIA installation locations on Lambda:
@@ -366,7 +366,7 @@ find /opt/nvidia /usr/local/cuda-12.8 \
     -type f -name ncu 2>/dev/null
 
 
-Once ncu is available, your initial profiling command will be:
+Once ncu is available, the initial profiling command will be:
 ncu --set full \
     --launch-count 1 \
     -f -o wgmma_sm90 \
@@ -375,14 +375,14 @@ ncu --set full \
 This should generate wgmma_sm90.ncu-rep, provided performance-counter access is permitted on the instance.
 
 Step 1. Verify Nsight Compute
-On your Lambda SSH terminal, execute:
+On the Lambda SSH terminal, execute:
 /usr/local/cuda-12.8/bin/ncu --version
-If that works, add it to your current terminal's PATH:
+If that works, add it to the current terminal's PATH:
 export PATH=/usr/local/cuda-12.8/bin:$PATH
 
 Verify:
 ncu --version
-Step 2. Generate your first Nsight Compute report
+Step 2. Generate the first Nsight Compute report
 Since wgmma_sm90 already runs successfully, execute:
 cd ~
 
@@ -397,12 +397,12 @@ This should generate:
 /home/ubuntu/wgmma_sm90.ncu-rep
 
 wgmma_sm90 program is working correctly on the H100. However, Nsight Compute cannot access the GPU hardware 
-performance counters with your current user permissions.
-This is a permissions problem, not a problem with your CUDA code or executable.
+performance counters with the current user permissions.
+This is a permissions problem, not a problem with the CUDA code or executable.
 
-The first thing I recommend is running Nsight Compute with sudo. You do not need to recompile or reinstall anything.
+The first thing I recommend is running Nsight Compute with sudo. We do not need to recompile or reinstall anything.
 Step 1. Try Nsight Compute as root
-On your Lambda H100 SSH terminal, execute:
+On the Lambda H100 SSH terminal, execute:
 cd ~
 
 sudo /usr/local/cuda-12.8/bin/ncu \
@@ -433,13 +433,13 @@ Before proceeding, verify that these files are safely stored on the RTX 5080 Bla
 
 We can check from the desktop terminal:
 ls -lh ~/hopper-reports/
-If both files are present and you have verified they open correctly, then:
+If both files are present and we have verified they open correctly, then:
 Enter erase data on instance in the confirmation box.
 Click Terminate instances.
 Verify that the instance is no longer running in the Lambda dashboard.
 Termination permanently deletes the files stored on that Lambda instance.
 
-The SSH key and locally compiled CUDA executables will remain on your desktop.
+The SSH key and locally compiled CUDA executables will remain on the desktop.
 
 xxx@xxxxxx:~/hopper-reports$ ls
 wgmma_sm90.ncu-rep  wgmma_sm90.nsys-rep
@@ -450,7 +450,7 @@ The output confirms:
 ├── wgmma_sm90.ncu-rep
 └── wgmma_sm90.nsys-rep
 Next step: Terminate the Lambda H100
-Because both files are on the desktop, you're almost ready to terminate the instance.
+Because both files are on the desktop, we're almost ready to terminate the instance.
 First, I recommend verifying that the reports open:
 ncu-ui ~/hopper-reports/wgmma_sm90.ncu-rep
 nsys-ui ~/hopper-reports/wgmma_sm90.nsys-rep
@@ -460,10 +460,10 @@ Click Terminate instances.
 Verify that the instance is no longer running.
 This permanently deletes the files on Lambda and stops GPU rental charges once termination completes.
 
-Based on the Lambda H100 session this morning, I used at least approximately 15–16 minutes. Your actual billable 
+Based on the Lambda H100 session this morning, I used at least approximately 15–16 minutes. The actual billable 
 time will be slightly longer.
 
-Here are the timestamps from your terminal outputs on November 11, 2026:
+Here are the timestamps from the terminal outputs on November 11, 2026:
 Massachusetts time (EST)
 H100 verified with nvidia-smi: 5:11 AM
 Nsight Systems report created: 5:22 AM
@@ -476,6 +476,6 @@ Estimated cost
 40 minutes: $2.86
 60 minutes: $4.29
 
-For the exact duration and cost, check your Lambda dashboard's billing or usage history after termination.
+For the exact duration and cost, check the Lambda dashboard's billing or usage history after termination.
 
 </pre>
