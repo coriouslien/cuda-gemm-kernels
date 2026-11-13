@@ -186,6 +186,232 @@ chmod +x wgmma_sm90
 You can use the default GEMM dimensions. No command-line arguments are required.
 Make sure the program executes successfully before profiling.
 
+Step 5. Generate your Nsight Compute report
+First, check that Nsight Compute is installed:
+ncu --version
 
 
+Then execute:
+ncu \
+    --set full -f \
+    --kernel-name regex:gemm_device \
+    --launch-skip 1 \
+    --launch-count 1 \
+    --export ./wgmma_sm90 \
+    ./wgmma_sm90
+
+
+This generates:
+wgmma_sm90.ncu-rep
+
+
+Step 6. Generate your Nsight Systems report
+Check the version:
+nsys --version
+
+
+Then execute:
+nsys profile \
+    --trace=cuda,nvtx \
+    --sample=none \
+    --cpuctxsw=none \
+    --output=wgmma_sm90 \
+    ./wgmma_sm90
+
+
+This generates:
+wgmma_sm90.nsys-rep
+
+
+wgmma_sm90 executable will work on H100 SXM5 too, assuming it was compiled for sm_90a and has compatible 
+library dependencies.
+Both H100 PCIe and H100 SXM5 support WGMMA, TMA, TMA multicast.
+We do not need to change the CUDA source code or recompile specifically for SXM5.
+
+Here is the cost comparison using the prices you provided:
+Rental duration	H100 PCIe ($3.29/hr)	H100 SXM5 ($4.29/hr)	Extra cost
+30 minutes	$1.65	$2.15	$0.50
+1 hour	$3.29	$4.29	$1.00
+2 hours	$6.58	$8.58	$2.00
+3 hours	$9.87	$12.87	$3.00
+
+
+nvidia-smi
+Wed Nov 11 10:11:59 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H100 80GB HBM3          On  |   00000000:06:00.0 Off |                    0 |
+| N/A   26C    P0             69W /  700W |       0MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+
+~$ chmod +x ~/wgmma_sm90
+~/wgmma_sm90
+CUTE_GEMM:     [378214.7]GFlop/s  (0.5678)ms
+
+Next step: Install Nsight Compute and Nsight Systems
+Since your earlier commands showed that ncu and nsys were missing, let's address that next.
+
+On your Lambda SSH terminal, execute:
+apt-cache policy cuda-nsight-compute-12-8 cuda-nsight-systems-12-8
+
+
+If both packages show available candidate versions, install them:
+sudo apt update
+sudo apt install -y \
+    cuda-nsight-compute-12-8 \
+    cuda-nsight-systems-12-8
+
+
+Then verify:
+ncu --version
+nsys --version
+
+hostname
+whoami
+echo "$SSH_CONNECTION"
+nvidia-smi -L
+
+If the installation succeeds, you can generate your first reports:
+
+Nsight Compute:
+ncu --set full \
+    --launch-count 1 \
+    -f -o wgmma_sm90 \
+    ./wgmma_sm90
+
+Nsight Systems:
+nsys profile \
+    --trace=cuda,nvtx \
+    --sample=none \
+    --cpuctxsw=none \
+    -o wgmma_sm90 \
+    ./wgmma_sm90
+
+Locate the installed Nsight tools:
+dpkg -l | grep -i nsight
+Then:
+find /usr/local /opt -type f \
+    \( -name ncu -o -name nsys \) \
+    2>/dev/null
+
+If neither executable is found, update the package list:
+sudo apt update
+apt-cache policy cuda-nsight-compute-12-8 cuda-nsight-systems-12-8
+
+If both packages now show an available candidate, install them:
+sudo apt install -y \
+    cuda-nsight-compute-12-8 \
+    cuda-nsight-systems-12-8
+
+If APT still cannot locate them, Lambda may not have NVIDIA's CUDA repository configured. NVIDIA documents how to enable its Ubuntu 24.04 CUDA repository using the cuda-keyring package. 
+Installation Guide for Linux 12.8 documentation
+
+
+Run these commands on Lambda only:
+wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+    -O /tmp/cuda-keyring.deb
+
+sudo dpkg -i /tmp/cuda-keyring.deb
+sudo apt update
+
+sudo apt install -y \
+    cuda-nsight-compute-12-8 \
+    cuda-nsight-systems-12-8
+
+Finally, check:
+ncu --version
+nsys --version
+
+cd ~
+
+nsys profile \
+    --trace=cuda,nvtx \
+    --sample=none \
+    --cpuctxsw=none \
+    -f true \
+    -o wgmma_sm90 \
+    ./wgmma_sm90
+
+
+Then verify the report:
+ls -lh ~/wgmma_sm90.nsys-rep
+If successful, you have your first Hopper GPU execution timeline ready for analysis.
+
+Step 2. Get Nsight Compute working
+First, check the two standard NVIDIA installation locations on Lambda:
+find /opt/nvidia /usr/local/cuda-12.8 \
+    -type f -name ncu 2>/dev/null
+
+If nothing appears, run:
+sudo apt update
+apt-cache policy cuda-nsight-compute-12-8
+
+If the package has an available candidate, install it:
+sudo apt install -y cuda-nsight-compute-12-8
+
+If installation succeeds but ncu is still not found, check again:
+find /opt/nvidia /usr/local/cuda-12.8 \
+    -type f -name ncu 2>/dev/null
+
+
+Once ncu is available, your initial profiling command will be:
+ncu --set full \
+    --launch-count 1 \
+    -f -o wgmma_sm90 \
+    ./wgmma_sm90
+
+This should generate wgmma_sm90.ncu-rep, provided performance-counter access is permitted on the instance.
+
+Step 1. Verify Nsight Compute
+On your Lambda SSH terminal, execute:
+/usr/local/cuda-12.8/bin/ncu --version
+If that works, add it to your current terminal's PATH:
+export PATH=/usr/local/cuda-12.8/bin:$PATH
+
+Verify:
+ncu --version
+Step 2. Generate your first Nsight Compute report
+Since wgmma_sm90 already runs successfully, execute:
+cd ~
+
+ncu \
+    --set full \
+    --launch-count 1 \
+    -f \
+    --export wgmma_sm90 \
+    ./wgmma_sm90
+
+This should generate:
+/home/ubuntu/wgmma_sm90.ncu-rep
+
+wgmma_sm90 program is working correctly on the H100. However, Nsight Compute cannot access the GPU hardware 
+performance counters with your current user permissions.
+This is a permissions problem, not a problem with your CUDA code or executable.
+
+The first thing I recommend is running Nsight Compute with sudo. You do not need to recompile or reinstall anything.
+Step 1. Try Nsight Compute as root
+On your Lambda H100 SSH terminal, execute:
+cd ~
+
+sudo /usr/local/cuda-12.8/bin/ncu \
+    --set full \
+    --launch-count 1 \
+    -f \
+    --export wgmma_sm90 \
+    ./wgmma_sm90
+
+If your Lambda instance gives root access to the GPU performance counters, this should generate:
+/home/ubuntu/wgmma_sm90.ncu-rep
 </pre>
