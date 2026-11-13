@@ -425,9 +425,8 @@ If the file exists and profiling completed successfully, make sure the regular u
 sudo chown ubuntu:ubuntu ~/wgmma_sm90.ncu-rep
 
 User attachment
-</pre>
+<img width="954" height="791" alt="image" src="https://github.com/user-attachments/assets/0649ea8a-6584-4bd9-9938-1b45aaf519bf" />
 
-<pre>
 Should I enter erase?
 Yes, but only after confirming that you have downloaded both profiling reports to your desktop.
 
