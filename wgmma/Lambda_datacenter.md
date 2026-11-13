@@ -412,6 +412,137 @@ sudo /usr/local/cuda-12.8/bin/ncu \
     --export wgmma_sm90 \
     ./wgmma_sm90
 
-If your Lambda instance gives root access to the GPU performance counters, this should generate:
+If the Lambda instance gives root access to the GPU performance counters, this should generate:
 /home/ubuntu/wgmma_sm90.ncu-rep
+
+NVIDIA's official troubleshooting guide recommends using sudo on Linux when performance counters are restricted 
+to administrators
+
+Step 2. Check whether the report was generated
+After the command completes, run:
+ls -lh ~/wgmma_sm90.ncu-rep
+If the file exists and profiling completed successfully, make sure the regular ubuntu account can access it:
+sudo chown ubuntu:ubuntu ~/wgmma_sm90.ncu-rep
+
+User attachment
+</pre>
+
+<pre>
+Should I enter erase?
+Yes, but only after confirming that you have downloaded both profiling reports to your desktop.
+
+Your screenshot asks you to enter the exact phrase, not just erase:
+
+erase data on instance
+Before proceeding, verify that these files are safely stored on your RTX 5080 desktop:
+
+~/hopper-reports/wgmma_sm90.ncu-rep
+
+~/hopper-reports/wgmma_sm90.nsys-rep
+
+You can check from your desktop terminal:
+
+ls -lh ~/hopper-reports/
+
+If both files are present and you have verified they open correctly, then:
+
+Enter erase data on instance in the confirmation box.
+
+Click Terminate instances.
+
+Verify that the instance is no longer running in the Lambda dashboard.
+
+ Termination permanently deletes the files stored on that Lambda instance.
+
+My recommendation: If you have successfully downloaded and verified both reports and have no more experiments to run, terminate the instance now to stop rental charges.
+
+Your SSH key and locally compiled CUDA executables will remain on your desktop.
+
+
+Convert to PDF
+chialan@chialanlien:~/hopper-reports$ ls
+wgmma_sm90.ncu-rep  wgmma_sm90.nsys-rep
+Excellent! Both profiling reports have been successfully downloaded to your RTX 5080 desktop.
+
+Your output confirms:
+
+~/hopper-reports/
+├── wgmma_sm90.ncu-rep
+└── wgmma_sm90.nsys-rep
+Next step: Terminate your Lambda H100
+Because both files are on your desktop, you're almost ready to terminate the instance.
+
+First, I recommend verifying that the reports open:
+
+ncu-ui ~/hopper-reports/wgmma_sm90.ncu-rep
+
+nsys-ui ~/hopper-reports/wgmma_sm90.nsys-rep
+
+If both reports open successfully, return to the Lambda termination window.
+
+Enter the exact phrase: erase data on instance
+
+Click Terminate instances.
+
+Verify that the instance is no longer running.
+
+This permanently deletes the files on Lambda and stops GPU rental charges once termination completes.
+
+Congratulations on your first Hopper profiling experiment! You successfully compiled wgmma_sm90 on your RTX 5080, executed it on an H100 SXM5, and transferred the profiling reports back to your desktop.
+
+Now you can study the WGMMA performance data locally without continuing to pay for the H100.
+
+
+Convert to PDF
+How much time did I use?
+Based on your Lambda H100 session this morning, you used at least approximately 15–16 minutes. Your actual billable time will be slightly longer.
+
+Here are the timestamps from your terminal outputs on November 11, 2026:
+
+Event
+
+Massachusetts time (EST)
+
+H100 verified with nvidia-smi
+
+5:11 AM
+
+Nsight Systems report created
+
+5:22 AM
+
+Nsight Compute report created
+
+5:27 AM
+
+Your instance was already running before 5:11 AM, so these timestamps do not tell us the exact total.
+
+Estimated rental cost
+Your H100 SXM5 costs $4.29/hour.
+
+Total usage
+
+Estimated cost
+
+20 minutes
+
+$1.43
+
+30 minutes
+
+$2.15
+
+40 minutes
+
+$2.86
+
+60 minutes
+
+$4.29
+
+Important: If you haven't clicked Terminate instances and confirmed termination, your Lambda instance is still running and accumulating charges.
+
+For the exact duration and cost, check your Lambda dashboard's billing or usage history after termination.
+
+One question: Have you already terminated the H100 instance, or is it still running?
 </pre>
