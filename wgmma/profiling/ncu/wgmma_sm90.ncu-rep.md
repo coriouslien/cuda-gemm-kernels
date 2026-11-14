@@ -335,93 +335,66 @@ Therefore:
 2 x 5120 x 5120 x 4096
 = 214,748,364,800 operations
 That is approximately 214.75 billion floating-point operations.
-
 The FP16 operations metric counts the mathematical work attributed to this FP16 Tensor 
 Core operation class. It does not mean that the GPU executed 214.75 billion individual 
 WGMMA instructions.
 One WGMMA instruction represents many arithmetic operations.
 3. Achieved operations/cycle = 228,673.44
-This measures the average rate at which your H100 performs the counted operations, expressed 
+This measures the average rate at which your H100 performs the counted operations, expressed
 per clock cycle across the GPU.
 The result is:
-\[
-\boxed{228,673.44\text{ operations/cycle}}
-\]
+228,673.44 operations/cycle
 
 Conceptually, that means:
-During the measured kernel execution, the H100 performed the equivalent of approximately 228,673 FP16 floating-point operations per GPU clock cycle.
-
-This is a throughput measurement, not the number of operations performed by one CUDA thread or one SM.
+During the measured kernel execution, the H100 performed the equivalent of approximately 228,673
+FP16 floating-point operations per GPU clock cycle.
+This is a throughput measurement, not the number of operations performed by one CUDA thread or
+one SM.
 Why can one cycle contain so many operations?
-Because the H100 has many SMs, and each SM contains Tensor Core hardware capable of performing many multiply-accumulate operations in parallel.
+Because the H100 has many SMs, and each SM contains Tensor Core hardware capable of performing 
+many multiply-accumulate operations in parallel.
 
 Imagine the H100 as a factory with many workers processing calculations simultaneously.
-
-Your result measures the output of the whole factory, normalized by clock cycles.
+The result measures the output of the whole factory, normalized by clock cycles.
 
 4. Peak operations/cycle = 540,672
-This is the reference maximum throughput for the dense FP16 HGMMA operation type on your H100.
-
+This is the reference maximum throughput for the dense FP16 HGMMA operation type on the H100.
 Your report shows:
-\[
-\boxed{540,672\text{ operations/cycle}}
-\]
+540,672 operations/cycle
 
-Your H100 has 132 SMs. Dividing the GPU-wide peak by the number of SMs gives:
-\[
-\frac{540,672}{132}=4096
-\]
-
+The H100 has 132 SMs. Dividing the GPU-wide peak by the number of SMs gives:
+540,672/132=4096
 Thus, the peak corresponds to:
-\[
-\boxed{4096\text{ FP16 operations/cycle/SM}}
-\]
-
+4096 FP16 operations/cycle/SM
 And across all 132 SMs:
-\[
-132\times4096=540,672
-\]
+132 x 4096=540,672
 
-This is a hardware throughput ceiling for the selected operation category, not a promise that every kernel will reach it.
-
-NVIDIA's profiler defines the peak using its sustained-throughput model for the relevant operation and hardware. 
-NsightCompute+1
+This is a hardware throughput ceiling for the selected operation category, not a promise that
+every kernel will reach it.
+NVIDIA's profiler defines the peak using its sustained-throughput model for the relevant
+operation and hardware. 
 
 5. Peak percentage = 42.29%
 Now we can calculate the most important number.
-
 The formula is:
-\[
-\boxed{
-\text{Peak Percentage}=
-\frac{\text{Achieved Operations/Cycle}}
-{\text{Peak Operations/Cycle}}\times100
-}
-\]
+Peak Percentage=
+((Achieved Operations/Cycle)  / (Peak Operations/Cycle) ) x 100
+Substitute the measurements:
+(228,673.44 / 540,672) x 100
+=42.29%
 
-Substitute your measurements:
-\[
-=\frac{228,673.44}{540,672}\times100
-\]
-
-\[
-=\boxed{42.29\%}
-\]
-
-Your H100 dense FP16 Tensor Core utilization
-42.29%
-
-57.71% headroom
-
-
-
+The H100 dense FP16 Tensor Core utilization
+42.29%           57.71% headroom
 228,673 operations/cycle achieved540,672 peak
 
-That means your WGMMA kernel achieved approximately 42.29% of the reference dense FP16 HGMMA throughput ceiling.
+That means the WGMMA kernel achieved approximately 42.29% of the reference dense FP16 HGMMA
+throughput ceiling.
 
-The remaining 57.71% is theoretical headroom, not guaranteed performance improvement. Real kernels have memory operations, synchronization, dependencies, and other overhead.
+The remaining 57.71% is theoretical headroom, not guaranteed performance improvement. Real 
+kernels have memory operations, synchronization, dependencies, and other overhead.
+ 
 6. Why does another FP16 row show only 21.15%?
-You may have noticed another row in your screenshot:
+We may have noticed another row in the screenshot:
 Metric	Dense HGMMA FP16 row	General FP16 row
 FP16 operations	214,748,364,800	214,748,364,800
 Achieved operations/cycle	228,673.44	228,673.44
@@ -429,7 +402,6 @@ Peak operations/cycle	540,672	1,081,344
 Peak percentage	42.29%	21.15%
 
 Why the difference?
-
 The general FP16 category uses a higher reference peak that includes the capability for sparse Tensor Core operations, which can achieve twice the arithmetic rate of dense operations.
 
 Your kernel performs dense FP16 WGMMA:
