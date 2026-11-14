@@ -301,19 +301,199 @@ The profiler's Tensor Core operation count agrees with the expected GEMM workloa
 That establishes consistency between the algorithm and what the hardware counter reports.
  
 4.5 Why does the general Src:fp16 row show 21.15%?
-Your fourth screenshot reports:
+The fourth screenshot reports:
 Metric                       Value
 FP16 operations              214,748,364,800
 Achieved operations/cycle    228,673.44
 Peak operations/cycle        1,081,344
 Peak percentage              21.15%
 
+1. FP16 operations: How much mathematical work was performed?
+2. Achieved operations/cycle: How quickly did the GPU perform that work, measured 
+in operations per clock cycle?
+3. Peak operations/cycle: How quickly could the GPU theoretically perform this type of work?
+4. Peak percentage: What fraction of that theoretical maximum did the kernel achieve?
+
+1. FP16 operations: How much mathematical work was performed?
+2. Achieved operations/cycle: How quickly did the GPU perform that work, measured in operations per clock cycle?
+3. Peak operations/cycle: How quickly could the GPU theoretically perform this type of work?
+4. Peak percentage: What fraction of that theoretical maximum did the kernel achieve?
+ 
+2. FP16 operations = 214,748,364,800
+Your GEMM computes:
+C=A x B
+Its matrix dimensions are:
+M=5120, N=5120, K=4096
+For a matrix multiplication, the standard floating-point operation count is:
+FLOPs = 2MNK
+Why multiply by 2?
+Each multiply-accumulate contains:
+- One multiplication: a x b
+- One addition: c+a x b
+By the usual GEMM counting convention, that's two floating-point operations.
+Therefore:
+2 x 5120 x 5120 x 4096
+= 214,748,364,800 operations
+That is approximately 214.75 billion floating-point operations.
+
+The FP16 operations metric counts the mathematical work attributed to this FP16 Tensor 
+Core operation class. It does not mean that the GPU executed 214.75 billion individual 
+WGMMA instructions.
+One WGMMA instruction represents many arithmetic operations.
+3. Achieved operations/cycle = 228,673.44
+This measures the average rate at which your H100 performs the counted operations, expressed 
+per clock cycle across the GPU.
+The result is:
+\[
+\boxed{228,673.44\text{ operations/cycle}}
+\]
+
+Conceptually, that means:
+During the measured kernel execution, the H100 performed the equivalent of approximately 228,673 FP16 floating-point operations per GPU clock cycle.
+
+This is a throughput measurement, not the number of operations performed by one CUDA thread or one SM.
+Why can one cycle contain so many operations?
+Because the H100 has many SMs, and each SM contains Tensor Core hardware capable of performing many multiply-accumulate operations in parallel.
+
+Imagine the H100 as a factory with many workers processing calculations simultaneously.
+
+Your result measures the output of the whole factory, normalized by clock cycles.
+
+4. Peak operations/cycle = 540,672
+This is the reference maximum throughput for the dense FP16 HGMMA operation type on your H100.
+
+Your report shows:
+\[
+\boxed{540,672\text{ operations/cycle}}
+\]
+
+Your H100 has 132 SMs. Dividing the GPU-wide peak by the number of SMs gives:
+\[
+\frac{540,672}{132}=4096
+\]
+
+Thus, the peak corresponds to:
+\[
+\boxed{4096\text{ FP16 operations/cycle/SM}}
+\]
+
+And across all 132 SMs:
+\[
+132\times4096=540,672
+\]
+
+This is a hardware throughput ceiling for the selected operation category, not a promise that every kernel will reach it.
+
+NVIDIA's profiler defines the peak using its sustained-throughput model for the relevant operation and hardware. 
+NsightCompute+1
+
+5. Peak percentage = 42.29%
+Now we can calculate the most important number.
+
+The formula is:
+\[
+\boxed{
+\text{Peak Percentage}=
+\frac{\text{Achieved Operations/Cycle}}
+{\text{Peak Operations/Cycle}}\times100
+}
+\]
+
+Substitute your measurements:
+\[
+=\frac{228,673.44}{540,672}\times100
+\]
+
+\[
+=\boxed{42.29\%}
+\]
+
+Your H100 dense FP16 Tensor Core utilization
+42.29%
+
+57.71% headroom
+
+
+
+228,673 operations/cycle achieved540,672 peak
+
+That means your WGMMA kernel achieved approximately 42.29% of the reference dense FP16 HGMMA throughput ceiling.
+
+The remaining 57.71% is theoretical headroom, not guaranteed performance improvement. Real kernels have memory operations, synchronization, dependencies, and other overhead.
+6. Why does another FP16 row show only 21.15%?
+You may have noticed another row in your screenshot:
+Metric	Dense HGMMA FP16 row	General FP16 row
+FP16 operations	214,748,364,800	214,748,364,800
+Achieved operations/cycle	228,673.44	228,673.44
+Peak operations/cycle	540,672	1,081,344
+Peak percentage	42.29%	21.15%
+
+Why the difference?
+
+The general FP16 category uses a higher reference peak that includes the capability for sparse Tensor Core operations, which can achieve twice the arithmetic rate of dense operations.
+
+Your kernel performs dense FP16 WGMMA:
+Op: hgmma
+Src: fp16
+Sparsity: off
+
+
+Therefore, for evaluating your current kernel, 42.29% is the more meaningful comparison. NVIDIA explains how sparsity affects these peak percentages. 
+NVIDIA Developer Forums
+
+7. Connect these numbers to TFLOP/s
+Your profiler also reports approximately:
+\[
+\boxed{329.43\text{ TFLOP/s}}
+\]
+
+This is another way to express achieved computational throughput.
+- Operations/cycle measures work per GPU clock cycle.
+- Operations/second measures work per second.
+- TFLOP/s expresses trillions of floating-point operations per second.
+Conceptually:
+\[
+\text{Operations/second}
+=
+\text{Operations/cycle}\times\text{Cycles/second}
+\]
+
+The profiler accounts for measured clock behavior and counter normalization when producing its per-second metrics.
+8. Check your understanding
+Imagine another GPU kernel has:
+- Achieved operations/cycle = 300,000
+- Peak operations/cycle = 600,000
+What is its peak percentage?
+
+25%
+
+50%
+
+75%
+
+200%
+
+
+The most important point to remember is:
+
+FP16 operations tells you how much mathematical work was done. Achieved operations/cycle tells you how quickly the GPU did it. Peak operations/cycle tells you the reference hardware capability. Peak percentage compares the two rates.
+
+For your wgmma_sm90 experiment, that comparison is 42.29%, and your next optimization task is to understand what prevents the Tensor Cores from being supplied with work more continuously.
+
+
+
+
+ ++++++++++++++++++++++++++++
+
+
+ 
 Compare its peak with the non-sparse HGMMA peak:
 1,081,344=2 x 540,672
-The general FP16 maximum used for this row is twice the dense HGMMA FP16 peak, reflecting the higher supported 
-sparse Tensor Core operation rate.
-Your kernel uses:
-
+The general FP16 maximum used for this row is twice the dense HGMMA FP16 peak, reflecting
+the higher supported  sparse Tensor Core operation rate.
+The kernel uses:
+Op:hgmma Src:fp16 Sparsity:off
+ 
 
 
 
