@@ -211,8 +211,6 @@ The actual DRAM throughput is only 16.41%.
 This is the first important distinction:
 The memory system is significantly utilized, but external HBM bandwidth is not saturated.
 
- 
-3.3 Compare the memory levels
 3.3 Compare the memory levels
 L1/TEX     82.82%
 L2 Cache   48.23%
@@ -319,7 +317,7 @@ in operations per clock cycle?
 3. Peak operations/cycle: How quickly could the GPU theoretically perform this type of work?
 4. Peak percentage: What fraction of that theoretical maximum did the kernel achieve?
  
-2. FP16 operations = 214,748,364,800
+2). FP16 operations = 214,748,364,800
 Your GEMM computes:
 C=A x B
 Its matrix dimensions are:
@@ -339,7 +337,7 @@ The FP16 operations metric counts the mathematical work attributed to this FP16 
 Core operation class. It does not mean that the GPU executed 214.75 billion individual 
 WGMMA instructions.
 One WGMMA instruction represents many arithmetic operations.
-3. Achieved operations/cycle = 228,673.44
+3). Achieved operations/cycle = 228,673.44
 This measures the average rate at which your H100 performs the counted operations, expressed
 per clock cycle across the GPU.
 The result is:
@@ -357,7 +355,7 @@ many multiply-accumulate operations in parallel.
 Imagine the H100 as a factory with many workers processing calculations simultaneously.
 The result measures the output of the whole factory, normalized by clock cycles.
 
-4. Peak operations/cycle = 540,672
+4). Peak operations/cycle = 540,672
 This is the reference maximum throughput for the dense FP16 HGMMA operation type on the H100.
 Your report shows:
 540,672 operations/cycle
@@ -374,7 +372,7 @@ every kernel will reach it.
 NVIDIA's profiler defines the peak using its sustained-throughput model for the relevant
 operation and hardware. 
 
-5. Peak percentage = 42.29%
+5). Peak percentage = 42.29%
 Now we can calculate the most important number.
 The formula is:
 Peak Percentage=
@@ -393,7 +391,7 @@ throughput ceiling.
 The remaining 57.71% is theoretical headroom, not guaranteed performance improvement. Real 
 kernels have memory operations, synchronization, dependencies, and other overhead.
  
-6. Why does another FP16 row show only 21.15%?
+6). Why does another FP16 row show only 21.15%?
 We may have noticed another row in the screenshot:
 Metric	Dense HGMMA FP16 row	General FP16 row
 FP16 operations	214,748,364,800	214,748,364,800
@@ -413,7 +411,7 @@ Sparsity: off
 Therefore, for evaluating the current kernel, 42.29% is the more meaningful comparison. 
 NVIDIA explains how sparsity affects these peak percentages. 
 
-7. Connect these numbers to TFLOP/s
+7). Connect these numbers to TFLOP/s
 The profiler also reports approximately:
 329.43 TFLOP/s
 This is another way to express achieved computational throughput.
@@ -425,7 +423,7 @@ Operations/second
 = (Operations/cycle) x (Cycles/second)
 The profiler accounts for measured clock behavior and counter normalization when producing its per-second metrics.
  
-8. Check your understanding
+8). Check your understanding
 Imagine another GPU kernel has:
 - Achieved operations/cycle = 300,000
 - Peak operations/cycle = 600,000
@@ -446,7 +444,68 @@ the higher supported  sparse Tensor Core operation rate.
 The kernel uses:
 Op:hgmma Src:fp16 Sparsity:off
  
+4.6 Why do FP32 and FP64 show 0%?
+The roofline analysis message says the workload achieved 0% of the FP32 and FP64 peaks.
+That is expected for an FP16 Tensor Core GEMM.
+The actual matrix multiplication is performed by HGMMA, not ordinary FP32 or FP64 arithmetic pipelines.
+This is not a performance problem.
 
+Step 5. Analyze PM Sampling
+Screenshot 5 — PM Sampling timeline
+The report shows:
+Measurement	Value
+Maximum sampling interval	1.50 μs
+Maximum buffer size	48 MB
+Pass groups	2
+Dropped samples	0
+
+PM Sampling lets you examine how performance metrics change during the kernel's lifetime, rather than using only a whole-kernel average.
+
+Your timeline is particularly interesting.
+5.1 The kernel has a sustained computation phase
+The SM Active Cycles and Tensor Pipe traces remain elevated through most of the kernel.
+
+This indicates that the kernel is not spending most of its duration waiting for GPU work to begin.
+
+There is sustained execution.
+5.2 There are periodic decreases in Tensor Pipe activity
+The Tensor Pipe trace shows several dips.
+
+A possible explanation is that the mainloop periodically waits for a data-transfer or synchronization dependency.
+
+However, a dip alone does not identify the cause.
+
+We would need to correlate the location of these dips with source-level stall samples or additional pipeline measurements.
+
+The profiler collected two pass groups, so counters from different passes should not automatically be treated as perfectly synchronized to individual instructions.
+5.3 Why is DRAM activity comparatively small?
+The DRAM throughput trace is much lower than the Tensor Pipe trace.
+
+This agrees with your earlier finding that DRAM throughput reaches only 16.41% of its peak.
+
+It is further evidence that external HBM bandwidth is unlikely to be the primary limiting resource for this kernel.
+5.4 What I would investigate
+Rather than optimizing from the dips alone, I would first identify the top stalled SASS instructions in the Source tab.
+
+That will give us much stronger evidence about whether the delays come from copying A/B tiles, waiting for WGMMA, or executing the epilogue.
+
+Step 6. Analyze Compute Workload Analysis
+Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
+
+This section measures the scheduling and execution resources inside the streaming multiprocessors.
+
+Your important numbers are:
+Metric	Measured value
+Executed IPC Elapsed	0.52
+Executed IPC Active	0.59
+Issued IPC Active	0.59
+SM Busy	48.13%
+Issue Slots Busy	14.86%
+Tensor (All), active cycles	Approximately 48.1%
+
+
+
+ 
 
 
  
@@ -490,7 +549,6 @@ One important distinction: line information does not necessarily embed the full 
 browsing on a different computer, the source files may still need to be accessible or embedded during profiling.
 
 NVIDIA recommends line information rather than disabling device optimization with -G for performance profiling. 
-NVIDIA CUDA Compiler Driver 13.5 documentation
  
 3.6 -Xptxas=-v and --resource-usage
 These two options explain why your build prints detailed resource information.
