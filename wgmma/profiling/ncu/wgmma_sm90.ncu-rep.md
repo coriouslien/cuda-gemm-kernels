@@ -445,6 +445,62 @@ This is not a performance problem.
 
  5. PM Sampling
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/4f7ef757-21d5-40ab-82ae-1f90e9a0c949" />
+Step 5. Analyze PM Sampling
+Screenshot 5 — PM Sampling timeline
+The report shows:
+Measurement	Value
+Maximum sampling interval	1.50 μs
+Maximum buffer size	48 MB
+Pass groups	2
+Dropped samples	0
+
+PM Sampling lets you examine how performance metrics change during the kernel's lifetime, rather than using only a whole-kernel average.
+
+Your timeline is particularly interesting.
+5.1 The kernel has a sustained computation phase
+The SM Active Cycles and Tensor Pipe traces remain elevated through most of the kernel.
+
+This indicates that the kernel is not spending most of its duration waiting for GPU work to begin.
+
+There is sustained execution.
+5.2 There are periodic decreases in Tensor Pipe activity
+The Tensor Pipe trace shows several dips.
+
+A possible explanation is that the mainloop periodically waits for a data-transfer or synchronization dependency.
+
+However, a dip alone does not identify the cause.
+
+We would need to correlate the location of these dips with source-level stall samples or additional pipeline measurements.
+
+The profiler collected two pass groups, so counters from different passes should not automatically be treated as perfectly synchronized to individual instructions.
+5.3 Why is DRAM activity comparatively small?
+The DRAM throughput trace is much lower than the Tensor Pipe trace.
+
+This agrees with your earlier finding that DRAM throughput reaches only 16.41% of its peak.
+
+It is further evidence that external HBM bandwidth is unlikely to be the primary limiting resource for this kernel.
+5.4 What I would investigate
+Rather than optimizing from the dips alone, I would first identify the top stalled SASS instructions in the Source tab.
+
+That will give us much stronger evidence about whether the delays come from copying A/B tiles, waiting for WGMMA, or executing the epilogue.
+
+Step 6. Analyze Compute Workload Analysis
+Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
+
+This section measures the scheduling and execution resources inside the streaming multiprocessors.
+
+Your important numbers are:
+Metric	Measured value
+Executed IPC Elapsed	0.52
+Executed IPC Active	0.59
+Issued IPC Active	0.59
+SM Busy	48.13%
+Issue Slots Busy	14.86%
+Tensor (All), active cycles	Approximately 48.1%
+
+
+ 
+ 
 Step 6. Analyze Compute Workload Analysis
 Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
 
