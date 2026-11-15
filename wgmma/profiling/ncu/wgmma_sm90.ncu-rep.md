@@ -640,12 +640,7 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
  
 
  
-11. Memory Workload Analysis
-<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/948b4c7e-133f-4df5-9806-58c76b9f479b" />
 
-<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/6adac94a-0bbb-41c8-b51d-17dca6c43330" />
-
- <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28b181e-afd2-4380-a4d7-58e8653f1b5e" />
  
 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
