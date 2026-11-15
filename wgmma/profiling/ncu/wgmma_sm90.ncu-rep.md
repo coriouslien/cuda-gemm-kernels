@@ -500,7 +500,6 @@ Tensor (All), active cycles	Approximately 48.1%
 
 
  
- 
 Step 6. Analyze Compute Workload Analysis
 Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
 
@@ -522,10 +521,8 @@ Tensor (All), active cycles	Approximately 48.1%
  
 Step 6. Analyze Compute Workload Analysis
 Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
-
 This section measures the scheduling and execution resources inside the streaming multiprocessors.
-
-Your important numbers are:
+The important numbers are:
 Metric	Measured value
 Executed IPC Elapsed	0.52
 Executed IPC Active	0.59
@@ -536,58 +533,45 @@ Tensor (All), active cycles	Approximately 48.1%
 
 6.1 Understand IPC
 IPC means instructions per cycle.
-
-The reported executed IPC values summarize instruction execution at the relevant profiler aggregation level. They do not represent GEMM FLOPs per cycle.
-
+The reported executed IPC values summarize instruction execution at the relevant profiler aggregation level. 
+They do not represent GEMM FLOPs per cycle.
 This distinction matters because one WGMMA instruction performs many arithmetic operations.
-
 A relatively small instruction count can still generate hundreds of TFLOP/s.
 6.2 Understand SM Busy = 48.13%
 SM Busy describes how busy the SM execution machinery is during the sampled period.
-
 It does not mean that only 48.13% of the H100's SMs participate in the kernel.
-
 It is a utilization measure, not a count of participating SMs.
 6.3 Understand Issue Slots Busy = 14.86%
-This is one of the most significant findings in your report.
-
-A warp scheduler has opportunities to issue instructions. If no resident warp is eligible, the corresponding opportunity goes unused.
-
-Your issue-slot utilization is:
-\[
-\boxed{14.86\%}
-\]
-
+This is one of the most significant findings in the report.
+A warp scheduler has opportunities to issue instructions. If no resident warp is eligible, the corresponding 
+opportunity goes unused.
+The issue-slot utilization is:
+14.86%
 This suggests substantial periods in which schedulers cannot issue an instruction.
-
 The Scheduler Statistics section gives direct confirmation.
+ 
 6.4 Why is Tensor Pipe utilization only approximately 48%?
-Your charts identify the Tensor FP pipeline as the dominant compute pipeline.
-
+The charts identify the Tensor FP pipeline as the dominant compute pipeline.
 That is correct for a WGMMA GEMM.
-
 But it is not near saturation.
-
 The report says the Tensor pipeline is well utilized but should not be the bottleneck.
-
 This suggests that something other than pure Tensor Core execution capacity is preventing higher throughput.
-
 A likely contributor is the rate at which data and dependencies become ready for the next WGMMA work.
+ 
 6.5 Why does the Tensor (Warp Group) instruction-issue bar look small?
-The left chart measures pipeline active-cycle utilization; the right chart measures executed instruction throughput relative to peak instruction-issue rates.
-
+The left chart measures pipeline active-cycle utilization; the right chart measures executed instruction 
+throughput relative to peak instruction-issue rates.
 These are different quantities.
-
-WGMMA is an asynchronous, warpgroup-level operation. One issued instruction can initiate a large amount of Tensor Core arithmetic.
-
+WGMMA is an asynchronous, warpgroup-level operation. One issued instruction can initiate a large amount 
+of Tensor Core arithmetic.
 Therefore, the Tensor Warp Group instruction-issue bar should not be equated directly with Tensor Core arithmetic utilization.
-
 Do not conclude that the Tensor Core is unused simply because the WGMMA instruction-issue bar is short.
 
 8. Memory Workload Analysis 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/948b4c7e-133f-4df5-9806-58c76b9f479b" />
+9. Memory Workload Analysis
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/6adac94a-0bbb-41c8-b51d-17dca6c43330" />
-
+10. Memory Workload Analysis
  <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28b181e-afd2-4380-a4d7-58e8653f1b5e" />
  
 
@@ -656,7 +640,7 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
  
 
  
-
+11. Memory Workload Analysis
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/948b4c7e-133f-4df5-9806-58c76b9f479b" />
 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/6adac94a-0bbb-41c8-b51d-17dca6c43330" />
