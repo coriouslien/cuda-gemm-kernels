@@ -402,62 +402,42 @@ Peak operations/cycle	540,672	1,081,344
 Peak percentage	42.29%	21.15%
 
 Why the difference?
-The general FP16 category uses a higher reference peak that includes the capability for sparse Tensor Core operations, which can achieve twice the arithmetic rate of dense operations.
+The general FP16 category uses a higher reference peak that includes the capability for sparse Tensor Core 
+operations, which can achieve twice the arithmetic rate of dense operations.
 
-Your kernel performs dense FP16 WGMMA:
+The kernel performs dense FP16 WGMMA:
 Op: hgmma
 Src: fp16
 Sparsity: off
 
-
-Therefore, for evaluating your current kernel, 42.29% is the more meaningful comparison. NVIDIA explains how sparsity affects these peak percentages. 
-NVIDIA Developer Forums
+Therefore, for evaluating the current kernel, 42.29% is the more meaningful comparison. 
+NVIDIA explains how sparsity affects these peak percentages. 
 
 7. Connect these numbers to TFLOP/s
-Your profiler also reports approximately:
-\[
-\boxed{329.43\text{ TFLOP/s}}
-\]
-
+The profiler also reports approximately:
+329.43 TFLOP/s
 This is another way to express achieved computational throughput.
 - Operations/cycle measures work per GPU clock cycle.
 - Operations/second measures work per second.
 - TFLOP/s expresses trillions of floating-point operations per second.
 Conceptually:
-\[
-\text{Operations/second}
-=
-\text{Operations/cycle}\times\text{Cycles/second}
-\]
-
+Operations/second
+= (Operations/cycle) x (Cycles/second)
 The profiler accounts for measured clock behavior and counter normalization when producing its per-second metrics.
+ 
 8. Check your understanding
 Imagine another GPU kernel has:
 - Achieved operations/cycle = 300,000
 - Peak operations/cycle = 600,000
+ 
 What is its peak percentage?
+(300,000/600,000) x 100=50%
+FP16 operations tells us how much mathematical work was done. Achieved operations/cycle tells us
+how quickly the GPU did it. Peak operations/cycle tells us the reference hardware capability. 
+Peak percentage compares the two rates.
 
-25%
-
-50%
-
-75%
-
-200%
-
-
-The most important point to remember is:
-
-FP16 operations tells you how much mathematical work was done. Achieved operations/cycle tells you how quickly the GPU did it. Peak operations/cycle tells you the reference hardware capability. Peak percentage compares the two rates.
-
-For your wgmma_sm90 experiment, that comparison is 42.29%, and your next optimization task is to understand what prevents the Tensor Cores from being supplied with work more continuously.
-
-
-
-
- ++++++++++++++++++++++++++++
-
-
+For the wgmma_sm90 experiment, that comparison is 42.29%, and the next optimization task is to 
+understand what prevents the Tensor Cores from being supplied with work more continuously.
  
 Compare its peak with the non-sparse HGMMA peak:
 1,081,344=2 x 540,672
