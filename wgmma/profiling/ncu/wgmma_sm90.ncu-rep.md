@@ -106,13 +106,6 @@ replay passes.
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f0f68aa2-a4cd-49f2-aad9-131f2750cc68" />
 4. GPU Speed of Light Throughput
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f3a321dc-7f3d-4388-82ae-5eba4816c98c" />
-5. GPU Speed of Light Throughput
-<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/4f7ef757-21d5-40ab-82ae-1f90e9a0c949" />
-6. GPU Speed of Light Throughput
-<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/001ab819-58ad-4e76-b451-a5cbf1d03ef8" />
-
-7. GPU Speed of Light Throughput
-<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2b9ede8b-2aba-4769-9163-348fd6f80cf0" />
 
 Metric	                             Value
 Compute (SM) Throughput             42.29%
@@ -450,6 +443,16 @@ That is expected for an FP16 Tensor Core GEMM.
 The actual matrix multiplication is performed by HGMMA, not ordinary FP32 or FP64 arithmetic pipelines.
 This is not a performance problem.
 
+ 5. PM Sampling
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/4f7ef757-21d5-40ab-82ae-1f90e9a0c949" />
+
+
+ 
+6. GPU Speed of Light Throughput
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/001ab819-58ad-4e76-b451-a5cbf1d03ef8" />
+
+7. GPU Speed of Light Throughput
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2b9ede8b-2aba-4769-9163-348fd6f80cf0" />
 
 
 Step 6. Analyze Compute Workload Analysis
@@ -472,7 +475,10 @@ Tensor (All), active cycles	Approximately 48.1%
 
 
  
- 
+
+
+
+ ??????
  
 The a suffix identifies architecture-specific features that are not guaranteed to work on later GPU architectures.
 The WGMMA instruction family is one of the reasons for targeting sm_90a.
