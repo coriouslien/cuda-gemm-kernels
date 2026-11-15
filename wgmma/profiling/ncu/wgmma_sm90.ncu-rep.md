@@ -989,14 +989,322 @@ Requests	               —
 Wavefronts	             85,524,949
 % Peak	                 68.99%
 Bank Conflicts	         0
+This row accounts for most of the measured shared-memory wavefront activity.
+
+Calculate its proportion:
+\[
+\frac{85,524,949}{112,558,549}\times100
+\approx\boxed{76.0\%}
+\]
+
+So approximately 76% of the reported shared-memory wavefronts are classified as Other.
+
+That is important.
+
+Your kernel uses WGMMA, which consumes substantial shared-memory operand data through specialized hardware paths.
+
+WGMMA-related activity is a plausible contributor to this category, but the table does not break down Other sufficiently to attribute all 85.5 million wavefronts to HGMMA.
+
+Likewise, the zero in the Bank Conflicts column does not prove that every specialized access represented by Other is conflict-free.
+
+The useful conclusion is:
+
+Most of your reported shared-memory traffic is not represented by ordinary shared-load or shared-store instructions.
+
+The Other row's 68.99% peak utilization also shows why internal shared-memory activity deserves attention.
+
+8. Interpret Total Wavefronts and % Peak
+Your table reports:
+\[
+\text{Total Wavefronts}=112,558,549
+\]
+
+And:
+\[
+\text{Total Peak Utilization}=74.44\%
+\]
+
+The total wavefronts are the sum of:
+\[
+27,033,600+85,524,949
+=\boxed{112,558,549}
+\]
+
+The 74.44% is a throughput utilization metric relative to the relevant shared-memory service capacity.
+
+It is not the percentage of shared memory capacity allocated.
+
+Your kernel's 96 KiB per CTA is a capacity measurement.
+
+The 74.44% in this table is a throughput measurement.
+
+Those are different concepts.
+
+Your shared-memory capacity restricts how many CTAs can reside on an SM, while your shared-memory throughput reflects how actively the memory subsystem services requests.
+
+Both can affect performance, but in different ways.
+
+9. Analyze the L1/TEX Cache table
+Screenshots 1–3 — L1/TEX Cache
+Your second screenshot shows:
+Access type                 Instructions Requests	 Wavefronts	 Sectors	    Bytes
+Global Load To Shared Store	6,758,400	   6,758,400	11,696,305	 108,134,400	3,460,300,800
+Global Store	               819,200	     819,200	  2,001,676	  3,291,461	  105,326,752
+Total	                      7,577,600	   7,577,600	13,697,981	 111,425,861	3,565,627,552
+
+9.1 Why are there so many sectors in the copy path?
+Your global-to-shared copy path transfers:
+\[
+108,134,400\text{ sectors}
+\]
+
+A sector is 32 bytes.
+
+Therefore:
+\[
+108,134,400\times32
+=\boxed{3,460,300,800\text{ bytes}}
+\]
+
+The average sectors per copy request are:
+\[
+\frac{108,134,400}{6,758,400}
+=\boxed{16}
+\]
+
+Therefore, average bytes per request:
+\[
+16\times32=\boxed{512\text{ bytes}}
+\]
+
+That matches our earlier calculation:
+\[
+32\text{ threads}\times16\text{ bytes/thread}
+=512\text{ bytes}
+\]
+
+This is a strong consistency check.
+
+Your source uses a 16-byte asynchronous copy atom, and the observed global-to-shared requests average 512 bytes of sector traffic per warp-level request.
+9.2 Why is the global-copy traffic 3.46 GB?
+Your GEMM performs many K iterations.
+
+Each CTA repeatedly loads A and B tiles into shared memory.
+
+Across all 1,600 CTAs, those copies generate substantial traffic through the L1/TEX path.
+
+But 3.46 GB of traffic at this level does not mean that the H100 fetched 3.46 GB from external HBM.
+
+Some data can be served by L2 or other cache behavior.
+
+That explains why we must distinguish traffic at each memory level.
+9.3 Analyze global stores
+Your table shows:
+\[
+819,200\text{ global-store requests}
+\]
+
+and:
+\[
+105,326,752\text{ sector bytes}
+\]
+
+Your output matrix contains:
+\[
+5120\times5120
+=26,214,400\text{ FP16 elements}
+\]
+
+At two bytes per element:
+\[
+26,214,400\times2
+=\boxed{52,428,800\text{ useful output bytes}}
+\]
+
+Compare that with L1/TEX sector traffic attributed to global stores:
+\[
+\frac{105,326,752}{52,428,800}
+\approx\boxed{2.01}
+\]
+
+This is consistent with the earlier diagnostic warning that only about half of the transferred store-sector bytes are useful.
+
+Your output epilogue is a real candidate for improving global-store transaction efficiency.
+
+However, that does not establish that output stores are the dominant source of the kernel's execution time.
+
+10. Analyze the L2 Cache table
+Screenshots 3–5 — L2 Cache
+
+Your L2 table includes these values:
+Source of L2 traffic	Requests    Sectors     Hit rate
+L1/TEX Load	         21,231,782  85,888,800  82.15%
+L1/TEX Store         1,765,310   3,142,860   100%
+L1/TEX Total         22,997,092  ~89.03M     83.06%
+L2 Fabric Total      5,718,336   11,024,880  63.83%
+GPU Total            28,768,382  100,299,659 80.66%
+
+10.1 Why is the L2 hit rate high?
+For traffic reaching L2 from L1/TEX, the reported load hit rate is:
+\[
+\boxed{82.15\%}
+\]
+
+Your tiled GEMM reuses matrix data across many CTAs.
+
+For example, different output tiles in the same row of C need the same A rows, while different output tiles in the same column need the same B columns.
+
+That creates opportunities for L2 reuse.
+
+The measured hit rate is consistent with substantial cache reuse, although it does not tell us exactly which tiles were reused or which earlier launches contributed to cache contents.
+10.2 Why does L2 show a different total hit rate?
+Your earlier Memory Workload Analysis summary reported approximately 79.75% L2 hit rate.
+
+The detailed table contains several hit rates because it separates different L2 request sources.
+
+The 82.15% value applies specifically to the L1/TEX Load row.
+
+The 80.66% GPU Total value includes other traffic classes.
+
+Do not treat these numbers as conflicting measurements of one identical request population.
+10.3 Does a high L2 hit rate mean no memory bottleneck?
+No.
+
+An L2 hit avoids an external-memory access, but it still has a latency.
+
+A warp may have to wait for data even when that data comes from L2.
+
+Thus, high L2 reuse can coexist with significant memory-dependency stalls.
+
+This is relevant because your earlier Warp State Statistics showed high Long Scoreboard stalls.
+
+11. Understand L2 Cache Eviction Policies
+Your screenshot shows that most traffic uses the Normal eviction policy.
+
+In particular, the L1/TEX Load row reports approximately:
+Normal:   84,413,468 sectors
+Hit rate: 82.15%
 
 
+The policy categories describe cache-retention priorities associated with L2 accesses.
+
+These are not separate physical L2 caches.
+
+The First, Last, Normal, and related columns describe policy classifications.
+
+For your workload, the important observation is that most L2 traffic follows the normal policy.
+
+I would not spend time changing cache-eviction policy yet. Your current report points more strongly toward latency hiding, shared-memory resource allocation, and the copy/synchronization pipeline.
+
+12. Analyze Device Memory — Actual HBM traffic
+Screenshot 5 — Device Memory
+
+Your screenshot provides:
+Operation	Sectors      Bytes         Throughput
+Load      9,756,896    312,220,672   478.96 GB/s
+Store     1,450,648    46,420,736    71.21 GB/s
+Total     11,207,544   358,641,408   550.17 GB/s
+Let's verify the total:
+\[
+312,220,672+46,420,736
+=358,641,408\text{ bytes}
+\]
+
+Your profiled kernel duration was 651.87 μs.
+
+Therefore:
+\[
+B=\frac{358,641,408}{0.00065187}
+\]
+
+\[
+\boxed{B\approx550.17\text{ GB/s}}
+\]
+
+This agrees with the profiler's reported memory throughput.
+
+Your report also shows:
+\[
+\text{DRAM Throughput}=16.41\%
+\]
+
+That is further evidence that the kernel is not saturating the H100's external-memory bandwidth.
+Compare memory traffic at different levels
+Global-to-shared L1/TEX sector traffic    3.46 GB
+Total HBM traffic                         0.359 GB
+
+Different measurement points and traffic classes; the bars illustrate scale, not a directly calculated cache-hit rate.
+This is a valuable illustration of why tiled GEMM can perform enormous amounts of arithmetic without continuously fetching all of its operand data from HBM.
+
+13. Are shared-memory bank conflicts your primary bottleneck?
+Here is how I would combine your new measurements with the earlier report.
+Evidence                              Observation    Interpretation
+Shared-memory bank-conflict counter   4.81 million   Requires investigation
+Copy-path wavefronts/request	         Exactly 4      Consistent with 16-byte/lane accesses
+Shared Memory Other utilization       68.99%         Significant specialized shared-memory activity
+Total shared-memory utilization       74.44%         Substantial pressure on the shared-memory subsystem
+L1/TEX throughput                     82.82%         High internal memory-system utilization
+Long Scoreboard stalls               ~8.3 cycles/instruction	 Important memory-related dependency waits
+Eligible warps/scheduler             0.15            Insufficient ready work
+DRAM throughput                      16.41%          External bandwidth not saturated
+One crucial point from NVIDIA's profiling guidance: shared-memory serialization is more closely associated with Short Scoreboard and MIO Throttle stalls, whereas Long Scoreboard concerns L1/TEX memory dependencies. NVIDIA recommends examining those specific stall metrics and memory bank throughput before treating reported conflicts as a significant limiter. 
+NVIDIA Developer Forums
+
+
+Your earlier report showed Long Scoreboard as the dominant stall reason. This does not directly establish that shared-memory bank conflicts cause it.
+
+So my current diagnosis is:
+
+The kernel has substantial shared-memory activity and a nonzero bank-conflict counter, but the evidence does not yet establish that actual bank conflicts are its main performance problem.
+
+I would not change Swizzle<3,4,3> simply because the counter is nonzero. That swizzle is part of a carefully constructed CuTe layout compatible with the chosen WGMMA operations.
+
+14. The next step: Verify actual versus ideal shared-memory wavefronts
+This is the most useful next investigation, and it can be attempted using your existing report.
+
+In Nsight Compute:
+1. Select the Source tab.
+2. Switch to the SASS view.
+3. Look for the source-counter columns L1 Wavefronts Shared, L1 Wavefronts Shared Ideal, and L1 Wavefronts Shared Excessive, if available.
+4. Examine the LDGSTS instructions associated with your cp.async copies.
+5. Compare actual and ideal wavefronts for those instructions.
+These metrics are useful because a wide memory instruction may legitimately require multiple wavefronts without conflicts. We want to identify excessive wavefronts beyond the ideal access pattern, not simply count every wavefront beyond the first. 
+NVIDIA Developer Forums+1
+
+
+For your wide copy, the simplified baseline is:
+\[
+\text{Ideal Wavefronts/Request}\approx4
+\]
+
+And your aggregate measurement is:
+\[
+\text{Actual Wavefronts/Request}=4
+\]
+
+That agreement is encouraging, but a source-level comparison would be stronger evidence. It would also help resolve whether the aggregate bank-conflict counter is reflecting true serialization or additional hardware arbitration events.
+
+If the needed source metrics were not collected, the existing report may not be able to show that comparison; it would then require a future capture.
+Final conclusion
+You have now collected and examined the three measurements we originally needed:
+Original question                     What your screenshots establish
+How many shared-memory requests?      6,758,400 in the copy path
+How many wavefronts?                  27,033,600 copy-path wavefronts, exactly four per request
+Are bank conflicts reported?          Yes — 4,810,514 events, but their actual performance 
+                                      impact is not established
+The biggest lesson is:
+
+Wavefronts per request must be interpreted relative to the width and access pattern of the memory instruction. A 16-byte-per-thread copy can require four wavefronts even when the memory layout is conflict-free.
+
+Your report now gives us a much more concrete performance question than before: Are the reported bank-conflict events causing extra shared-memory serialization, or are they partly reflecting other arbitration activity?
+
+That is the distinction I would investigate before attempting to optimize shared-memory layout.
 
  
 
 
  
-
+Nov 15
 
 
  ??????
