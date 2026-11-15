@@ -648,20 +648,21 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
  12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
 
+ 13. Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/698167a0-609a-4620-8b1f-28f53b61ab14" />
-
+14.  Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/95dc1779-539f-40e8-bc2e-1571e4a9c881" />
-
+15.  Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2f5103d4-5284-4af4-8c61-c713309a4496" />
-
+16. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28dfd2e-e9eb-4be7-94e1-367fe9322e68" />
-
+17. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/496ab5d4-a958-4458-ae1b-52a0f5209553" />
-
+18. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/313a47bb-d8a9-489b-aa32-2edc157d5b1d" />
-
+19. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2a6a9258-6fb0-41c9-b31c-c630f075f834" />
-
+20. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d91c052a-1f3d-435c-a126-4bd4cb6bd21c" />
 
   
