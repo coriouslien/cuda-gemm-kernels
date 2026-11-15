@@ -680,13 +680,17 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/97d14bde-b577-49db-aa03-efc3b9d616e7" />
 27. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
-28.
+ 
+28. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
-29.
+ 
+29. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d553a2cc-2eb0-4bed-84ba-abc4955dc23a" />
-30.
+ 
+30. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/6dca578d-703f-452b-9585-3e067b72803b" />
-31.
+ 
+31. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f86b1250-5fcd-483c-aa4a-631855410f62" />
 
   
