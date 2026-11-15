@@ -738,10 +738,12 @@ table for:
 - Wavefronts per request.
 - Bank conflicts.
 - Actual shared-memory transaction counts.
-At the top-right corner of the Memory Workload Analysis section, there is a dropdown labeled Memory Chart.
-     
-Nov 15
- 
+
+Memory Tables Analysis:
+1)
+<img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/831f52e2-ca60-47c1-ab61-10582209b690" />
+
+Nov 15 
 
 
  
