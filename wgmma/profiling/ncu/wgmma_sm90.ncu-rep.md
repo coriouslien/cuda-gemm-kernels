@@ -664,6 +664,13 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2a6a9258-6fb0-41c9-b31c-c630f075f834" />
 20. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d91c052a-1f3d-435c-a126-4bd4cb6bd21c" />
+21. Launch Statistics
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c2ac58b1-a228-4a10-a770-1968661bfec0" />
+22. 
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/3e783ec4-5a02-4c02-91bf-29e80fac5655" />
+
+23. 
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c0a3a7c0-9d1b-4060-8e9f-8da508400fc3" />
 
   
 </pre>
