@@ -577,9 +577,8 @@ Do not conclude that the Tensor Core is unused simply because the WGMMA instruct
 Step 7. Analyze Memory Workload Analysis
 Screenshot 8 — Memory Workload Analysis summary
 
-This is one of the most useful sections of your report.
-
-Your measurements are:
+This is one of the most useful sections of the report.
+The measurements are:
 Metric	Value
 Memory Throughput	550.17 GB/s
 Mem Busy	72.77%
@@ -589,123 +588,100 @@ L1/TEX Hit Rate	9.18%
 L2 Hit Rate	79.75%
 L2 Compression Success Rate	0%
 
-Nsight Compute distinguishes utilization of memory units, communication bandwidth, and memory-instruction pipelines. All three can limit memory performance. 
-NsightCompute
+Nsight Compute distinguishes utilization of memory units, communication bandwidth, and memory-instruction 
+pipelines. All three can limit memory performance. 
 
-7.1 What does 550.17 GB/s mean?
-This is your reported device-memory throughput.
-
+7.1 What does Memory Throughput 550.17 GB/s mean?
+This is the reported device-memory throughput.
 To estimate total HBM traffic over the measured kernel:
-\[
-550.17\times10^9
-\times0.00065187
-\]
-
-\[
-\approx358.64\times10^6\text{ bytes}
-\]
-
+550.17 x 10^9 x 0.00065187
+approximat 358.64 x 10^6  bytes
 Therefore, the capture corresponds to approximately:
-\[
-\boxed{358.6\text{ MB of device-memory traffic}}
-\]
-
+358.6 MB of  device-memory traffic
 This is a derived value using the reported average bandwidth and kernel duration.
+ 
 7.2 Why is Mem Busy 72.77% but Max Bandwidth only 47.74%?
 They represent different types of resource pressure.
 - Mem Busy: Activity/utilization of memory-system hardware.
 - Max Bandwidth: Utilization relative to the maximum communication bandwidth among relevant memory paths.
 - Mem Pipes Busy: Utilization of memory instruction-processing pipelines.
-The values show that memory-system hardware can be busy even when the highest possible data-transfer rate is not being reached.
-
-For example, inefficient transactions or latency dependencies can occupy resources without transferring data at maximum efficiency.
+The values show that memory-system hardware can be busy even when the highest possible data-transfer 
+rate is not being reached.
+For example, inefficient transactions or latency dependencies can occupy resources without transferring 
+data at maximum efficiency.
+ 
 7.3 L1/TEX Hit Rate = 9.18%
 A conventional interpretation is that most relevant L1/TEX requests do not produce L1 cache hits.
-
-However, your kernel uses asynchronous global-to-shared-memory copies.
-
-For those operations, cache policies and data-movement behavior differ from ordinary scalar loads, so a low L1 hit rate is not automatically a design error.
-
-You should investigate the traffic, not simply maximize the L1 hit-rate number.
+However, the kernel uses asynchronous global-to-shared-memory copies.
+For those operations, cache policies and data-movement behavior differ from ordinary scalar loads, so a 
+low L1 hit rate is not automatically a design error.
+We should investigate the traffic, not simply maximize the L1 hit-rate number.
+ 
 7.4 L2 Hit Rate = 79.75%
 This is much higher.
-
-It suggests that a large fraction of requests reaching L2 can be served there rather than requiring external device-memory access.
+It suggests that a large fraction of requests reaching L2 can be served there rather than requiring 
+external device-memory access.
 
 That makes sense for a tiled GEMM:
 - Multiple CTAs consume overlapping regions of A or B.
 - Repeated computation can benefit from cached matrix tiles.
 - The L2 cache may service reused data efficiently.
-A high L2 hit rate helps explain why your HBM bandwidth is not saturated.
+A high L2 hit rate helps explain why the HBM bandwidth is not saturated.
+ 
 7.5 L2 compression success = 0%
 Nsight Compute flags low compression success and estimates a potential speedup.
-
 That is a profiler heuristic, not a guaranteed improvement.
 
-Your kernel's primary purpose is matrix multiplication. Do not redesign its numerical representation merely to make the compression percentage higher.
-
+The kernel's primary purpose is matrix multiplication. Do not redesign its numerical representation 
+merely to make the compression percentage higher.
 We should prioritize actual data dependencies and inefficient transactions first.
 
 Step 8. Understand the global-store warning
 Screenshots 8–10 — Global store access pattern and memory chart
-
-Your screenshot contains this warning:
-
+The screenshot contains this warning:
 L1TEX Global Store Access Pattern — Estimated Speedup: 36.38%
-
 The explanatory text states that, on average, only 16 of the 32 bytes in a transferred sector are useful.
-
 That corresponds to:
-\[
-\text{Sector utilization}=\frac{16}{32}
-\]
-
-\[
-\boxed{50\%}
-\]
+Sector utilization = 16 / 32
+50%
 
 8.1 What does 50% sector utilization mean?
-Imagine the hardware transfers a 32-byte sector, but the memory instruction needs only 16 bytes of data within that sector.
-
+Imagine the hardware transfers a 32-byte sector, but the memory instruction needs only 16 bytes of 
+data within that sector.
 The unused bytes still contribute to the transferred sector.
-
 This is less efficient than an access pattern that uses the complete sector.
-
 It is not equivalent to saying that every thread stores 16 bytes.
-
 The warning describes aggregate sector efficiency.
-8.2 Why might your output stores be inefficient?
-Your GEMM uses:
+ 
+8.2 Why might the output stores be inefficient?
+The GEMM uses:
 axpby(alpha, tCrC, beta, tCgC);
-
-
 This writes the accumulator fragment back to the output tensor.
-
-The efficiency of those stores depends on how the logical output tile is partitioned among threads and how that partition maps to contiguous memory addresses.
-
-For example, if neighboring threads write locations that are not adjacent in memory, one warp may touch more sectors than necessary.
+The efficiency of those stores depends on how the logical output tile is partitioned among threads and
+how that partition maps to contiguous memory addresses.
+For example, if neighboring threads write locations that are not adjacent in memory, one warp may touch 
+more sectors than necessary.
 
 A simplified example:
 <img width="1206" height="321" alt="image" src="https://github.com/user-attachments/assets/4b099d0e-a43a-48c4-aa24-4be34b794c2a" />
-These diagrams illustrate the principle, not the exact pattern of your kernel.
-8.3 Does the 36.38% estimated speedup mean your kernel can become 36.38% faster?
+These diagrams illustrate the principle, not the exact pattern of the kernel.
+ 
+8.3 Does the 36.38% estimated speedup mean the kernel can become 36.38% faster?
 No.
-
 It is an estimated local optimization opportunity produced by Nsight Compute's diagnostic rules.
-
 It is not proof that changing the stores will make the complete kernel 36.38% faster.
+The total kernel also spends time copying A/B tiles, performing MMA, synchronizing warps and
+processing dependencies.
 
-The total kernel also spends time copying A/B tiles, performing MMA, synchronizing warps and processing dependencies.
+The correct next investigation is the Source Counters section, especially the SASS STG instructions 
+associated with output storage.
 
-The correct next investigation is the Source Counters section, especially the SASS STG instructions associated with output storage.
-
-Step 9. Trace the memory movement through your source code
+Step 9. Trace the memory movement through the source code
 Screenshots 9–10 — L1/TEX, L2, DRAM, shared memory and TMA paths
-
-Your memory chart shows substantial activity through the L1/TEX and shared-memory paths.
-
+The memory chart shows substantial activity through the L1/TEX and shared-memory paths.
 This connects directly to how wgmma_sm90.cu moves A and B.
-9.1 Your program uses cp.async, not TMA
+ 
+9.1 The program uses cp.async, not TMA
 The default tutorial uses copy atoms similar to:
 TiledCopy copyA = make_tiled_copy(
     Copy_Atom<
@@ -713,57 +689,58 @@ TiledCopy copyA = make_tiled_copy(
         TA>{},
     ...);
 
-
 The generated SASS includes LDGSTS, which represents asynchronous global-to-shared-memory copying.
-
-Your Instruction Statistics chart also contains substantial LDGSTS activity.
+The Instruction Statistics chart also contains substantial LDGSTS activity.
 
 This is the expected data path:
 Global memory: A and B
-
+     |
+     V
 cp.async / LDGSTS
+     |
+     V
 Shared memory: sA and sB
-
+     |
+     V
 WGMMA / HGMMA
+     |
+     V
 Accumulator: tCrC
-
+     |
+     V
 Epilogue / global stores
+     |
+     V
 Global memory: C
 
-
 NVIDIA's tutorial explicitly constructs asynchronous copy atoms, then uses WGMMA to consume the shared-memory tiles. 
-GitHub
 
 9.2 Why is TMA activity zero?
-Your memory chart shows zero TMA instructions.
-
-That is expected.
-
+The memory chart shows zero TMA instructions.
+That is expected. 
 This program is wgmma_sm90.cu, not wgmma_tma_sm90.cu.
-
 Both use Hopper WGMMA, but the latter uses the Hopper Tensor Memory Accelerator to move tiles.
-
-Your current program uses the earlier cp.async mechanism to stage data in shared memory.
-
-This distinction will become extremely valuable when you compare the two tutorials.
+The current program uses the earlier cp.async mechanism to stage data in shared memory.
+This distinction will become extremely valuable when we compare the two tutorials.
+     
 9.3 Why is shared-memory traffic large?
 WGMMA reads input tiles from shared memory, and cp.async writes new tiles into shared memory.
-
 Both operations generate substantial internal traffic.
-
-You should not confuse shared-memory bytes with HBM bytes.
-
-The same tile may be consumed several times from on-chip memory while generating far more arithmetic operations than its initial global-memory transfer required.
-
+We should not confuse shared-memory bytes with HBM bytes.
+The same tile may be consumed several times from on-chip memory while generating far more arithmetic 
+operations than its initial global-memory transfer required.
 That reuse is the central idea behind tiled GEMM.
+     
 9.4 What do we still need to check?
 The memory chart is a high-level representation.
-
-To identify whether shared memory itself is inefficient, we need to examine the detailed shared-memory table for:
+To identify whether shared memory itself is inefficient, we need to examine the detailed shared-memory 
+table for:
 - Wavefronts per request.
 - Bank conflicts.
 - Actual shared-memory transaction counts.
-Your current screenshots do not establish that shared-memory bank conflicts are a major bottleneck.
+At the top-right corner of the Memory Workload Analysis section, there is a dropdown labeled Memory Chart.
+     
+Nov 15
  
 
 
@@ -837,7 +814,7 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 
  
 
- 
+
 11. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
 
