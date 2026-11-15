@@ -672,5 +672,22 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 23. 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c0a3a7c0-9d1b-4060-8e9f-8da508400fc3" />
 
+24.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/9d173fac-27fe-4556-8bd6-16292e4d348c" />
+25.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/be69d592-7800-45fc-965b-00f4d0b159dd" />
+26.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/97d14bde-b577-49db-aa03-efc3b9d616e7" />
+27.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
+28.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
+29.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d553a2cc-2eb0-4bed-84ba-abc4955dc23a" />
+30.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/6dca578d-703f-452b-9585-3e067b72803b" />
+31.
+<img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f86b1250-5fcd-483c-aa4a-631855410f62" />
+
   
 </pre>
