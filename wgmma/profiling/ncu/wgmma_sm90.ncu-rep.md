@@ -666,19 +666,19 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d91c052a-1f3d-435c-a126-4bd4cb6bd21c" />
 21. Launch Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c2ac58b1-a228-4a10-a770-1968661bfec0" />
-22. 
+22. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/3e783ec4-5a02-4c02-91bf-29e80fac5655" />
 
-23. 
+23. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c0a3a7c0-9d1b-4060-8e9f-8da508400fc3" />
 
-24.
+24. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/9d173fac-27fe-4556-8bd6-16292e4d348c" />
-25.
+25. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/be69d592-7800-45fc-965b-00f4d0b159dd" />
-26.
+26. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/97d14bde-b577-49db-aa03-efc3b9d616e7" />
-27.
+27. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
 28.
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
