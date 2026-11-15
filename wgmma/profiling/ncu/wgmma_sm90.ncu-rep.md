@@ -642,9 +642,10 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
  
 
  
-
+11. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
 
+ 12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
 
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/698167a0-609a-4620-8b1f-28f53b61ab14" />
