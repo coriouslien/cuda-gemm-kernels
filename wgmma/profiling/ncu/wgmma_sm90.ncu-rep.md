@@ -574,7 +574,125 @@ Do not conclude that the Tensor Core is unused simply because the WGMMA instruct
 10. Memory Workload Analysis
  <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28b181e-afd2-4380-a4d7-58e8653f1b5e" />
  
+Step 7. Analyze Memory Workload Analysis
+Screenshot 8 — Memory Workload Analysis summary
 
+This is one of the most useful sections of your report.
+
+Your measurements are:
+Metric	Value
+Memory Throughput	550.17 GB/s
+Mem Busy	72.77%
+Max Bandwidth	47.74%
+Mem Pipes Busy	26.44%
+L1/TEX Hit Rate	9.18%
+L2 Hit Rate	79.75%
+L2 Compression Success Rate	0%
+
+Nsight Compute distinguishes utilization of memory units, communication bandwidth, and memory-instruction pipelines. All three can limit memory performance. 
+NsightCompute
+
+7.1 What does 550.17 GB/s mean?
+This is your reported device-memory throughput.
+
+To estimate total HBM traffic over the measured kernel:
+\[
+550.17\times10^9
+\times0.00065187
+\]
+
+\[
+\approx358.64\times10^6\text{ bytes}
+\]
+
+Therefore, the capture corresponds to approximately:
+\[
+\boxed{358.6\text{ MB of device-memory traffic}}
+\]
+
+This is a derived value using the reported average bandwidth and kernel duration.
+7.2 Why is Mem Busy 72.77% but Max Bandwidth only 47.74%?
+They represent different types of resource pressure.
+- Mem Busy: Activity/utilization of memory-system hardware.
+- Max Bandwidth: Utilization relative to the maximum communication bandwidth among relevant memory paths.
+- Mem Pipes Busy: Utilization of memory instruction-processing pipelines.
+The values show that memory-system hardware can be busy even when the highest possible data-transfer rate is not being reached.
+
+For example, inefficient transactions or latency dependencies can occupy resources without transferring data at maximum efficiency.
+7.3 L1/TEX Hit Rate = 9.18%
+A conventional interpretation is that most relevant L1/TEX requests do not produce L1 cache hits.
+
+However, your kernel uses asynchronous global-to-shared-memory copies.
+
+For those operations, cache policies and data-movement behavior differ from ordinary scalar loads, so a low L1 hit rate is not automatically a design error.
+
+You should investigate the traffic, not simply maximize the L1 hit-rate number.
+7.4 L2 Hit Rate = 79.75%
+This is much higher.
+
+It suggests that a large fraction of requests reaching L2 can be served there rather than requiring external device-memory access.
+
+That makes sense for a tiled GEMM:
+- Multiple CTAs consume overlapping regions of A or B.
+- Repeated computation can benefit from cached matrix tiles.
+- The L2 cache may service reused data efficiently.
+A high L2 hit rate helps explain why your HBM bandwidth is not saturated.
+7.5 L2 compression success = 0%
+Nsight Compute flags low compression success and estimates a potential speedup.
+
+That is a profiler heuristic, not a guaranteed improvement.
+
+Your kernel's primary purpose is matrix multiplication. Do not redesign its numerical representation merely to make the compression percentage higher.
+
+We should prioritize actual data dependencies and inefficient transactions first.
+
+Step 8. Understand the global-store warning
+Screenshots 8–10 — Global store access pattern and memory chart
+
+Your screenshot contains this warning:
+
+L1TEX Global Store Access Pattern — Estimated Speedup: 36.38%
+
+The explanatory text states that, on average, only 16 of the 32 bytes in a transferred sector are useful.
+
+That corresponds to:
+\[
+\text{Sector utilization}=\frac{16}{32}
+\]
+
+\[
+\boxed{50\%}
+\]
+
+8.1 What does 50% sector utilization mean?
+Imagine the hardware transfers a 32-byte sector, but the memory instruction needs only 16 bytes of data within that sector.
+
+The unused bytes still contribute to the transferred sector.
+
+This is less efficient than an access pattern that uses the complete sector.
+
+It is not equivalent to saying that every thread stores 16 bytes.
+
+The warning describes aggregate sector efficiency.
+8.2 Why might your output stores be inefficient?
+Your GEMM uses:
+axpby(alpha, tCrC, beta, tCgC);
+
+
+This writes the accumulator fragment back to the output tensor.
+
+The efficiency of those stores depends on how the logical output tile is partitioned among threads and how that partition maps to contiguous memory addresses.
+
+For example, if neighboring threads write locations that are not adjacent in memory, one warp may touch more sectors than necessary.
+
+A simplified example:
+<img width="1511" height="356" alt="image" src="https://github.com/user-attachments/assets/4e68e4e7-7e8f-4b80-a230-7dd96e34eaba" />
+
+
+ 
+
+
+ 
 
 
 
@@ -647,6 +765,7 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 
  12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
+ 
 
  13. Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/698167a0-609a-4620-8b1f-28f53b61ab14" />
