@@ -686,7 +686,85 @@ The efficiency of those stores depends on how the logical output tile is partiti
 For example, if neighboring threads write locations that are not adjacent in memory, one warp may touch more sectors than necessary.
 
 A simplified example:
-<img width="1511" height="356" alt="image" src="https://github.com/user-attachments/assets/4e68e4e7-7e8f-4b80-a230-7dd96e34eaba" />
+<img width="1206" height="321" alt="image" src="https://github.com/user-attachments/assets/4b099d0e-a43a-48c4-aa24-4be34b794c2a" />
+These diagrams illustrate the principle, not the exact pattern of your kernel.
+8.3 Does the 36.38% estimated speedup mean your kernel can become 36.38% faster?
+No.
+
+It is an estimated local optimization opportunity produced by Nsight Compute's diagnostic rules.
+
+It is not proof that changing the stores will make the complete kernel 36.38% faster.
+
+The total kernel also spends time copying A/B tiles, performing MMA, synchronizing warps and processing dependencies.
+
+The correct next investigation is the Source Counters section, especially the SASS STG instructions associated with output storage.
+
+Step 9. Trace the memory movement through your source code
+Screenshots 9–10 — L1/TEX, L2, DRAM, shared memory and TMA paths
+
+Your memory chart shows substantial activity through the L1/TEX and shared-memory paths.
+
+This connects directly to how wgmma_sm90.cu moves A and B.
+9.1 Your program uses cp.async, not TMA
+The default tutorial uses copy atoms similar to:
+TiledCopy copyA = make_tiled_copy(
+    Copy_Atom<
+        SM80_CP_ASYNC_CACHEALWAYS<uint128_t>,
+        TA>{},
+    ...);
+
+
+The generated SASS includes LDGSTS, which represents asynchronous global-to-shared-memory copying.
+
+Your Instruction Statistics chart also contains substantial LDGSTS activity.
+
+This is the expected data path:
+Global memory: A and B
+
+cp.async / LDGSTS
+Shared memory: sA and sB
+
+WGMMA / HGMMA
+Accumulator: tCrC
+
+Epilogue / global stores
+Global memory: C
+
+
+NVIDIA's tutorial explicitly constructs asynchronous copy atoms, then uses WGMMA to consume the shared-memory tiles. 
+GitHub
+
+9.2 Why is TMA activity zero?
+Your memory chart shows zero TMA instructions.
+
+That is expected.
+
+This program is wgmma_sm90.cu, not wgmma_tma_sm90.cu.
+
+Both use Hopper WGMMA, but the latter uses the Hopper Tensor Memory Accelerator to move tiles.
+
+Your current program uses the earlier cp.async mechanism to stage data in shared memory.
+
+This distinction will become extremely valuable when you compare the two tutorials.
+9.3 Why is shared-memory traffic large?
+WGMMA reads input tiles from shared memory, and cp.async writes new tiles into shared memory.
+
+Both operations generate substantial internal traffic.
+
+You should not confuse shared-memory bytes with HBM bytes.
+
+The same tile may be consumed several times from on-chip memory while generating far more arithmetic operations than its initial global-memory transfer required.
+
+That reuse is the central idea behind tiled GEMM.
+9.4 What do we still need to check?
+The memory chart is a high-level representation.
+
+To identify whether shared memory itself is inefficient, we need to examine the detailed shared-memory table for:
+- Wavefronts per request.
+- Bank conflicts.
+- Actual shared-memory transaction counts.
+Your current screenshots do not establish that shared-memory bank conflicts are a major bottleneck.
+ 
 
 
  
@@ -765,7 +843,153 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 
  12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
- 
+Step 10. Analyze Scheduler Statistics
+Screenshots 11–12 — Scheduler Statistics and Warps Per Scheduler
+
+This is probably the most revealing part of your current report.
+
+Your numbers:
+Metric	Value
+Active Warps Per Scheduler	1.99
+Eligible Warps Per Scheduler	0.15
+Issued Warp Per Scheduler	0.15
+No Eligible	85.12%
+One or More Eligible	14.88%
+
+10.1 What is an active warp?
+An active warp is resident on a scheduler. It has been allocated GPU resources and has not finished executing.
+
+But an active warp does not necessarily have an instruction ready to issue.
+10.2 What is an eligible warp?
+An eligible warp has an instruction ready to execute, with the required dependencies and execution resources available.
+
+A warp may be active but not eligible because it is waiting for:
+- A memory dependency.
+- Another instruction to finish.
+- A synchronization barrier.
+- An available execution pipeline.
+10.3 Understand 1.99 active versus 0.15 eligible warps
+Imagine that a scheduler has two resident warps.
+
+Most of the time, neither warp can issue its next instruction.
+
+Your measured result is approximately:
+\[
+\text{Active warps}=1.99
+\]
+
+\[
+\text{Eligible warps}=0.15
+\]
+
+That tells us the warps are present, but they are frequently unable to make forward progress at the instruction-issue stage.
+10.4 Understand No Eligible = 85.12%
+This is the key result.
+\[
+\boxed{85.12\%}
+\]
+
+For approximately 85% of scheduler cycles, no resident warp is eligible.
+
+This explains why your issue slots are busy only around 14.86% of the time.
+\[
+100-85.12=14.88\%
+\]
+
+The near agreement with the measured issue-slot utilization is not accidental.
+
+Your warp schedulers are often idle because they have no ready instructions—not because there is no work remaining in the GEMM.
+10.5 Why are there only about two active warps per scheduler?
+Now we connect this result to the tutorial's shared-memory allocation.
+
+The default code uses three pipeline stages:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};
+
+
+Each shared-memory A tile contains:
+\[
+128\times64=8192\text{ FP16 elements}
+\]
+
+At two bytes per element:
+\[
+8192\times2=16,384\text{ bytes}
+\]
+
+Three pipeline stages require:
+\[
+3\times16,384=49,152\text{ bytes for A}
+\]
+
+B requires the same amount.
+
+Therefore:
+\[
+\text{Shared memory per CTA}
+\approx49,152+49,152
+\]
+
+\[
+\boxed{98,304\text{ bytes}=96\text{ KiB}}
+\]
+
+This calculation assumes the expected layout storage footprint; the precise allocation should be confirmed in Launch Statistics.
+
+An H100 has 228 KiB of shared memory per SM. 
+Hopper Tuning Guide 13.5 documentation
+
+
+Therefore, considering shared memory alone:
+\[
+2\times96=192\text{ KiB}
+\]
+
+Two CTAs can fit.
+
+But:
+\[
+3\times96=288\text{ KiB}
+\]
+
+Three cannot fit.
+
+This strongly suggests that the three-stage shared-memory allocation limits residency to two CTAs per SM.
+
+Each CTA has four warps:
+\[
+2\times4=8\text{ resident warps per SM}
+\]
+
+H100 SMs have four warp schedulers, giving:
+\[
+8/4=\boxed{2\text{ warps per scheduler}}
+\]
+
+That agrees remarkably well with your measured value of 1.99.
+10.6 Estimate theoretical occupancy
+H100 supports up to 64 concurrent warps per SM. 
+Hopper Tuning Guide 13.5 documentation
+
+
+With eight resident warps:
+\[
+\text{Occupancy}=\frac{8}{64}\times100
+\]
+
+\[
+\boxed{12.5\%}
+\]
+
+This is a strong inference, not a replacement for the profiler's Occupancy section.
+
+It tells us why relatively few warps are available to hide latency.
+
+But low occupancy is not automatically bad for Tensor Core GEMM: large shared-memory tiles can enable high data reuse, and asynchronous Tensor Core operations can achieve substantial throughput with relatively few warps.
+
+The important problem is the combination of low residency and low eligibility.
 
  13. Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/698167a0-609a-4620-8b1f-28f53b61ab14" />
@@ -773,6 +997,185 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/95dc1779-539f-40e8-bc2e-1571e4a9c881" />
 15.  Warp State Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2f5103d4-5284-4af4-8c61-c713309a4496" />
+
+Step 11. Analyze Warp State Statistics
+Screenshots 13–15 — Warp State Statistics and stall chart
+
+Your screenshot reports:
+Metric	Value
+Warp Cycles Per Issued Instruction	13.36
+Warp Cycles Per Executed Instruction	13.36
+Average Active Threads Per Warp	32
+Average Not Predicated Off Threads	31.37
+Dominant stall	Long Scoreboard
+Long Scoreboard wait	Approximately 8.3 cycles per issued instruction
+
+11.1 Understand Warp Cycles Per Issued Instruction = 13.36
+This is an average warp-state metric.
+
+It is not a literal latency measurement for each SASS instruction.
+
+Nsight Compute accumulates warp states and normalizes them by issued instructions to understand the average number of cycles spent in different states.
+
+Your result is:
+\[
+\boxed{13.36\text{ warp cycles per issued instruction}}
+\]
+
+That is consistent with a kernel experiencing significant stalls.
+11.2 Long Scoreboard = 8.3 cycles
+Your report says approximately 8.3 cycles are spent waiting for long-scoreboard dependencies per issued instruction.
+
+Calculate the fraction:
+\[
+\frac{8.3}{13.36}\times100
+\]
+
+\[
+\boxed{62.1\%}
+\]
+
+That is a substantial fraction of the total average warp cycles per issued instruction.
+
+This is our strongest evidence of an important latency-related bottleneck.
+11.3 What exactly is a Long Scoreboard Stall?
+A long scoreboard tracks dependencies involving the L1/TEX memory subsystem.
+
+Consider:
+float value = A[index];
+float result = value * 2.0f;
+
+
+The multiplication cannot use value until the load has produced the data.
+
+The warp may be waiting because the dependency has not resolved.
+
+Nsight Compute records a long-scoreboard stall when a warp is waiting for such a memory dependency.
+
+NVIDIA's documentation explicitly distinguishes memory latency from memory bandwidth saturation. 
+NsightCompute
+
+
+For your kernel:
+- DRAM utilization is low.
+- Long-scoreboard stalls are high.
+- Eligible warp count is very low.
+That combination points strongly toward insufficient memory-latency hiding.
+11.4 Does Long Scoreboard mean LDGSTS is definitely the culprit?
+Not yet.
+
+The consumer instruction where a stall is sampled may not be the instruction that originally initiated the memory access.
+
+We must identify the dependency chain.
+
+Your asynchronous A/B copies are plausible contributors, but the screenshot does not prove which particular instruction causes the most waiting.
+
+Use Source Counters and the SASS dependency information to locate the relevant instructions.
+11.5 What does Stall Barrier mean?
+Your chart also shows a substantial Barrier stall category.
+
+A Barrier stall means a warp is waiting for synchronization involving other warps in its CTA.
+
+Your tutorial includes:
+__syncthreads();
+
+
+and asynchronous synchronization constructs.
+
+We need to inspect exactly which SASS instructions account for these stalls.
+
+A significant barrier stall does not automatically mean warp divergence or an incorrect synchronization design.
+11.6 What does Stall GMMA mean?
+This category relates specifically to GMMA/WGMMA-related waiting conditions.
+
+Your chart shows a comparatively small GMMA stall contribution.
+
+That suggests GMMA-specific issue stalls are not the dominant sampled wait condition.
+
+However, it does not mean WGMMA completion latency is irrelevant to the overall pipeline.
+11.7 Why are average active threads per warp approximately 32?
+Your report shows:
+Avg. Active Threads Per Warp: 32
+Avg. Not Predicated Off Threads Per Warp: 31.37
+
+
+That is encouraging.
+
+Most warp instructions execute with nearly all their threads participating.
+
+This makes severe thread divergence unlikely to be the dominant performance problem.
+
+It also reinforces that your main issue is probably not ordinary branch divergence.
+
+Step 12. Connect the stalls to your actual CUDA C++ mainloop
+This is where the Nsight analysis becomes particularly useful.
+
+Your wgmma_sm90.cu mainloop contains the following sequence, simplified from NVIDIA's source: 
+GitHub
+
+// Stage the next A/B tiles
+copy(copy_a, ...);
+copy(copy_b, ...);
+cp_async_fence();
+
+// Wait for asynchronous copies
+cp_async_wait<0>();
+
+// Prepare and issue WGMMA
+warpgroup_fence_operand(tCrC);
+warpgroup_arrive();
+
+cute::gemm(
+    mma,
+    tCrA(_,_,_,k_pipe_read),
+    tCrB(_,_,_,k_pipe_read),
+    tCrC
+);
+
+warpgroup_commit_batch();
+
+// Wait for WGMMA completion
+warpgroup_wait<0>();
+
+warpgroup_fence_operand(tCrC);
+
+
+There are two particularly interesting points.
+12.1 cp_async_wait<0>()
+This waits for all prior asynchronous copy groups issued by the calling thread to complete.
+
+That is a conservative synchronization point.
+
+Even though the code uses three shared-memory stages, waiting for all outstanding copy groups can reduce the ability to overlap copying with computation.
+
+For example:
+<img width="1072" height="321" alt="image" src="https://github.com/user-attachments/assets/e048d63a-7986-47e0-8488-b52c14491268" />
+
+ A more deeply overlapped implementation may allow the next copy stage to proceed while the current MMA batch executes, using synchronization only where the needed operands or memory buffers require it.
+
+This is a hypothesis worth testing against the source and SASS, not a suggestion to remove waits indiscriminately.
+
+Removing necessary synchronization would make the kernel incorrect.
+12.2 warpgroup_wait<0>()
+This waits until no committed WGMMA batches remain outstanding.
+
+It ensures that the asynchronous MMA work has completed before the code proceeds to operations that depend on completion.
+
+But waiting after each K-tile can limit the opportunity to have multiple MMA batches in flight.
+
+A more aggressive design may overlap MMA work across iterations if accumulator dependencies and shared-memory lifetime rules permit it.
+
+You cannot safely remove or move this wait without reconsidering those dependencies.
+12.3 Why this matters for your report
+Your profiler shows:
+- Long scoreboard: high.
+- Barrier stalls: noticeable.
+- Eligible warps: only 0.15 per scheduler.
+- Tensor pipeline: not saturated.
+The conservative waiting strategy is a plausible contributor to this combination.
+
+The next investigation is to identify exactly where the waiting occurs and whether it can be hidden by restructuring the pipeline.
+ 
 16. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28dfd2e-e9eb-4be7-94e1-367fe9322e68" />
 17. Instruction Statistics
@@ -783,8 +1186,379 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2a6a9258-6fb0-41c9-b31c-c630f075f834" />
 20. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d91c052a-1f3d-435c-a126-4bd4cb6bd21c" />
+Step 13. Analyze Instruction Statistics
+Screenshots 16–20 — Instruction Statistics and Executed Instruction Mix
+
+Your final screenshots show the low-level SASS instruction mix.
+
+The summary reports:
+Metric	Count
+Executed Instructions	64,723,200
+Issued Instructions	64,733,000
+
+These totals are close, which is normal for this workload.
+13.1 What does the Executed Instruction Mix tell us?
+The most prominent SASS instruction groups include:
+Opcode	General function	Connection to your kernel
+UMOV	Move a value to a uniform register	Kernel bookkeeping and address-related values
+IADD3	Integer addition	Address and index calculations
+LDGSTS	Asynchronous global-to-shared memory copy	Loading A/B tiles with cp.async
+UIADD3	Uniform integer addition	Loop/index/address bookkeeping
+HGMMA	Hopper warpgroup matrix multiplication	Actual Tensor Core GEMM
+IMAD	Integer multiply-add	Index and address calculations
+PRMT	Byte permutation	Data or value manipulation
+LDS	Shared-memory load	Shared-memory-related operations
+STG	Global-memory store	Writing C
+WARP* instructions	Warpgroup coordination	WGMMA synchronization
+
+These are broadly consistent with your source code.
+13.2 Why is there so much integer arithmetic?
+A GEMM kernel performs more than matrix multiplications.
+
+It must also:
+- Determine which tile each CTA owns.
+- Calculate addresses for A, B and C.
+- Advance K-tile loop counters.
+- Manage pipeline stage indices.
+- Generate addresses for asynchronous loads and stores.
+- Coordinate synchronization.
+IADD3, UIADD3, IMAD, and related instructions implement much of this work.
+
+Integer instructions are therefore not surprising in a highly optimized Tensor Core kernel.
+
+However, excessive address-generation overhead can reduce the rate at which useful work is issued.
+
+Your issue-slot utilization is low, but we cannot conclude from opcode counts alone that address calculations are the dominant problem.
+13.3 Why is HGMMA an important result?
+The instruction mix confirms that the kernel is actually executing Hopper's warpgroup Tensor Core instruction family.
+
+This matters because you compiled the executable on your RTX 5080 but executed it on H100.
+
+Your Nsight report provides hardware-level evidence that the intended Hopper matrix-multiplication instructions executed.
+13.4 One HGMMA instruction does much more than one FLOP
+Your source uses an MMA atom corresponding to a \(64\times64\times16\) operation.
+
+Its mathematical work is:
+\[
+2\times64\times64\times16
+\]
+
+\[
+=\boxed{131,072\text{ FLOPs}}
+\]
+
+per logical MMA operation of that shape.
+
+That is why we must not interpret the HGMMA SASS instruction count as a conventional scalar FLOP count.
+
+Furthermore, Nsight's executed-instruction counters are generally measured at warp-level granularity, while WGMMA is a coordinated warpgroup operation.
+
+The profiler's Tensor Core operations counter is the better source for determining total matrix arithmetic.
+13.5 What about LDGSTS?
+This is particularly important for your next project.
+
+Your current kernel uses cp.async, reflected by LDGSTS.
+
+The wgmma_tma_sm90.cu tutorial uses TMA instead.
+
+One of the most valuable comparisons will be:
+Current WGMMA tutorial	Future WGMMA + TMA tutorial
+Thread-driven cp.async copies	TMA-driven tile copies
+LDGSTS activity	TMA activity
+cp.async completion waits	Transaction-barrier coordination
+Explicit copy layout	TMA descriptors and partitioning
+WGMMA computation	WGMMA computation
+
+This is not a claim that TMA will always be faster. It is a way to examine how changing the data movement mechanism affects memory behavior, synchronization, and Tensor Core utilization.
+
+Step 14. Put all the evidence together
+We now have enough measurements to construct a useful working diagnosis.
+Observation	Measurement	Interpretation
+Dense FP16 Tensor Core throughput	42.29% of peak	Substantial compute headroom
+L1/TEX throughput	82.82%	High internal memory activity
+DRAM throughput	16.41%	HBM not saturated
+L2 hit rate	79.75%	Considerable on-chip caching
+Active warps per scheduler	1.99	Low resident-warp population
+Eligible warps per scheduler	0.15	Most warps often unable to issue
+No eligible warp	85.12%	Severe lack of ready work
+Long-scoreboard stall	~8.3 cycles/instruction	Significant memory dependency latency
+Global-store sector utilization	~50%	Potentially inefficient output writes
+TMA instructions	0	Expected for this tutorial
+
+My current performance diagnosis
+Confirmed: WGMMA is functioning correctly.
+
+The reported FP16 HGMMA operation count matches the expected GEMM FLOPs.
+
+
+
+Strong evidence: Memory-dependency latency is not being hidden sufficiently.
+
+High long-scoreboard stalls and very low scheduler eligibility support this conclusion.
+
+
+
+Likely contributor: Low CTA residency.
+
+The three-stage pipeline consumes approximately 96 KiB shared memory per CTA, consistent with two CTAs per SM.
+
+
+
+Possible optimization: Improve copy/computation overlap.
+
+The existing cp_async_wait<0>() and warpgroup_wait<0>() synchronization warrants investigation.
+
+
+
+Separate optimization candidate: Improve output-store transaction efficiency.
+
+The profiler reports that only about half of each global-store sector is useful.
+
+
+
+Step 15. What should you investigate next?
+I would prioritize these experiments in this order.
+Experiment A — Identify the instructions responsible for Long Scoreboard stalls
+Open your existing report in Nsight Compute.
+
+Select the Source tab and examine SASS along with the warp-stall sampling columns.
+
+Look for instructions associated with LDGSTS, waits, and other memory dependencies.
+
+Remember that stall samples can appear on the consumer instruction rather than the original load.
+Experiment B — Examine the Occupancy section
+We need to verify our shared-memory residency calculation.
+
+Look for:
+- Shared memory per CTA.
+- Registers per thread.
+- Theoretical occupancy.
+- Achieved occupancy.
+- Occupancy limiter.
+This will tell us whether shared memory is the controlling residency resource or whether register usage also constrains it.
+Experiment C — Test pipeline stages
+You could compare a two-stage and three-stage version of wgmma_sm90.cu.
+
+The tradeoff is interesting:
+Pipeline configuration	A/B shared memory per CTA	Possible residency effect
+2 stages	Approximately 64 KiB	May allow more CTAs
+3 stages	Approximately 96 KiB	Consistent with 2 CTAs per SM
+4 stages	Approximately 128 KiB	May reduce residency further
+
+These are approximate A/B storage requirements, excluding any additional allocations or alignment overhead.
+
+More pipeline stages do not automatically mean better performance.
+
+Additional stages can improve latency hiding but increase shared-memory consumption. Reducing stages can allow more resident CTAs but reduce copy/computation overlap.
+
+Your profiler provides a concrete reason to study that tradeoff.
+Experiment D — Compare wgmma_sm90 with wgmma_tma_sm90
+When you next rent an H100, use the same problem dimensions, precision, output layout and benchmarking method wherever possible.
+
+Then compare:
+- Dense Tensor Core throughput.
+- Long Scoreboard stalls.
+- Eligible warps per scheduler.
+- TMA and LDGSTS activity.
+- Kernel execution time.
+Because the tutorials differ in more than just one instruction, treat the comparison as a comparison of two implementations, not proof of the isolated benefit of TMA.
+
+Step 16. What you have learned from this first report
+You have already uncovered a meaningful GPU performance story:
+1. The kernel performs approximately 214.75 billion arithmetic operations in 651.87 μs.
+2. It achieves 329.43 TFLOP/s during the captured launch.
+3. It reaches 42.29% of the dense FP16 HGMMA peak.
+4. External HBM bandwidth is not saturated.
+5. There are very few ready warps despite plenty of GEMM work remaining.
+6. Memory-dependency stalls consume a substantial fraction of warp cycles.
+7. Three-stage shared-memory buffering likely contributes to low warp residency.
+8. Global output stores provide an additional optimization opportunity.
+This is the sort of reasoning a GPU performance engineer should build from Nsight Compute evidence.
+
+It is much more useful than looking only at the achieved TFLOP/s number.
+What I want to examine in your remaining screenshots
+The most valuable remaining sections would be Occupancy, Launch Statistics, Source Counters, any shared-memory bank-conflict metrics, and SASS-level stall attribution.
+
+Those can help us decide whether the kernel is primarily limited by the copy pipeline, synchronization, residency, or another dependency.
+
+Send your remaining screenshots in the next message. I'll continue the same detailed analysis, connect their measurements to the findings above, and revise any hypotheses that the new evidence contradicts.
+
+The most important lesson from this first batch: high Tensor Core performance requires more than fast matrix instructions. It requires keeping the data, synchronization, and instruction schedules moving so the Tensor Cores receive useful work consistently.
+
+**************************************************
+What is preventing your H100 WGMMA kernel from keeping more warps active?
+
+We previously suspected that shared-memory consumption was restricting occupancy. Your new report confirms that shared memory is the limiting resource, and it also reveals a separate tail effect and specific source-code locations worth investigating.
+**************************************************
 21. Launch Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c2ac58b1-a228-4a10-a770-1968661bfec0" />
+Step 17. Launch Statistics — Understand your kernel's hardware resource requirements
+Screenshot 1 — Launch Statistics
+
+The following values come directly from your screenshot.
+Metric	Measured value
+Grid Size	1,600 CTAs
+Block Size	128 threads
+Cluster Size	1 CTA
+Registers Per Thread	114
+Static Shared Memory Per Block	0
+Dynamic Shared Memory Per Block	98.30 KB
+Driver Shared Memory Per Block	1.02 KB
+Shared Memory Configuration Size	200.70 KB
+SMs	132
+TPCs	66
+Waves Per SM	3.03
+
+17.1 Grid Size: 1,600
+Your execution grid is:
+dim3 dimGrid(40, 40, 1);
+
+
+Therefore:
+\[
+40\times40=\boxed{1600\text{ CTAs}}
+\]
+
+Each CTA calculates one output tile of size \(128\times128\).
+
+Your total output matrix is \(5120\times5120\):
+\[
+\frac{5120}{128}\times\frac{5120}{128}=40\times40
+\]
+
+This confirms that the full GEMM output is covered exactly, without partially filled edge tiles.
+17.2 Block Size: 128 threads
+Your kernel launches:
+dim3 dimBlock(128, 1, 1);
+
+
+Each CTA contains:
+\[
+128/32=4\text{ warps}
+\]
+
+On Hopper, four warps form one warpgroup.
+
+This matters because WGMMA instructions operate cooperatively across the entire warpgroup.
+
+Each CTA in your experiment consists of one warpgroup executing the WGMMA kernel.
+17.3 Cluster Size: 1
+Your report says:
+Cluster Size = 1
+
+
+This means each thread-block cluster contains one CTA.
+
+It does not mean the GPU can run only one CTA per SM.
+
+These are separate concepts:
+- Cluster size: How many CTAs belong to one cluster.
+- CTA residency: How many CTAs can run simultaneously on one SM.
+Your kernel uses cluster size 1, but its resource configuration permits two resident CTAs per SM.
+
+This is an important distinction for when you later study wgmma_tma_sm90.cu, where the cluster configuration may differ.
+17.4 Registers Per Thread: 114
+Each thread requires 114 registers, according to the launch statistics.
+
+A simple register-count calculation gives:
+\[
+114\times128=14,592
+\]
+
+So each CTA requires at least approximately 14,592 32-bit register slots before accounting for allocation granularity.
+
+The H100 has 65,536 32-bit registers per SM.
+
+Ignoring register-allocation rounding:
+\[
+\left\lfloor\frac{65,536}{14,592}\right\rfloor=4
+\]
+
+That agrees with the Occupancy section's Register Block Limit = 4.
+
+This is not the limiting resource for your current kernel, because shared memory restricts residency to two CTAs.
+17.5 Dynamic Shared Memory: 98.30 KB
+This is the most important launch statistic.
+
+Your source defines:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};
+
+
+Here, bP = 3 specifies three pipeline stages.
+
+One A tile contains:
+\[
+128\times64=8192\text{ elements}
+\]
+
+Since FP16 uses 2 bytes:
+\[
+8192\times2=16,384\text{ bytes}
+\]
+
+One B tile has the same size.
+
+Thus, one stage needs:
+\[
+16,384+16,384=32,768\text{ bytes}
+\]
+
+Three stages need:
+\[
+3\times32,768
+=\boxed{98,304\text{ bytes}}
+\]
+
+That's exactly:
+\[
+98,304/1000=98.304\text{ decimal KB}
+\]
+
+or:
+\[
+98,304/1024=\boxed{96\text{ KiB}}
+\]
+
+Your profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
+17.6 What is Driver Shared Memory = 1.02 KB?
+Nsight Compute also reports approximately 1.02 KB reserved for the driver per CTA.
+
+This corresponds to roughly 1,024 bytes of additional shared-memory allocation.
+
+Therefore, the total resource consumption is approximately:
+\[
+98,304+1,024
+=\boxed{99,328\text{ bytes per CTA}}
+\]
+
+When calculating CTA residency, include this allocation rather than considering only the memory explicitly requested by the kernel.
+17.7 Shared Memory Configuration Size = 200.70 KB
+The report also shows:
+\[
+200.70\text{ KB}\approx200,704\text{ bytes}
+\]
+
+This is the configured shared-memory resource size that the occupancy calculation uses.
+
+Now compare one, two, and three CTAs:
+CTAs per SM	Shared memory required	Fits?
+1	99,328 bytes	Yes
+2	198,656 bytes	Yes
+3	297,984 bytes	No
+
+Mathematically:
+\[
+\left\lfloor\frac{200,704}{99,328}\right\rfloor
+=\boxed{2\text{ CTAs}}
+\]
+
+This directly explains the shared-memory occupancy limit.
+
+One useful detail: the configured shared-memory resource is not necessarily equal to the physical maximum shared-memory capacity advertised for the H100. Use the value reported for the actual kernel launch when analyzing its occupancy.
+ 
 22. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/3e783ec4-5a02-4c02-91bf-29e80fac5655" />
 
@@ -799,6 +1573,117 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/97d14bde-b577-49db-aa03-efc3b9d616e7" />
 27. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
+
+Step 18. Occupancy — Your central performance limitation is confirmed
+Screenshot 2 — Occupancy
+
+Your report gives:
+Metric	Value
+Theoretical Occupancy	12.50%
+Achieved Occupancy	12.42%
+Theoretical Active Warps Per SM	8
+Achieved Active Warps Per SM	7.95
+Block Limit Registers	4
+Block Limit Shared Memory	2
+Block Limit Warps	16
+Block Limit SM	32
+Block Limit Barriers	32
+
+18.1 Derive theoretical occupancy
+The H100 supports a maximum of 64 resident warps per SM.
+
+Your kernel can have:
+\[
+2\text{ CTAs per SM}\times4\text{ warps per CTA}
+=8\text{ warps per SM}
+\]
+
+Therefore:
+\[
+\text{Theoretical occupancy}
+=\frac{8}{64}\times100
+\]
+
+\[
+\boxed{12.50\%}
+\]
+
+This is exactly the value Nsight Compute reports.
+18.2 Derive achieved occupancy
+The measured average is 7.95 active warps per SM.
+
+Therefore:
+\[
+\text{Achieved occupancy}
+=\frac{7.95}{64}\times100
+\]
+
+\[
+\boxed{\approx12.42\%}
+\]
+
+Again, this matches the profiler.
+18.3 Why are theoretical and achieved occupancy almost identical?
+Compare:
+\[
+12.50\%\quad\text{versus}\quad12.42\%
+\]
+
+The difference is only 0.08 percentage points.
+
+This means the kernel generally achieves the residency permitted by its resource allocation.
+
+You do not have a large gap between theoretical and achieved occupancy. You have a low theoretical occupancy ceiling.
+
+That is a very different diagnosis.
+
+If theoretical occupancy were 50% but achieved occupancy were 12%, we would investigate why the hardware failed to sustain the possible residency.
+
+In your case, the hardware is maintaining almost all the available residency.
+
+The limitation is primarily imposed by the kernel's required resources.
+18.4 Identify which resource actually limits occupancy
+Your profiler provides several block limits:
+<img width="1243" height="236" alt="image" src="https://github.com/user-attachments/assets/a5347776-3eda-4e41-a97f-1a5c90712654" />
+The smallest block limit determines the maximum number of resident CTAs. Scale is relative to 32 CTA slots.
+The calculation is:
+\[
+\text{Resident CTAs per SM}
+=\min(4,2,16,32,32)
+\]
+
+\[
+=\boxed{2}
+\]
+
+Shared memory is definitively the occupancy-limiting resource.
+
+NVIDIA's occupancy documentation explains that registers, warps, shared memory, barriers and hardware block limits jointly determine residency. 
+NsightCompute
+
+18.5 How this changes our interpretation of your earlier Scheduler Statistics
+In the first batch, we observed:
+Active Warps Per Scheduler = 1.99
+Eligible Warps Per Scheduler = 0.15
+No Eligible = 85.12%
+
+
+Now we understand why the active-warp count is close to two.
+
+Your H100 has four warp schedulers per SM.
+
+With eight resident warps:
+\[
+8/4=2\text{ warps per scheduler}
+\]
+
+So the reported 1.99 active warps per scheduler is exactly what we would expect.
+
+The kernel's problem is not that blocks failed to launch.
+
+It is that each scheduler has very few resident warps available to hide dependencies, and most of those warps frequently cannot issue.
+
+Low available residency plus memory-related stalls is a more precise explanation of the observed underutilization.
  
 28. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
@@ -812,5 +1697,578 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 31. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f86b1250-5fcd-483c-aa4a-631855410f62" />
 
-  
+ Step 19. Understand GPU and Memory Workload Distribution
+Your first screenshot reports the following measurements.
+Metric	Value
+Average SM Active Cycles	825,167.17
+Average SMSP Active Cycles	823,939.69
+Average L1 Active Cycles	825,167.17
+Average L2 Active Cycles	1,065,944.89
+Average DRAM Active Cycles	280,188.60
+Total SM Elapsed Cycles	123,961,854
+Total SMSP Elapsed Cycles	495,847,416
+Total L1 Elapsed Cycles	123,961,854
+Total L2 Elapsed Cycles	89,041,760
+Total DRAM Elapsed Cycles	68,290,304
+
+19.1 What does “Active Cycles” mean?
+Start with one SM.
+
+An SM has active cycles when it has at least one warp resident and in flight.
+
+Consider this simplified example:
+<img width="1213" height="156" alt="image" src="https://github.com/user-attachments/assets/4bac66cb-0142-4957-a94b-3016e5670335" />
+For this example:
+\[
+\text{Active Cycles}=7
+\]
+
+\[
+\text{Elapsed Cycles}=10
+\]
+
+The SM's active-cycle fraction is:
+\[
+\frac{7}{10}\times100=70\%
+\]
+
+But here is the crucial distinction:
+
+An active SM does not necessarily issue instructions every active cycle.
+
+It can have resident warps that are all stalled.
+
+This distinction is especially relevant to your kernel because your earlier Scheduler Statistics reported 85.12% of cycles with no eligible warp. An SM can count as active during those cycles.
+
+NVIDIA confirms that sm__cycles_active counts cycles with at least one warp in flight. 
+NVIDIA Developer Forums
+
+19.2 What does Average SM Active Cycles = 825,167.17 mean?
+Your H100 has 132 SMs.
+
+The profiler measured active cycles for each SM and then calculated their average.
+
+Conceptually:
+\[
+\text{Average SM Active Cycles}
+=
+\frac{\sum_{i=0}^{131}\text{ActiveCycles}_i}{132}
+\]
+
+The result is:
+\[
+\boxed{825,167.17\text{ cycles}}
+\]
+
+That means each SM was active for approximately 825,167 cycles on average during this kernel.
+
+It does not mean every SM was active for exactly that duration.
+
+Some SMs were active longer; others finished their assigned work sooner.
+19.3 What does Total SM Elapsed Cycles mean?
+Your screenshot reports:
+\[
+\boxed{123,961,854\text{ cycles}}
+\]
+
+This is aggregated across the GPU's SM counter instances.
+
+It is not the duration of a single SM.
+
+We can divide by 132:
+\[
+\frac{123,961,854}{132}
+\approx939,105
+\]
+
+That gives approximately 939,105 elapsed cycles per SM counter instance.
+
+Now calculate the fraction of time SMs were active:
+\[
+\frac{825,167.17}{939,105}\times100
+\]
+
+\[
+\boxed{\approx87.9\%}
+\]
+
+This is a derived active-cycle fraction—not a reported SM arithmetic-throughput percentage.
+Why is this different from 42.29% Compute Throughput?
+Because they measure different things.
+Measurement	Interpretation
+~87.9% SM active-cycle fraction	SMs generally had resident work
+42.29% Compute Throughput	Achieved compute throughput relative to its reference peak
+12.42% Achieved Occupancy	Average resident warps relative to maximum warp capacity
+
+These measurements are compatible.
+
+Your H100 can have an SM active for most of the kernel while only eight warps reside there and many of them spend time waiting.
+
+That is exactly why understanding these metrics separately matters.
+
+Step 20. What is an SMSP?
+Your screenshot includes:
+Average SMSP Active Cycles = 823,939.69
+
+
+An SMSP is an SM subpartition.
+
+For your Hopper H100, each SM contains four subpartitions associated with warp scheduling and execution resources.
+
+Conceptually:
+One H100 Streaming Multiprocessor (SM)
+SMSP 0
+
+Warp scheduler and execution resources
+
+
+SMSP 1
+
+Warp scheduler and execution resources
+
+
+SMSP 2
+
+Warp scheduler and execution resources
+
+
+SMSP 3
+
+Warp scheduler and execution resources
+
+
+
+
+Simplified organization, not a complete hardware block diagram.
+With 132 SMs and four SMSPs per SM:
+\[
+132\times4=\boxed{528\text{ SMSPs}}
+\]
+
+Your workload table reports:
+\[
+\text{Total SMSP Active Cycles}=435,040,154
+\]
+
+Divide by the SMSP average:
+\[
+\frac{435,040,154}{823,939.69}\approx528
+\]
+
+This confirms that the profiler is aggregating the measurements across 528 SMSP counter instances.
+Compare SM and SMSP active cycles
+Unit	Average active cycles
+SM	825,167.17
+SMSP	823,939.69
+
+These are very close.
+
+This suggests that the four subpartitions of an SM generally remain active for similar portions of the execution.
+
+But it does not establish that their instruction throughput is identical.
+
+Activity and throughput are not the same measurement.
+
+Step 21. Understand L1, L2, and DRAM Active Cycles
+Your screenshot reports:
+Hardware component	Average active cycles
+L1	825,167.17
+L2	1,065,944.89
+DRAM	280,188.60
+
+You might look at this table and conclude:
+L2 has more active cycles than L1, so L2 must be the busiest or slowest component.
+
+That conclusion would not be justified.
+21.1 Why can't we directly compare these cycle counts?
+SMs, L2 caches, and DRAM interfaces have different clock domains, resource organizations, and definitions of activity.
+
+For example:
+\[
+1,065,944\text{ L2 cycles}
+\]
+
+and:
+\[
+825,167\text{ SM cycles}
+\]
+
+do not necessarily represent comparable amounts of real time or work.
+
+The correct comparisons are generally:
+- SM active cycles versus SM elapsed cycles.
+- L2 active cycles versus L2 elapsed cycles.
+- DRAM active cycles versus DRAM elapsed cycles.
+Do not divide an L2 cycle count by an SM cycle count and interpret the result as a bandwidth or latency ratio.
+21.2 How many L2 and DRAM counter instances are represented?
+Your second screenshot includes the workload distribution totals.
+
+For L2:
+\[
+\frac{85,275,591}{1,065,944.89}\approx80
+\]
+
+For DRAM:
+\[
+\frac{11,207,544}{280,188.60}=40
+\]
+
+Therefore, your report aggregates approximately:
+Counter level	Reporting instances
+SM	132
+SMSP	528
+L1	132
+L2	80
+DRAM	40
+
+These are the counter-instance counts inferred from the reported sums and averages. They should not automatically be interpreted as the number of physical memory chips or independent memory channels.
+21.3 What can we learn from these measurements?
+The active-cycle data can help determine whether a unit was active throughout a large portion of the kernel.
+
+But it does not tell us by itself whether the unit transferred data at maximum throughput.
+
+For actual memory bandwidth pressure, return to your earlier Memory Workload Analysis and Speed of Light sections.
+
+NVIDIA distinguishes activity counters from throughput counters because being active is not equivalent to operating at peak bandwidth. 
+NsightCompute
+
+
+Step 22. Understand the Workload Distribution table
+Screenshot 2 — Average, Min, Max, and Sum
+
+This table is particularly useful.
+Component	Average active cycles	Minimum	Maximum
+SM	825,167	804,757	936,301
+SMSP	823,940	801,211	936,606
+L1	825,167	804,757	936,301
+L2	1,065,945	1,059,155	1,071,739
+DRAM	280,189	278,208	282,200
+
+Let's focus on the SM row.
+22.1 What does Average mean?
+It is the average number of active cycles across the 132 SMs.
+\[
+\boxed{\text{Average}=825,167}
+\]
+
+22.2 What does Min mean?
+The least-active SM accumulated:
+\[
+\boxed{\text{Min}=804,757}
+\]
+
+That SM finished with fewer active cycles than the average SM.
+
+This does not necessarily mean it was slower or faster at processing individual instructions; it may simply have received less work or completed its assigned CTAs earlier.
+22.3 What does Max mean?
+The most-active SM accumulated:
+\[
+\boxed{\text{Max}=936,301}
+\]
+
+This SM was active for substantially longer than the average.
+
+Now calculate the difference between the most-active and least-active SMs:
+\[
+936,301-804,757
+\]
+
+\[
+=\boxed{131,544\text{ cycles}}
+\]
+
+That is a meaningful workload-duration difference.
+22.4 What does Sum mean?
+Your screenshot reports:
+\[
+\boxed{\text{Sum}=108,922,066}
+\]
+
+This is the total number of active SM cycles across the 132 SM instances.
+
+We can verify:
+\[
+\frac{108,922,066}{132}
+\approx825,167.17
+\]
+
+Exactly the average reported by Nsight Compute.
+
+The four columns are therefore:
+- Average: Typical active-cycle count across instances.
+- Min: Lowest active-cycle count.
+- Max: Highest active-cycle count.
+- Sum: Total across all instances.
+These are statistics across different hardware instances, not values sampled at four different times.
+
+Step 23. Understand the “SMs Workload Imbalance” warning
+Screenshots 1–3 — SMs, SMSPs, and L1 Slices Workload Imbalance
+
+Nsight Compute reports:
+SMs Workload Imbalance
+Est. Speedup: 10.43%
+
+
+It also reports that the most-active SM is 11.87% above the average according to its warning calculation, while the least-active SM is 2.47% below average.
+
+Let's understand why.
+23.1 Example: Two SMs executing unequal workloads
+Imagine two SMs:
+<img width="1210" height="246" alt="image" src="https://github.com/user-attachments/assets/7ed37186-2ce8-4e08-a8d8-4f7029b767d3" />
+Both SMs execute in parallel, but SM 1 finishes earlier. The overall kernel still waits for SM 0 to finish.
+The kernel's completion time depends on the slowest outstanding work.
+
+Ideally, we would distribute work so the SMs finish at approximately the same time.
+
+That is the motivation behind the workload imbalance warning.
+23.2 Apply this to your H100
+<img width="1239" height="197" alt="image" src="https://github.com/user-attachments/assets/f0c33bef-43ae-4e98-a031-17c37e637d87" />
+The most-active SM accumulated substantially more active cycles than the least-active SM.
+
+That's evidence of unequal work duration across SMs.
+
+It is not direct evidence that the most-active SM processed instructions more slowly.
+23.3 Why does the profiler estimate 10.43% speedup?
+The profiler recognizes that some SMs remain active longer than others.
+
+If the work could be distributed more evenly, the longest-running SM might finish sooner, reducing the overall kernel duration.
+
+But 10.43% is a heuristic estimate, not a demonstrated optimization result.
+
+It does not mean changing one line of code will automatically make your kernel 10.43% faster.
+
+Nor should you add it to other speedup estimates in the report.
+23.4 Why might your GEMM have workload imbalance?
+Your output matrix is \(5120\times5120\), and your CTA tile is \(128\times128\).
+
+Therefore:
+\[
+40\times40=\boxed{1600\text{ CTAs}}
+\]
+
+Each CTA performs the same nominal GEMM tile computation.
+
+Also, 5120 is divisible by 128, and 4096 is divisible by 64. There is no partially filled boundary tile in the default problem.
+
+This makes unequal mathematical work at the matrix boundaries an unlikely explanation.
+
+More plausible contributors include:
+- CTA scheduling differences.
+- Cache and memory latency differences among CTAs.
+- Partial-wave or tail effects.
+- Differences in when SMs become available to receive additional CTAs.
+Your earlier Launch Statistics also reported a Tail Effect warning.
+
+That supports investigating the last wave of CTAs, but we cannot determine the precise cause of the SM imbalance from this table alone.
+
+An additional detail: the earlier reported Waves Per SM = 3.03 does not follow the simple calculation using 1,600 CTAs, 132 SMs and the measured two-CTA residency limit. That calculation gives \(1600/(132\times2)\approx6.06\). I would not rely on the earlier 25% tail-speedup estimate quantitatively without resolving this discrepancy.
+23.5 How significant is this bottleneck?
+I would treat it as a secondary optimization opportunity, not the first problem to solve.
+
+Your previous report showed:
+Performance concern	Evidence
+Long-scoreboard stalls	Approximately 8.3 cycles per issued instruction
+Eligible warps per scheduler	0.15
+No eligible warp	85.12%
+SM workload imbalance	Estimated local speedup 10.43%
+
+The scheduler and warp-stall findings suggest a more fundamental inability to keep instructions ready for execution.
+
+Improving workload distribution could help, but it might not fix the memory and synchronization dependencies that limit WGMMA throughput.
+
+Step 24. Why are SMSP and L1 imbalance warnings almost identical?
+Your screenshots show:
+Warning	Estimated speedup
+SMs Workload Imbalance	10.43%
+SMSPs Workload Imbalance	10.55%
+L1 Slices Workload Imbalance	10.43%
+
+These results are closely related.
+
+An SM includes multiple execution subpartitions and an associated L1/TEX subsystem.
+
+If an SM finishes its assigned CTAs earlier than another SM, its SMSPs and associated cache structures may also stop experiencing activity earlier.
+
+Therefore, the imbalance can appear in multiple hardware-unit measurements.
+
+This does not mean there are three independent performance problems whose estimated improvements can be added together.
+
+The SM, SMSP, and L1 warnings may largely reflect the same underlying uneven execution duration.
+What about L2 and DRAM?
+Notice that L2 and DRAM active cycles are much more evenly distributed across their reporting instances.
+
+For L2:
+\[
+\text{Min}=1,059,155
+\]
+
+\[
+\text{Max}=1,071,739
+\]
+
+Their spread is approximately 1.2% of the average.
+
+For DRAM:
+\[
+\text{Min}=278,208
+\]
+
+\[
+\text{Max}=282,200
+\]
+
+Their spread is approximately 1.4% of the average.
+
+This suggests that the per-instance activity imbalance is much more pronounced among SMs and SMSPs than among L2 and DRAM reporting instances.
+
+It does not prove that memory accesses are perfectly balanced or that memory latency is irrelevant.
+
+Step 25. Analyze Source Counters
+Screenshots 3–4 — Source Counters
+
+I would definitely not skip this section either.
+
+Source Counters helps connect your performance measurements to particular source lines and SASS instructions.
+
+NVIDIA describes this section as collecting branch behavior, sampled warp stalls and source-level memory inefficiency information. 
+NsightCompute
+
+25.1 Branch Efficiency = 100%
+Your report shows:
+Metric	Value
+Branch Instructions	428,800
+Branch Efficiency	100%
+Average Divergent Branches	0
+
+This is encouraging.
+
+It means the measured branch behavior does not show divergent branch targets as a significant problem.
+
+Your kernel contains loops and conditional code, but its control flow can still be uniform among participating warp lanes.
+
+Conclusion: Ordinary warp branch divergence is not a leading optimization target for this kernel.
+25.2 Uncoalesced Global Accesses
+Your screenshot reports:
+Uncoalesced Global Accesses
+
+1,638,400 excessive sectors
+111,411,200 total sectors
+
+Est. Speedup: 1.41%
+
+
+The excessive-sector ratio is:
+\[
+\frac{1,638,400}{111,411,200}\times100
+\]
+
+\[
+\boxed{\approx1.47\%}
+\]
+
+The displayed whole-number percentage is rounded in the profiler's warning.
+
+This means the model attributes a relatively small fraction of total sectors to excessive global-memory transactions.
+
+Here is the distinction:
+
+An excessive sector is a transaction the hardware could potentially avoid with a more efficient memory access pattern.
+
+A memory operation may request more 32-byte sectors than are ideally necessary for the useful data.
+
+That can happen due to scattered addresses, poor alignment, or another inefficient access pattern.
+25.3 Where do the excessive sectors come from?
+Your screenshots identify repeated entries at:
+axpby.hpp:90
+
+
+This is extremely useful.
+
+The axpby routine is associated with the GEMM's output epilogue, where the accumulator is combined with the existing output according to:
+\[
+C=\alpha AB+\beta C
+\]
+
+Consequently, the results suggest that some of the excessive global transactions arise in the output-update path.
+
+The repeated entries at the same source line can correspond to different compiled SASS instructions associated with that line.
+
+Each visible entry shows 12,800 excessive sectors.
+
+This supports our earlier observation that the epilogue's global memory access pattern deserves investigation.
+
+However, we must be careful: the 1.41% estimated speedup in Source Counters and the earlier 36.38% estimated speedup associated with the L1TEX store-access warning come from different local diagnostic models. They are not directly comparable whole-kernel speedup measurements.
+25.4 Warp Stall Sampling — This is particularly important
+Your screenshot shows the following hot locations:
+Source location	Samples	Share shown
+wgmma_sm90.cu:235...	26,368	50%
+wgmma_sm90.cu:240...	10,392	20%
+wgmma_sm90.cu:235...	1,087	2%
+copy_sm80.hpp:64...	807	2%
+copy_sm80.hpp:64...	800	2%
+
+The first two entries are responsible for approximately 70% of the displayed warp-stall samples.
+
+This is a more focused clue than the overall imbalance percentage.
+
+But 50% of stall samples does not mean that the corresponding source line consumes 50% of the kernel's execution time.
+
+Warp Stall Sampling is statistical sampling of instruction locations and their scheduler states. The percentage is a share of samples, not an elapsed-time percentage. 
+NsightCompute
+
+
+Another important detail: the first and third entries can map to different SASS instructions that share the same CUDA source line.
+25.5 What should we investigate at lines 235 and 240?
+We need the actual instructions associated with those lines.
+
+The screenshot truncates the locations, so it does not conclusively identify the operations.
+
+For example, if the relevant instruction is waiting for a memory result, we would investigate its data dependencies.
+
+If it is a synchronization wait, we would investigate the synchronization schedule and whether independent work could overlap it.
+
+If it is an instruction repeatedly executed in the inner loop, we would examine its issue frequency and dependence chain.
+
+Do not change the code until you know which instructions are responsible for the stall samples.
+
+Step 26. Connect all four screenshots to the earlier profiling results
+We can now create a more complete performance diagnosis.
+Observation	Evidence	Priority
+Tensor Core throughput below peak	Dense HGMMA at 42.29%	Important
+Low theoretical occupancy	12.5%, limited by shared memory	Important
+Limited eligible warps	0.15 per scheduler	High
+Long-scoreboard stalls	~8.3 cycles per issued instruction	High
+Uneven SM active durations	804,757–936,301 cycles	Secondary
+Excessive global transactions	1,638,400 sectors	Secondary
+Branch divergence	100% branch efficiency	Low concern
+
+How I would interpret the complete report
+Your kernel is not simply suffering because some SMs finish earlier than others.
+
+The more fundamental observation is that many resident warps cannot issue instructions while the kernel is executing.
+
+Your shared-memory configuration limits the number of resident warps. Your scheduler metrics indicate a shortage of eligible instructions. Your warp-state metrics point to memory dependencies and synchronization as important sources of waiting.
+
+The workload-distribution section adds another effect: not all SMs remain active for the same duration, potentially creating a tail in which some GPU resources become idle before the kernel finishes.
+
+These effects can coexist.
+
+Step 27. What should you study next?
+I recommend the following order:
+1. Source tab — inspect wgmma_sm90.cu around lines 235 and 240. Find the SASS instructions and stall reasons associated with the two largest sample counts.
+2. Analyze the copy and synchronization pipeline. Correlate the high-stall instructions with cp.async copying, barrier operations, and WGMMA waits.
+3. Investigate the epilogue at axpby.hpp:90. Determine why some global-memory accesses create excessive sectors.
+4. Compare kernel timing after targeted changes. Evaluate whether reducing shared-memory stages or changing the copy schedule improves execution time without introducing correctness problems.
+I would not optimize the SM workload imbalance first. It is worth understanding, but the Source Counters and warp-stall information offer more actionable starting points.
+Final assessment of these screenshots
+You should keep both “GPU and Memory Workload Distribution” and “Source Counters” in your study notes.
+
+The important lessons are:
+- Active cycles are not compute cycles. An SM with stalled resident warps is still active.
+- Average, Min, and Max reveal differences between hardware instances. They do not directly measure instruction throughput.
+- Workload imbalance can produce an execution tail. The slowest outstanding work determines when the kernel finishes.
+- Nsight speedup estimates are hypotheses, not promises.
+- Source Counters helps turn a general bottleneck diagnosis into an investigation of particular instructions.
+Your next most useful screenshot would be the Source tab with the SASS instructions associated with wgmma_sm90.cu:235 and wgmma_sm90.cu:240. That would let us move from general profiling analysis to investigating the actual cause of the stalls in your Hopper code.
+
 </pre>
