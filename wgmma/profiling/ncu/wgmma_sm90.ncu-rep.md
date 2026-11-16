@@ -776,7 +776,6 @@ while separate wavefronts require different service cycles.
 2. Example: One warp loads 32 integers from shared memory
 Consider:
 __shared__ int A[32];
-
 int tid = threadIdx.x;
 int value = A[tid];
 
