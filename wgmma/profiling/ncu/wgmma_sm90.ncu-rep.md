@@ -786,8 +786,8 @@ The total memory requested is:
 Hopper shared memory contains 32 banks, each providing a 4-byte word per bank per service cycle.
 If all threads access distinct banks, the hardware can service the request in one wavefront.
 In fact, another measurement in the screenshot suggests we should investigate the counter carefully 
-before modifying your CuTe shared-memory layout.
-1. Start with your Shared Memory table
+before modifying the CuTe shared-memory layout.
+1. Start with the Shared Memory table
 The first screenshot shows:
 Access type                   Instructions Requests   Wavefronts   % Peak  Bank conflicts
 Shared Load	                  0	           0	         0	           0%	     0
@@ -802,15 +802,15 @@ Total	                        6,758,400	   6,758,400	 112,558,549	 74.44%	 4,810
 NVIDIA defines the columns as counts of warp-level instructions, requests, memory-service 
 wavefronts, throughput utilization, and reported bank-conflict events.
 
-2. Why are ordinary Shared Load and Shared Store both zero?
+2. Why are ordinary Shared Load(read, reads that value from shared memory. This is a Shared Load.) 
+and Shared Store(write, writes a value into shared memory. This is a Shared Store.) both zero?
 You might initially think:
-My kernel uses shared memory extensively. Why does Nsight Compute say zero shared loads and stores?
-
-The answer is that your kernel primarily uses two specialized mechanisms:
+The kernel uses shared memory extensively. Why does Nsight Compute say zero shared loads and stores?
+The answer is that the kernel primarily uses two specialized mechanisms:
 - cp.async to move input data from global memory directly into shared memory.
 - WGMMA to consume input operands from shared memory.
 These are not necessarily counted as ordinary LDS and STS instructions.
-Data movement in your kernel
+Data movement in the kernel
 Global memory (A and B)
       |
       V
@@ -830,159 +830,96 @@ Accumulator registers (tCrC)
 Thus, zero ordinary Shared Load instructions does not mean the Tensor Cores never read shared memory.
 
 For an SS-mode WGMMA, operand data is consumed from shared memory through descriptors.
-This is the first important lesson from your table.
 
 3. Understand Instructions = 6,758,400
-Your table reports:
+The table reports:
 Shared Store From Global Load
 Instructions = 6,758,400
-
-
 This counts executed SASS instructions at warp granularity.
-
-In your kernel, the relevant instruction is LDGSTS, generated from the cp.async copying mechanism.
-
+In the kernel, the relevant instruction is LDGSTS, generated from the cp.async copying mechanism.
 One warp-level instruction can transfer data on behalf of many threads.
-
 Therefore:
-
 6,758,400 instructions does not mean 6,758,400 bytes or 6,758,400 individual thread loads.
-
 It is a count of executed warp-level copy instructions.
-
 We can calculate how many such instructions each CTA executes on average.
-
-Your launch has 1,600 CTAs:
-\[
-\frac{6,758,400}{1600}
-=\boxed{4224\text{ warp-level copy instructions/CTA}}
-\]
-
+The launch has 1,600 CTAs:
+6,758,400 / 1600
+= 4224 warp-level copy instructions / CTA
 That is the average for this launch. The total includes the copy work performed throughout the GEMM mainloop.
+     
 4. Understand Requests = 6,758,400
-Your table shows the same number of requests:
-\[
-\text{Instructions}=6,758,400
-\]
-
-\[
-\text{Requests}=6,758,400
-\]
+The table shows the same number of requests:
+Instructions = 6,758,400
+Requests = 6,758,400
 
 For this memory path, each executed warp-level copy instruction accounts for one shared-memory request.
-
 This is expected.
-
 An instruction and a request are not the same thing as a wavefront.
-
 A request may require multiple wavefronts to service all the data involved.
-
-That distinction is particularly important for your kernel because each lane may transfer 16 bytes.
+That distinction is particularly important for the kernel because each lane may transfer 16 bytes.
 
 5. Understand Wavefronts = 27,033,600
-Your screenshot shows:
-\[
-\text{Wavefronts}=27,033,600
-\]
-
-Let's calculate the average wavefronts per request:
-\[
-\frac{27,033,600}{6,758,400}
-=\boxed{4.0}
-\]
-
-This is an extremely interesting result.
+The screenshot shows:
+Wavefronts = 27,033,600
+Calculate the average wavefronts per request:
+27,033,600 / 6,758,400
+= 4.0
 Why might one request need four wavefronts?
-Your CuTe copy atom uses:
+The CuTe copy atom uses:
 SM80_CP_ASYNC_CACHEALWAYS<uint128_t>
-
-
 A uint128_t represents 128 bits, or 16 bytes.
-
 Assuming a full warp participates:
-\[
-32\text{ threads}\times16\text{ bytes}
-=512\text{ bytes}
-\]
+32  threads x 16 bytes
+=512 bytes
 
 The shared-memory service mechanism processes requests in bounded transaction-sized portions.
-
 For a straightforward 512-byte warp request, four 128-byte wavefronts may be needed:
-\[
-\frac{512}{128}=\boxed{4}
-\]
+512 / 128 = 4
 
 Illustration: One 512-byte warp copy
 Wave 1   Wave 2   Wave 3   Wave 4
 128 B    128 B    128 B    128 B
 Four wavefronts can be necessary for a wide access even when the shared-memory bank mapping is conflict-free.
-NVIDIA confirms that wide shared-memory accesses are split into multiple wavefronts without necessarily causing bank conflicts. 
-NVIDIA Developer Forums
-
 What this tells us
-Your measured value is:
-\[
-\boxed{4\text{ wavefronts/request}}
-\]
-
+The measured value is:
+4 wavefronts / request
 That is consistent with the expected four wavefronts for a 16-byte-per-lane copy.
-
 Therefore, four wavefronts per request is not, by itself, evidence of bank conflicts.
-
-This brings us to the most subtle part of your report.
+This brings us to the most subtle part of the report.
 
 6. Analyze Bank Conflicts = 4,810,514
-Your screenshot reports:
-\[
-\boxed{4,810,514\text{ bank-conflict events}}
-\]
+The screenshot reports:
+4,810,514 bank-conflict events
 
 All of those events appear under:
 Shared Store From Global Load
-
-
 The ordinary shared-load and shared-store rows show zero.
+ 
 6.1 What is a shared-memory bank conflict?
 Hopper shared memory is organized into 32 banks.
-
 For ordinary 32-bit accesses, successive 32-bit words map to successive banks.
-
 A simplified mapping is:
-\[
-\text{Bank}=
-\left(\frac{\text{Byte Address}}{4}\right)\bmod32
-\]
-
+Bank =
+( Byte Address / 4 ) mod 32
 Suppose two threads access different 32-bit words mapping to the same bank in the same serviced access.
-
 The bank may be unable to satisfy both simultaneously, requiring serialization.
-
 That is a bank conflict.
-
-NVIDIA documents this bank organization and the resulting serialization. 
-NsightCompute
 
 6.2 Calculate reported conflicts per request
 Your measurements are:
-\[
-\text{Bank Conflicts}=4,810,514
-\]
-
-\[
-\text{Requests}=6,758,400
-\]
-
+Bank Conflicts = 4,810,514
+Requests = 6,758,400
 Therefore:
-\[
-\frac{4,810,514}{6,758,400}
-\approx\boxed{0.712}
-\]
-
+4,810,514 / 6,758,400
+approximate 0.712
 This is approximately 0.71 reported conflict-counter events per request.
-
-But be careful: it does not mean 71.2% of requests experienced a bank conflict. Counter events are not necessarily a binary one-conflict-or-no-conflict count per request.
-
+It does not mean 71.2% of requests experienced a bank conflict. Counter events are not necessarily a binary 
+one-conflict-or-no-conflict count per request.
 It also does not directly measure a 71.2% performance penalty.
+A memory request is something a warp asks the memory subsystem to perform. A counter event is something the GPU 
+hardware records as occurring while servicing work. They are not necessarily related one-to-one.
+For your H100 experiment, 4,810,514 counter events does not mean 4,810,514 memory requests experienced bank 
+ 
 6.3 Why the result deserves closer investigation
 Here is the interesting combination:
 Metric                            Result
@@ -991,11 +928,16 @@ Copy wavefronts                   27,033,600
 Wavefronts per request	Exactly    4
 Reported bank conflicts           4,810,514
 
-If every reported bank conflict represented an additional serialized wavefront beyond the four expected from the wide copy, we might expect the measured wavefront count to exceed the four-per-request baseline.
-
+If every reported bank conflict represented an additional serialized wavefront beyond the four expected from 
+the wide copy, we might expect the measured wavefront count to exceed the four-per-request baseline.
 But it does not.
-
 That means we should not interpret the bank-conflict counter as a direct count of additional wavefronts.
+** The wgmma_sm90.cu kernel normally needs four shared-memory wavefronts to process one wide cp.async request. 
+If a bank conflict forces the hardware to perform additional memory-service work, we might expect more than
+four wavefronts.
+But the Nsight Compute report shows exactly four wavefronts per request, even though the bank-conflict 
+counter is nonzero. Four wavefronts are necessary because of the size of the request, not because of bank conflicts.
+ 
 6.4 An important NVIDIA profiler caveat
 NVIDIA engineers have documented that some shared-memory conflict counters also count arbitration or stalled-cycle events rather than exclusively counting genuine address-based bank conflicts.
 
