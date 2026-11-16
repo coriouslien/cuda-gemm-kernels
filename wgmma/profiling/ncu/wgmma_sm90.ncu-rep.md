@@ -750,7 +750,6 @@ Memory Tables Analysis:
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/aeaa2e4e-d05d-4741-a6b5-d4cbb5ad0b78" />
 5)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/d99d35cc-5f30-46f7-9c78-3bbcb098e16f" />
-Nov 15
 The wgmma_sm90.cu kernel moves matrix data through shared memory, L1/TEX, L2, and HBM.
 The most important finding is that Nsight Compute reports 4,810,514 shared-memory bank-conflict 
 events in the Shared Store From Global Load path. However, that number alone does not prove 
@@ -789,16 +788,18 @@ In fact, another measurement in the screenshot suggests we should investigate th
 before modifying the CuTe shared-memory layout.
 1. Start with the Shared Memory table
 The first screenshot shows:
-Access type                   Instructions Requests   Wavefronts   % Peak  Bank conflicts
-Shared Load	                  0	           0	         0	           0%	     0
-Shared Load Matrix	           0	           0	         0	           0%	     0
-Shared Store	                 0	           0	         0	           0%	     0
-Shared Store Matrix           0	           0	         0	           0%	     0
-Shared Store From Global Load	6,758,400	   6,758,400	 27,033,600	  5.45%	  4,810,514
-Shared Atomic	                0	           0	         0	           0%	     0
-Other	                        —	           —	         85,524,949	  68.99%	 0
-Total	                        6,758,400	   6,758,400	 112,558,549	 74.44%	 4,810,514  
-
+</pre>
+|Access type|Instructions Requests|Wavefronts|% Peak|Bank conflicts|
+|:-------|:------|:-------|:-------|:------|
+|Shared Load|0|0|0|0%|0|
+|Shared Load Matrix|0|0|0|0%|0|
+|Shared Store|0|0|0|0%|0|
+|Shared Store Matrix|0|0|0|0%|0|
+|Shared Store From Global Load|	6,758,400|6,758,400|27,033,600| 5.45%|4,810,514|
+|Shared Atomic|0|0|0|0%|0|
+|Other|—	|—|85,524,949|68.99%|0|
+|Total|6,758,400|6,758,400|112,558,549|74.44%|4,810,514|  
+<pre>
 NVIDIA defines the columns as counts of warp-level instructions, requests, memory-service 
 wavefronts, throughput utilization, and reported bank-conflict events.
 
@@ -936,8 +937,164 @@ That means we should not interpret the bank-conflict counter as a direct count o
 If a bank conflict forces the hardware to perform additional memory-service work, we might expect more than
 four wavefronts.
 But the Nsight Compute report shows exactly four wavefronts per request, even though the bank-conflict 
-counter is nonzero. Four wavefronts are necessary because of the size of the request, not because of bank conflicts.
+counter is nonzero.
+1. First, imagine there are no bank conflicts
+The CuTe copy atom is:
+SM80_CP_ASYNC_CACHEALWAYS<uint128_t>
+Each participating thread transfers 16 bytes.
+For one full warp:
+32 threads x 16 bytes
+=512 bytes
+For a conflict-free shared-memory request, assume the hardware services 128 bytes per wavefront.
+512 / 128 = 4 wavefronts
+Example A — No extra wavefronts
+One 512-byte memory request
+
+Wave 1    Wave 2    Wave 3    Wave 4
+128 B     128 B     128 B     128 B
+Expected: 4 wavefronts
+Four wavefronts are necessary because of the size of the request, not because of 
+bank conflicts.
+2. Now imagine a bank conflict creates one extra wavefront
+Suppose an inefficient address mapping prevents some memory accesses from being serviced together.
+
+The hardware might need an additional wavefront to finish the request.
+Example B — One additional wavefront
+One 512-byte memory request
+Wave 1    Wave 2    Wave 3    Wave 4   Wave 5
+needed    needed    needed    needed   extra
+
+Actual: 5 wavefronts instead of 4
+In this simplified example:
+Ideal Wavefronts = 4
+Actual Wavefronts = 5
+Excessive Wavefronts = 5-4 = 1
+This additional wavefront represents extra memory-service work.
  
+3. Apply this to 10 memory requests
+Suppose the kernel generates 10 identical wide memory requests.
+</pre>
+|Situation|Requests|Ideal wavefronts|Actual wavefronts|
+|:-------|:------|:-------|:-------|
+|No extra serialization|	10	|40|	40|
+|Two additional wavefronts	|10	|40	|42|
+|Six additional wavefronts|	10|	40|	46|
+<pre>
+The equation is:
+Excessive Wavefronts = Actual - Ideal
+In this simplified model, an address-based bank conflict can increase the actual number above the 
+ideal number.
+ 
+4. Now examine the real H100 measurements
+The Nsight Compute Shared Memory table reports:
+Metric                           Value
+Requests                         6,758,400
+Actual wavefronts                27,033,600
+Reported bank-conflict events    4,810,514
+
+Assuming four ideal wavefronts per request:
+6,758,400 x 4 wavefronts =
+27,033,600
+
+That is exactly equal to the measured total:
+Measured Wavefronts = 27,033,600
+Therefore:
+27,033,600 / 6,758,400 = 4.0
+
+The cp.async copy-path comparison: 
+Calculated four-wavefront baseline               27,033,600
+Measured wavefronts                              27,033,600
+The measured count matches the expected four-wavefront baseline.
+
+5. Then why does Nsight Compute report 4,810,514 bank conflicts?
+It would be incorrect to calculate:
+27,033,600 + 4,810,514
+and conclude that the GPU actually serviced 31,844,114 wavefronts.
+The two counters do not necessarily count the same kind of event.
+A reported bank-conflict counter can reflect conflict-related arbitration events that do not each 
+correspond to an additional measured wavefront. Specialized GPU memory paths can make interpretation 
+more complicated.
+Therefore, the measurements suggest that the bank-conflict count should not be interpreted as 
+4,810,514 extra wavefronts.
+However, there is one important qualification: we have calculated a four-wavefront baseline from the 
+expected request width. We have not measured the profiler's own ideal-wavefront counter for every 
+instruction. Aggregate averages alone cannot definitively establish that all accesses are 
+conflict-free.
+6. How do we determine whether actual bank conflicts are slowing the kernel?
+The best approach is to examine these three measurements in Nsight Compute:
+</pre>
+|Metric|Meaning|
+|:-------|:------|
+|Shared Wavefronts Ideal|	Wavefronts expected for the access pattern without avoidable serialization|
+|Shared Wavefronts	|Wavefronts actually serviced|
+|Shared Wavefronts Excessive	Additional| wavefronts attributed to inefficient accesses|
+<pre>
+For the relevant LDGSTS instructions, if actual and ideal wavefront counts agree, that is stronger 
+evidence that address-based bank conflicts are not adding significant wavefront overhead.
+If actual wavefronts exceed ideal wavefronts, we have more concrete evidence of inefficient 
+memory servicing.
+
+To remember:
+Four wavefronts are expected for the wide cp.async request. A genuine bank conflict may require additional 
+wavefronts, but a nonzero bank-conflict hardware counter does not necessarily mean additional wavefronts 
+were generated.
+
+That is why the H100 result is interesting: the measured four wavefronts per request match the expected 
+baseline, despite the 4.81 million reported conflict events.
+
+Compare narrow and wide cp.async operations
+The cp.async instruction supports several transfer sizes.
+</pre>
+|Transfer size|	Bytes per thread|	Bytes per full warp|
+|:-------|:------|:-------|
+|32-bit|	4 bytes|	128 bytes|
+|64-bit	|8 bytes	|256 bytes|
+|128-bit (wide)|	16 bytes|	512 bytes|
+<pre>
+The kernel uses the third case.
+32 threads x 16 bytes
+= 512 bytes
+This is why we referred to it as a wide cp.async.
+2. Visualize the difference
+Amount of data transferred by one full warp
+4 bytes/thread                         128 bytes
+128 B
+ 
+8 bytes/thread                         256 bytes
+128 B    128 B
+
+16 bytes/thread                        512 bytes
+128 B    128 B    128 B   128 B
+Conceptual comparison assuming all 32 warp lanes participate.
+ 
+3. How does this relate to wavefronts?
+In our simplified shared-memory service model, one wavefront handles up to 128 bytes.
+For the wide copy:
+Wavefronts = 512 / 128 = 4
+That's consistent with the actual Nsight Compute measurements:
+27,033,600 wavefronts / 6,758,400 requests
+= 4  wavefronts/request
+Importantly, these four wavefronts can be necessary even without bank conflicts. The actual ideal 
+count also depends on the address pattern and participating lanes.
+ 
+4. Why use a wide cp.async?
+A 16-byte-per-thread copy can move more data per instruction than a 4-byte-per-thread copy.
+
+For example, to copy 512 bytes using all 32 threads:
+- At 4 bytes per thread, we need four warp-level copy instructions.
+- At 16 bytes per thread, we need only one warp-level copy instruction.
+This can reduce instruction overhead and help move matrix tiles into shared memory efficiently, provided 
+the alignment and memory layout support the wider accesses.
+“Wide cp.async” is descriptive terminology, not a separate official CUDA instruction. The instruction 
+is still cp.async; we're simply emphasizing its 16-byte-per-thread transfer width.
+
+To remember: A wide cp.async transfers more bytes per participating thread per instruction. It does not
+mean that the GPU has wider memory bandwidth or that the instruction necessarily completes faster.
+
+ 
+
+
+Nov 16
 6.4 An important NVIDIA profiler caveat
 NVIDIA engineers have documented that some shared-memory conflict counters also count arbitration or stalled-cycle events rather than exclusively counting genuine address-based bank conflicts.
 
@@ -1334,158 +1491,104 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 
  
 
-
+Nov 16
 11. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
-
  12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
+ 
 Step 10. Analyze Scheduler Statistics
 Screenshots 11–12 — Scheduler Statistics and Warps Per Scheduler
-
-This is probably the most revealing part of your current report.
-
-Your numbers:
-Metric	Value
-Active Warps Per Scheduler	1.99
-Eligible Warps Per Scheduler	0.15
-Issued Warp Per Scheduler	0.15
-No Eligible	85.12%
-One or More Eligible	14.88%
-
+This is probably the most revealing part of the current report.
+The numbers:
+</pre>
+|Metric| Value|
+|:-------|:------|
+|Active Warps Per Scheduler|	1.99|
+|Eligible Warps Per Scheduler|	0.15|
+|Issued Warp Per Scheduler|	0.15|
+|No Eligible	|85.12%|
+|One or More Eligible|	14.88%|
+<pre>
 10.1 What is an active warp?
-An active warp is resident on a scheduler. It has been allocated GPU resources and has not finished executing.
-
+An active warp is resident on a scheduler. It has been allocated GPU resources and has not finished 
+executing.
 But an active warp does not necessarily have an instruction ready to issue.
+ 
 10.2 What is an eligible warp?
-An eligible warp has an instruction ready to execute, with the required dependencies and execution resources available.
-
+An eligible warp has an instruction ready to execute, with the required dependencies and execution 
+resources available.
 A warp may be active but not eligible because it is waiting for:
 - A memory dependency.
 - Another instruction to finish.
 - A synchronization barrier.
 - An available execution pipeline.
+ 
 10.3 Understand 1.99 active versus 0.15 eligible warps
 Imagine that a scheduler has two resident warps.
-
 Most of the time, neither warp can issue its next instruction.
+The measured result is approximately:
+Active warps = 1.99
+Eligible warps = 0.15
 
-Your measured result is approximately:
-\[
-\text{Active warps}=1.99
-\]
-
-\[
-\text{Eligible warps}=0.15
-\]
-
-That tells us the warps are present, but they are frequently unable to make forward progress at the instruction-issue stage.
+That tells us the warps are present, but they are frequently unable to make forward progress at the 
+instruction-issue stage.
+ 
 10.4 Understand No Eligible = 85.12%
 This is the key result.
-\[
-\boxed{85.12\%}
-\]
-
+85.12%
 For approximately 85% of scheduler cycles, no resident warp is eligible.
-
-This explains why your issue slots are busy only around 14.86% of the time.
-\[
-100-85.12=14.88\%
-\]
-
+This explains why the issue slots are busy only around 14.86% of the time.
+100-85.12=14.88%
 The near agreement with the measured issue-slot utilization is not accidental.
-
-Your warp schedulers are often idle because they have no ready instructions—not because there is no work remaining in the GEMM.
+The warp schedulers are often idle because they have no ready instructions—not because there is no work 
+remaining in the GEMM.
+ 
 10.5 Why are there only about two active warps per scheduler?
 Now we connect this result to the tutorial's shared-memory allocation.
-
 The default code uses three pipeline stages:
 auto bM = Int<128>{};
 auto bN = Int<128>{};
 auto bK = Int<64>{};
 auto bP = Int<3>{};
-
-
 Each shared-memory A tile contains:
-\[
-128\times64=8192\text{ FP16 elements}
-\]
-
+128 x 64=8192 FP16 elements
 At two bytes per element:
-\[
-8192\times2=16,384\text{ bytes}
-\]
-
+8192 x 2=16,384 bytes
 Three pipeline stages require:
-\[
-3\times16,384=49,152\text{ bytes for A}
-\]
-
+3 x 16,384=49,152 bytes for A
 B requires the same amount.
-
 Therefore:
-\[
-\text{Shared memory per CTA}
-\approx49,152+49,152
-\]
-
-\[
-\boxed{98,304\text{ bytes}=96\text{ KiB}}
-\]
-
-This calculation assumes the expected layout storage footprint; the precise allocation should be confirmed in Launch Statistics.
+Shared memory per CTA
+approximate 49,152+ 49,152
+98,304 bytes = 96 KiB
+This calculation assumes the expected layout storage footprint; the precise allocation should be 
+confirmed in Launch Statistics.
 
 An H100 has 228 KiB of shared memory per SM. 
-Hopper Tuning Guide 13.5 documentation
-
-
 Therefore, considering shared memory alone:
-\[
-2\times96=192\text{ KiB}
-\]
-
+2 x 96=192 KiB
 Two CTAs can fit.
-
 But:
-\[
-3\times96=288\text{ KiB}
-\]
-
+3 x 96=288 KiB
 Three cannot fit.
-
 This strongly suggests that the three-stage shared-memory allocation limits residency to two CTAs per SM.
-
 Each CTA has four warps:
-\[
-2\times4=8\text{ resident warps per SM}
-\]
-
+2 x 4=8 resident warps per SM
 H100 SMs have four warp schedulers, giving:
-\[
-8/4=\boxed{2\text{ warps per scheduler}}
-\]
-
-That agrees remarkably well with your measured value of 1.99.
+8/4 = 2 warps per scheduler
+That agrees remarkably well with the measured value of 1.99.
+ 
 10.6 Estimate theoretical occupancy
 H100 supports up to 64 concurrent warps per SM. 
-Hopper Tuning Guide 13.5 documentation
-
-
 With eight resident warps:
-\[
-\text{Occupancy}=\frac{8}{64}\times100
-\]
-
-\[
-\boxed{12.5\%}
-\]
-
+Occupancy = (8 / 64) x 100
+12.5%
 This is a strong inference, not a replacement for the profiler's Occupancy section.
-
 It tells us why relatively few warps are available to hide latency.
-
-But low occupancy is not automatically bad for Tensor Core GEMM: large shared-memory tiles can enable high data reuse, and asynchronous Tensor Core operations can achieve substantial throughput with relatively few warps.
-
+But low occupancy is not automatically bad for Tensor Core GEMM: large shared-memory tiles can enable 
+high data reuse, and asynchronous Tensor Core operations can achieve substantial throughput with 
+relatively few warps.
 The important problem is the combination of low residency and low eligibility.
 
  13. Warp State Statistics
@@ -1498,15 +1601,121 @@ The important problem is the combination of low residency and low eligibility.
 Step 11. Analyze Warp State Statistics
 Screenshots 13–15 — Warp State Statistics and stall chart
 
-Your screenshot reports:
-Metric	Value
-Warp Cycles Per Issued Instruction	13.36
-Warp Cycles Per Executed Instruction	13.36
-Average Active Threads Per Warp	32
-Average Not Predicated Off Threads	31.37
-Dominant stall	Long Scoreboard
-Long Scoreboard wait	Approximately 8.3 cycles per issued instruction
+The screenshot reports:
+</pre>
+|Metric|	Value|
+|:-------|:------|
+|Warp Cycles Per Issued Instruction|	13.36|
+|Warp Cycles Per Executed Instruction|	13.36|
+|Average Active Threads Per Warp|	32|
+|Average Not Predicated Off Threads|	31.37|
+|Dominant stall	|Long Scoreboard|
+|Long Scoreboard wait	Approximately| 8.3 cycles per issued instruction|
+<pre>
+When Long Scoreboard is the dominant stall reason, it strongly suggests your kernel is limited by 
+memory-access latency. However, it does not necessarily mean the kernel is limited by memory bandwidth.
+This distinction is very important for the H100 wgmma_sm90.cu performance analysis.
+1. What exactly is Long Scoreboard?
+NVIDIA defines Long Scoreboard as a warp waiting for a dependency on an L1TEX operation involving 
+global, local, texture, or surface memory. 
+Consider:
+float a = A[index];  // Global memory load
+float b = a * 2.0f;  // Depends on a
+The GPU cannot execute the multiplication until the load produces a.
+Global memory load
+Request data from the memory hierarchy
+ 
+Long Scoreboard stall
+Dependent instruction cannot execute yet
 
+Data available -> multiplication executes
+
+The GPU's scoreboard tracks whether the data dependencies of instructions have been satisfied.
+The word Long identifies the class of dependency being tracked. It does not mean that every such 
+stall necessarily involves accessing HBM.
+ 
+2. Memory-latency-bound versus memory-bandwidth-bound
+These are two different performance limitations.
+</pre>
+|  |Memory-latency-bound|	Memory-bandwidth-bound|
+|:-------|:------|:-------|
+Main problem	|Waiting for data to arrive	|Too much data must be transferred|
+|Typical symptom	|Long Scoreboard stalls and few eligible warps|	Memory throughput near its limit|
+|Improvement	|Hide or reduce latency|	Reduce memory traffic or improve access efficiency|
+|Example|	Warp waiting for an L2| load	HBM transferring data near peak bandwidth|
+<pre>
+Memory-latency-bound example
+Suppose one load takes 200 cycles to return, and the next instruction needs that value immediately.
+The warp may have to wait.
+If the GPU has other eligible warps, it can execute their instructions during those cycles.
+If there are insufficient eligible warps, execution resources become underutilized.
+ 
+Memory-bandwidth-bound example
+Suppose a kernel continuously requests huge amounts of data.
+The memory subsystem may already be transferring as much data per second as possible.
+Adding more concurrent memory requests might not help because bandwidth is saturated.
+
+3. Apply this to the H100 WGMMA kernel
+The earlier Nsight Compute measurements were:
+</pre>
+|Metric|	The result|
+|:-------|:------|
+|Dominant stall reason|	Long Scoreboard|
+|Long Scoreboard contribution|	~8.3 cycles per issued instruction|
+|Eligible warps per scheduler|	0.15|
+|No eligible warp|	85.12%|
+|Achieved occupancy|	12.42%|
+|DRAM throughput utilization|	16.41%|
+|L1/TEX throughput utilization|	82.82%|
+<pre>
+These numbers suggest an important performance pattern.
+First: The kernel has very few eligible warps available to issue instructions.
+Second: Long Scoreboard is an important reason warps cannot proceed.
+
+Third: HBM throughput is only 16.41% of its reference peak, so the GPU is not saturating external-memory bandwidth.
+
+Therefore, the evidence is more consistent with a memory-latency/latency-hiding limitation than an HBM-bandwidth limitation.
+
+However, the high L1/TEX throughput deserves separate investigation. Low DRAM utilization does not rule out pressure on an internal memory pipeline.
+4. Does Long Scoreboard mean your shared memory is slow?
+No. Not directly.
+
+In Nsight Compute, the stall categories differ:
+Stall reason	Common dependency
+Long Scoreboard	Global/local/texture/surface memory operations through L1TEX
+Short Scoreboard	Shared-memory or other MIO instruction dependencies
+Barrier	Waiting at CTA synchronization
+Wait	Waiting for a fixed-latency instruction dependency
+
+NVIDIA describes shared-memory dependencies as a common cause of Short Scoreboard stalls. 
+NsightCompute
+
+
+This means your reported 4.81 million shared-memory bank-conflict counter events should not automatically be blamed for the dominant Long Scoreboard stalls.
+
+Also, your kernel uses asynchronous cp.async and WGMMA operations. Their synchronization dependencies may be represented by other stall categories. We must inspect the corresponding SASS instructions rather than assuming every Long Scoreboard stall comes directly from cp.async.
+5. What should you optimize first?
+For your kernel, I would investigate:
+1. The source of Long Scoreboard stalls: In the Nsight Compute Source/SASS view, identify the instructions waiting for L1TEX data and the earlier instructions producing those dependencies.
+2. Latency hiding: Check whether your low occupancy and pipeline schedule leave too few independent instructions or eligible warps.
+3. Memory access efficiency: Examine L1/TEX access patterns, cache behavior, and whether data is available early enough for computation.
+NVIDIA's optimization guidance specifically recommends investigating data dependencies, pipelining, instruction-level parallelism, and cache locality when Long Scoreboard dominates. 
+NsightCompute
+
+6. Final conclusion for your profiling notes
+You can record the following:
+Long Scoreboard indicates that warps are stalled waiting for dependencies on L1TEX memory operations. When it dominates, the kernel may be memory-latency-bound, but this does not necessarily mean memory bandwidth is saturated.
+
+In my H100 WGMMA kernel, Long Scoreboard is the dominant stall reason, eligible warps per scheduler are very low (0.15), and DRAM throughput utilization is only 16.41%. These observations suggest that memory latency and insufficient latency hiding are important performance limitations, rather than saturation of external-memory bandwidth.
+
+One distinction to remember:
+- Memory latency: How long does a warp wait for its data?
+- Memory bandwidth: How much data can the GPU transfer per second?
+Your current measurements point more strongly toward the first problem.
+
+
+
+ 
 11.1 Understand Warp Cycles Per Issued Instruction = 13.36
 This is an average warp-state metric.
 
