@@ -742,17 +742,15 @@ table for:
 Memory Tables Analysis:
 1)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/831f52e2-ca60-47c1-ab61-10582209b690" />
-
 2)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/81b6a809-f72b-46c2-b1cc-9fa1b9385a37" />
-
 3)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/1bb01f68-d2b9-41c5-ae16-f9417aa2a9b7" />
 4)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/aeaa2e4e-d05d-4741-a6b5-d4cbb5ad0b78" />
 5)
 <img width="1818" height="1095" alt="image" src="https://github.com/user-attachments/assets/d99d35cc-5f30-46f7-9c78-3bbcb098e16f" />
-
+Nov 15
 The wgmma_sm90.cu kernel moves matrix data through shared memory, L1/TEX, L2, and HBM.
 The most important finding is that Nsight Compute reports 4,810,514 shared-memory bank-conflict events in the Shared Store From Global Load path. However, that number alone does not prove that bank conflicts are a major performance bottleneck.
 
