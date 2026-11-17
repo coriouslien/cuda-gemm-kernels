@@ -1671,15 +1671,15 @@ The earlier Nsight Compute measurements were:
 These numbers suggest an important performance pattern.
 First: The kernel has very few eligible warps available to issue instructions.
 Second: Long Scoreboard is an important reason warps cannot proceed.
-
-Third: HBM throughput is only 16.41% of its reference peak, so the GPU is not saturating external-memory bandwidth.
-
-Therefore, the evidence is more consistent with a memory-latency/latency-hiding limitation than an HBM-bandwidth limitation.
-
-However, the high L1/TEX throughput deserves separate investigation. Low DRAM utilization does not rule out pressure on an internal memory pipeline.
+Third: HBM throughput is only 16.41% of its reference peak, so the GPU is not saturating external-memory 
+bandwidth.
+Therefore, the evidence is more consistent with a memory-latency/latency-hiding limitation than an 
+HBM-bandwidth limitation.
+However, the high L1/TEX throughput deserves separate investigation. Low DRAM utilization does not rule 
+out pressure on an internal memory pipeline.
+ 
 4. Does Long Scoreboard mean your shared memory is slow?
 No. Not directly.
-
 In Nsight Compute, the stall categories differ:
 Stall reason	Common dependency
 Long Scoreboard	Global/local/texture/surface memory operations through L1TEX
@@ -1687,95 +1687,82 @@ Short Scoreboard	Shared-memory or other MIO instruction dependencies
 Barrier	Waiting at CTA synchronization
 Wait	Waiting for a fixed-latency instruction dependency
 
-NVIDIA describes shared-memory dependencies as a common cause of Short Scoreboard stalls. 
-NsightCompute
+This means the reported 4.81 million shared-memory bank-conflict counter events should not automatically be 
+blamed for the dominant Long Scoreboard stalls.
+Also, the kernel uses asynchronous cp.async and WGMMA operations. Their synchronization dependencies 
+may be represented by other stall categories. We must inspect the corresponding SASS instructions rather 
+than assuming every Long Scoreboard stall comes directly from cp.async.
+ 
+5. What should we optimize first?
+For the kernel, we would investigate:
+1. The source of Long Scoreboard stalls: In the Nsight Compute Source/SASS view, identify the instructions 
+waiting for L1TEX data and the earlier instructions producing those dependencies.
+2. Latency hiding: Check whether the low occupancy and pipeline schedule leave too few independent 
+instructions or eligible warps.
+3. Memory access efficiency: Examine L1/TEX access patterns, cache behavior, and whether data is available 
+early enough for computation.
+Investigating data dependencies, pipelining, instruction-level parallelism, and cache locality when 
+Long Scoreboard dominates. 
 
+6. Final conclusion for the profiling notes
+We can record the following:
+Long Scoreboard indicates that warps are stalled waiting for dependencies on L1TEX memory operations. 
+When it dominates, the kernel may be memory-latency-bound, but this does not necessarily mean memory 
+bandwidth is saturated.
 
-This means your reported 4.81 million shared-memory bank-conflict counter events should not automatically be blamed for the dominant Long Scoreboard stalls.
-
-Also, your kernel uses asynchronous cp.async and WGMMA operations. Their synchronization dependencies may be represented by other stall categories. We must inspect the corresponding SASS instructions rather than assuming every Long Scoreboard stall comes directly from cp.async.
-5. What should you optimize first?
-For your kernel, I would investigate:
-1. The source of Long Scoreboard stalls: In the Nsight Compute Source/SASS view, identify the instructions waiting for L1TEX data and the earlier instructions producing those dependencies.
-2. Latency hiding: Check whether your low occupancy and pipeline schedule leave too few independent instructions or eligible warps.
-3. Memory access efficiency: Examine L1/TEX access patterns, cache behavior, and whether data is available early enough for computation.
-NVIDIA's optimization guidance specifically recommends investigating data dependencies, pipelining, instruction-level parallelism, and cache locality when Long Scoreboard dominates. 
-NsightCompute
-
-6. Final conclusion for your profiling notes
-You can record the following:
-Long Scoreboard indicates that warps are stalled waiting for dependencies on L1TEX memory operations. When it dominates, the kernel may be memory-latency-bound, but this does not necessarily mean memory bandwidth is saturated.
-
-In my H100 WGMMA kernel, Long Scoreboard is the dominant stall reason, eligible warps per scheduler are very low (0.15), and DRAM throughput utilization is only 16.41%. These observations suggest that memory latency and insufficient latency hiding are important performance limitations, rather than saturation of external-memory bandwidth.
+In the H100 WGMMA kernel, Long Scoreboard is the dominant stall reason, eligible warps per scheduler 
+are very low (0.15), and DRAM throughput utilization is only 16.41%. These observations suggest that 
+memory latency and insufficient latency hiding are important performance limitations, rather than 
+saturation of external-memory bandwidth.
 
 One distinction to remember:
 - Memory latency: How long does a warp wait for its data?
 - Memory bandwidth: How much data can the GPU transfer per second?
-Your current measurements point more strongly toward the first problem.
+The current measurements point more strongly toward the first problem.
 
 
 
  
 11.1 Understand Warp Cycles Per Issued Instruction = 13.36
 This is an average warp-state metric.
-
 It is not a literal latency measurement for each SASS instruction.
-
-Nsight Compute accumulates warp states and normalizes them by issued instructions to understand the average number of cycles spent in different states.
-
-Your result is:
-\[
-\boxed{13.36\text{ warp cycles per issued instruction}}
-\]
-
+Nsight Compute accumulates warp states and normalizes them by issued instructions to understand the 
+average number of cycles spent in different states.
+The result is:
+13.36 warp cycles per issued instruction
 That is consistent with a kernel experiencing significant stalls.
 11.2 Long Scoreboard = 8.3 cycles
-Your report says approximately 8.3 cycles are spent waiting for long-scoreboard dependencies per issued instruction.
-
+The report says approximately 8.3 cycles are spent waiting for long-scoreboard dependencies per issued instruction.
 Calculate the fraction:
-\[
-\frac{8.3}{13.36}\times100
-\]
-
-\[
-\boxed{62.1\%}
-\]
-
+(8.3 / 13.36) x 100
+62.1%
 That is a substantial fraction of the total average warp cycles per issued instruction.
-
 This is our strongest evidence of an important latency-related bottleneck.
+ 
 11.3 What exactly is a Long Scoreboard Stall?
 A long scoreboard tracks dependencies involving the L1/TEX memory subsystem.
-
 Consider:
 float value = A[index];
 float result = value * 2.0f;
-
-
 The multiplication cannot use value until the load has produced the data.
-
 The warp may be waiting because the dependency has not resolved.
-
 Nsight Compute records a long-scoreboard stall when a warp is waiting for such a memory dependency.
 
-NVIDIA's documentation explicitly distinguishes memory latency from memory bandwidth saturation. 
-NsightCompute
-
-
-For your kernel:
+For the kernel:
 - DRAM utilization is low.
 - Long-scoreboard stalls are high.
 - Eligible warp count is very low.
 That combination points strongly toward insufficient memory-latency hiding.
+ 
 11.4 Does Long Scoreboard mean LDGSTS is definitely the culprit?
 Not yet.
-
-The consumer instruction where a stall is sampled may not be the instruction that originally initiated the memory access.
-
+The consumer instruction where a stall is sampled may not be the instruction that originally initiated 
+the memory access.
 We must identify the dependency chain.
-
-Your asynchronous A/B copies are plausible contributors, but the screenshot does not prove which particular instruction causes the most waiting.
-
+The asynchronous A/B copies are plausible contributors, but the screenshot does not prove which particular 
+instruction causes the most waiting.
+Nov 16
+ 
 Use Source Counters and the SASS dependency information to locate the relevant instructions.
 11.5 What does Stall Barrier mean?
 Your chart also shows a substantial Barrier stall category.
