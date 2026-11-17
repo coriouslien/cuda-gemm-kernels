@@ -319,4 +319,37 @@ For the 48 LDGSTS instruction locations:
 |Ideal shared-memory wavefronts|	27,033,600|
 |Excessive shared-memory wavefronts|	0|
 <pre>
+Therefore:
+\[
+\text{Actual}-\text{Ideal}
+\]
+
+\[
+=27,033,600-27,033,600
+\]
+
+\[
+\boxed{=0}
+\]
+
+This is stronger evidence than our earlier calculation based only on four wavefronts per request.
+
+It shows that the profiled LDGSTS instruction locations have no reported excessive shared-memory wavefronts.
+
+That does not prove all specialized WGMMA shared-memory accesses are conflict-free, but it argues against avoidable wavefront serialization in the ordinary global-to-shared copy path.
+
+So I would not change your CuTe swizzle based on the bank-conflict counter alone.
+7. My updated diagnosis
+Based on the actual uploaded profiling report
+</pre>
+|Observation|	Assessment|
+|:-------|:------|
+Dominant Long Scoreboard hotspot	WARPGROUP.ARRIVE
+Dominant Barrier hotspot	WARPGROUP.DEPBAR.LE
+Asynchronous copy instructions nearby	Confirmed
+HGMMA execution immediately afterward	Confirmed
+Shared-copy excessive wavefronts	Zero
+Inadequate copy/compute overlap	Plausible, not yet proven
+HBM bandwidth saturation	Not supported by earlier throughput measurements
+<pre>
 </pre>
