@@ -93,55 +93,41 @@ grep -n -F -B 12 -A 12 \
 The expected instruction is:
 PRMT R23, RZ, 0x5410, RZ
 If it matches, we have located the same instruction in the static disassembly.
-The offset is conditional on identifying the correct function entry and the same compiled binary. Your executable contains more than one specialized GEMM kernel, so verify the function and surrounding instructions before treating the match as definitive.
+The offset is conditional on identifying the correct function entry and the same compiled binary.  The 
+executable contains more than one specialized GEMM kernel, so verify the function and surrounding instructions 
+before treating the match as definitive.
 4. Better still: Extract the SASS with profiling measurements
-For your particular investigation, I recommend using ncu because you already have the report:
-
+For The particular investigation, using ncu because we already have the report:
 wgmma_sm90.ncu-rep
-
-Run this on your local workstation:
+Run this on the local workstation:
 ncu --import wgmma_sm90.ncu-rep \
     --page source \
     --print-source sass \
     > profiled_sass.txt
 
-NVIDIA supports importing saved reports and printing their Source-page data in SASS form directly from the command line. 
-NsightCompute
-
-
 Now examine the output:
 less -S profiled_sass.txt
-
 
 Or search for the instruction:
 grep -n -B 10 -A 10 \
   'PRMT.*R23' profiled_sass.txt
 
-
-You can also export the source data as CSV:
+We can also export the source data as CSV:
 ncu --import wgmma_sm90.ncu-rep \
     --page source \
     --print-source sass \
     --csv > profiled_sass.csv
 
-
-The CSV output makes it easier to write a script to find and rank instruction-level performance measurements. The available columns depend on what the saved report collected and what your installed Nsight Compute version prints.
-
-Unlike cuobjdump, this output can include source-correlated profiling metrics such as stall samples. 
-NVIDIA Developer Forums
+The CSV output makes it easier to write a script to find and rank instruction-level performance measurements. 
+The available columns depend on what the saved report collected and what your installed Nsight Compute version prints.
 
 5. Optional: Use nvdisasm for deeper instruction analysis
-NVIDIA also provides nvdisasm, which can display source-line information and perform control-flow analysis for standalone cubin files.
-
+NVIDIA also provides nvdisasm, which can display source-line information and perform control-flow analysis 
+for standalone cubin files.
 For example:
 nvdisasm -gi kernel.cubin > kernel_annotated.sass
-
-
-The -gi option includes source-line and inlining information when available. The input must be a cubin, not your ordinary host executable. 
-cuda-binary-utilities 13.5 documentation
-
-
-This can be helpful later when tracing your CuTe template functions.
+The -gi option includes source-line and inlining information when available. The input must be a cubin, not your 
+ordinary host executable, tracing the CuTe template functions.
 
 Which approach should we use?
 </pre>
@@ -151,7 +137,6 @@ Which approach should we use?
 |nvdisasm|	Yes|	No|	Study SASS, source mapping, control flow|
 |ncu --import --page source|	Yes|	Yes, if collected|	Investigate Long Scoreboard hotspots|
 <pre>
-My recommendation for your next step
 Start with just these commands:
 cuobjdump --dump-sass ./wgmma_sm90 > wgmma_sm90.sass
 
@@ -165,38 +150,36 @@ ncu --import wgmma_sm90.ncu-rep \
     --print-source sass \
     > profiled_sass.txt
 Then share the SASS around offset 0x6c0 and the corresponding portion of the Nsight Compute output.
-
 We can analyze the producer and consumer instructions, their register dependencies, and the nearby LDGSTS copies.
+The critical distinction: Disassembly helps us understand what the GPU executes. 
+Nsight Compute tells us where the GPU experiences stalls. We need both to investigate the Long 
+Scoreboard behavior in the Hopper kernel.
+Examined the two files wgmma_sm90_06c0.sass.md and profiled_sass.md, and found something important that we missed 
+in the ncu GUI .
+The largest Long Scoreboard stall count in the complete profiling report is not 30. It is 26,265, 
+at a WARPGROUP.ARRIVE instruction.
 
-The critical distinction: Disassembly helps us understand what the GPU executes. Nsight Compute tells us where the GPU experiences stalls. We need both to investigate the Long Scoreboard behavior in your Hopper kernel.
-
-I examined the two files you uploaded, and found something important that we missed in the GUI.
-
-The largest Long Scoreboard stall count in your complete profiling report is not 30. It is 26,265, at a WARPGROUP.ARRIVE instruction.
-
-That changes where we should focus our investigation.
+That changes where we should focus the investigation.
 1. Actual Long Scoreboard hotspots
-I parsed the instruction-level measurements in your profiled_sass.txt and ranked the SASS instructions by stall_long_sb.
-Rank	SASS instruction	Long Scoreboard samples	All samples
-1	WARPGROUP.ARRIVE	26,265	26,368
-2	IADD3 R8, P0, R16, R6, RZ	785	807
-3	IADD3 R16, P0, R14, R6, RZ	729	800
-4	IMAD R19, R0, R13, RZ	679	703
-5	IADD3 R8, R7, -0x1, RZ	470	526
-
+I parsed the instruction-level measurements in your profiled_sass.txt and ranked the SASS instructions
+by stall_long_sb.
+</pre>
+|Rank|	SASS instruction|	Long Scoreboard samples|	All samples|
+|:----|:-----|:----|:-----|
+|1|	WARPGROUP.ARRIVE|	26,265|	26,368|
+|2|	IADD3 R8, P0, R16, R6, RZ	|785|	807|
+|3	|IADD3 R16, P0, R14, R6, RZ	|729	|800|
+|4|	IMAD R19, R0, R13, RZ|	679|	703|
+|5|	IADD3 R8, R7, -0x1, RZ|	470|	526|
+<pre>
 The first instruction is at:
 0x7edba77ad5f0
-
-
-Your earlier PRMT instruction at 0x7edba77ac8c0 has 30 Long Scoreboard samples, as you observed, but it is not the largest hotspot.
-
-Across the instructions in the report, I counted 32,819 Long Scoreboard samples.
-
+Your earlier PRMT instruction at 0x7edba77ac8c0 has 30 Long Scoreboard samples, as we observed, 
+but it is not the largest hotspot.
+Across the instructions in the report, we counted 32,819 Long Scoreboard samples.
 The WARPGROUP.ARRIVE instruction accounts for:
-\[
-\frac{26,265}{32,819}\times100
-\approx\boxed{80.0\%}
-\]
+{26,265 / 32,819) x 100
+approximate 80.0%
 
 This is approximately 80% of all recorded Long Scoreboard samples in this source-level export, not 80% of kernel execution time.
 
