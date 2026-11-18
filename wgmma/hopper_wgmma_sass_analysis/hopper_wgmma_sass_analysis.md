@@ -344,12 +344,35 @@ Based on the actual uploaded profiling report
 </pre>
 |Observation|	Assessment|
 |:-------|:------|
-Dominant Long Scoreboard hotspot	WARPGROUP.ARRIVE
-Dominant Barrier hotspot	WARPGROUP.DEPBAR.LE
-Asynchronous copy instructions nearby	Confirmed
-HGMMA execution immediately afterward	Confirmed
-Shared-copy excessive wavefronts	Zero
-Inadequate copy/compute overlap	Plausible, not yet proven
-HBM bandwidth saturation	Not supported by earlier throughput measurements
+|Dominant Long Scoreboard hotspot|	WARPGROUP.ARRIVE|
+|Dominant Barrier hotspot|	WARPGROUP.DEPBAR.LE|
+|Asynchronous copy instructions nearby|	Confirmed|
+|HGMMA execution immediately afterward|	Confirmed|
+|Shared-copy excessive wavefronts|	Zero|
+|Inadequate copy/compute overlap|	Plausible, not yet proven|
+|HBM bandwidth saturation|	Not supported by earlier throughput measurements|
 <pre>
+What should we study next?
+I recommend focusing on the mainloop synchronization and pipeline schedule, particularly the relationship between:
+cp_async_fence();
+cp_async_wait<0>();
+
+warpgroup_arrive();
+cute::gemm(...);
+
+warpgroup_commit_batch();
+warpgroup_wait<0>();
+
+
+The key technical question is:
+
+Are the synchronization points forcing the warpgroup to wait when it could otherwise overlap more data transfer with Tensor Core computation?
+
+Your report gives us a concrete reason to study this.
+Conclusion
+The command-line extraction was useful: it uncovered the dominant Long Scoreboard hotspot that we had not identified in the GUI.
+
+The next optimization investigation should focus on the asynchronous-copy/WGMMA synchronization pipeline, not the PRMT instruction or shared-memory swizzle.
+
+I would keep the current kernel as the baseline, then compare a carefully modified pipeline against its existing 651.87 μs profiled duration and 0.5678 ms standalone benchmark duration, using the same measurement method for each comparison.
 </pre>
