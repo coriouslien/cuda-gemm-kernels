@@ -12,21 +12,20 @@ show the instructions, registers, and addresses, but it cannot tell us which ins
 cuobjdump --dump-sass ./wgmma_sm90 > wgmma_sm90.sass
 This creates a text file containing the SASS disassembly.
 2. Filter the SASS instructions
-For example, to find asynchronous global-to-shared-memory copies:
+For example: 
+To find asynchronous global-to-shared-memory copies:
 grep -n 'LDGSTS' wgmma_sm90.sass
-
 
 To find the Hopper Tensor Core instructions:
 grep -n 'HGMMA' wgmma_sm90.sass
 
-
-To find the PRMT instruction you identified in Nsight Compute:
+To find the PRMT instruction we identified in Nsight Compute:
 grep -n 'PRMT.*R23, RZ' wgmma_sm90.sass
 
-
-You can also search for several instruction families together:
+We can also search for several instruction families together:
 grep -nE 'LDGSTS|HGMMA|PRMT|DEPBAR|BAR' wgmma_sm90.sass
-
+DEPBAR: "We must wait until the required earlier operation finishes."
+BAR.SYNC: "We must wait until the required threads reach this barrier."
 
 The -n option displays line numbers in the generated text file, not CUDA source line numbers.
 Show surrounding instructions
@@ -34,36 +33,66 @@ This is especially useful for our investigation:
 grep -n -B 15 -A 15 \
   'PRMT.*R23, RZ' wgmma_sm90.sass
 It displays 15 lines before and after every matching PRMT instruction.
-
 We can then examine the nearby LDGSTS operations and other SASS instructions.
 
-3. Locate the exact SASS address from your screenshot
-We can go further because your Nsight Compute screenshot provides the runtime instruction addresses.
-
+3. Locate the exact SASS address from the screenshot
 The beginning of gemm_device was displayed at approximately:
 0x7edba77ac200
-
-
-Your selected instruction was at:
+The selected instruction was at:
 0x7edba77ac8c0
+  
+*** SASS:
+0x7edba77ac8c0     PRMT R23, RZ, 0x5410, RZ      32     29     32     6400   204800   204800   32     32     0    
+prmt.b32 d, a, b, c;
+</pre>
+|Operand|	Meaning|
+|:----|:-----|
+|R23|	32-bit destination register|
+|RZ	|First 32-bit source, always zero|
+|0x5410	|Byte-permutation control value<br>The permutation control 0x5410 determines<br> which source bytes are placed<br> in the destination register.|
+|RZ	|Second 32-bit source, always zero|
+<pre>
+RZ is a special NVIDIA GPU register that always reads as zero.
+Example using nonzero registers
+Suppose:
+Source A = 0x11223344
+Source B = 0x55667788
+Their bytes are:
+A: 11 22 33 44
+B: 55 66 77 88
+Applying the 0x5410 selection:
+Destination:
+B1  B0  A1  A0
+77  88  33  44
+Therefore:
+Result = 0x77883344
+This illustrates what PRMT normally does: it rearranges bytes from two source registers.
+Now apply it to the actual instruction
+PRMT R23, RZ, 0x5410, RZ
+Both input registers are RZ.
+Thus:
+Source A = 0x00000000
+Source B = 0x00000000
+After the byte permutation:
+Destination:
+B1  B0  A1  A0
+00  00  00  00
+Therefore:
+R23 = 0x00000000
+***
+  
 Subtract the two:
-\[
-0x7edba77ac8c0-0x7edba77ac200=\boxed{0x6c0}
-\]
+0x7edba77ac8c0 - 0x7edba77ac200 = 0x6c0
+If the first address is the kernel's actual entry point, the corresponding instruction-relative offset 
+should be 0x6c0.
 
-If the first address is the kernel's actual entry point, the corresponding instruction-relative offset should be 0x6c0.
-
-You can try:
+We can try:
 grep -n -F -B 12 -A 12 \
   '/*06c0*/' wgmma_sm90.sass
 
-
 The expected instruction is:
 PRMT R23, RZ, 0x5410, RZ
-
-
-If it matches, we have located the same instruction in your static disassembly.
-
+If it matches, we have located the same instruction in the static disassembly.
 The offset is conditional on identifying the correct function entry and the same compiled binary. Your executable contains more than one specialized GEMM kernel, so verify the function and surrounding instructions before treating the match as definitive.
 4. Better still: Extract the SASS with profiling measurements
 For your particular investigation, I recommend using ncu because you already have the report:
