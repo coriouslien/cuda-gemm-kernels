@@ -221,25 +221,17 @@ HGMMA
 Execute warpgroup matrix multiplication
 
 Why is this important?
-The largest Long Scoreboard hotspot is located immediately after the asynchronous-copy completion sequence and before the WGMMA arithmetic.
-
+The largest Long Scoreboard hotspot is located immediately after the asynchronous-copy completion sequence and before the
+WGMMA arithmetic.
 That makes the A/B copy pipeline a substantially stronger suspect than before.
+However, WARPGROUP.ARRIVE is not itself a global-memory load. The sample location does not establish which earlier memory
+operation is responsible for the dependency.
 
-However, WARPGROUP.ARRIVE is not itself a global-memory load. The sample location does not establish which earlier memory operation is responsible for the dependency.
-
-NVIDIA explains that warp-stall samples identify waiting instruction locations, which need not be the memory instructions that produced the dependency. 
-NsightCompute
-
-
-3. I found another major synchronization hotspot
+3.  Another major synchronization hotspot
 The report also shows:
 WARPGROUP.DEPBAR.LE gsb0, 0x0
-
-
 At:
 0x7edba77ad9d0
-
-
 Its measurements are:
 </pre>
 |Metric|	Samples|
@@ -249,14 +241,11 @@ Its measurements are:
 |Long Scoreboard stalls|	0|
 <pre>
 Calculate:
-\[
-\frac{10,376}{10,392}\times100
-\approx\boxed{99.85\%}
-\]
-
-This is strong evidence that the location associated with waiting for WGMMA completion experiences substantial synchronization stalls.
-
-We now have two especially important instruction locations:
+(10,376 / 10,392) x 100
+approximate 99.85%
+This is strong evidence that the location associated with waiting for WGMMA completion experiences substantial 
+synchronization stalls.
+There are two especially important instruction locations:
 </pre>
 |SASS instruction	|Dominant stall reason|	Samples|
 |:-------|:------|:-------|
@@ -286,19 +275,107 @@ warpgroup_fence_operand(tCrC);
 
 
 The source establishes that copying, copy completion, WGMMA submission, and WGMMA completion are deliberately ordered. 
-GitHub
-
-
 The SASS confirms that the generated kernel contains corresponding copy, synchronization, and matrix instructions.
-
 This gives us a more focused performance hypothesis:
-
 The kernel may not be overlapping asynchronous A/B copies and WGMMA computation sufficiently to hide their latencies.
-
-Specifically, cp_async_wait<0>() requires completion of the relevant asynchronous-copy groups before proceeding, and warpgroup_wait<0>() waits for completion of outstanding WGMMA groups before proceeding.
+Specifically, cp_async_wait<0>() requires completion of the relevant asynchronous-copy groups before proceeding,
+and warpgroup_wait<0>() waits for completion of outstanding WGMMA groups before proceeding.
 These completion points can limit how much useful independent work remains available.
+That hypothesis agrees with your earlier low eligible-warps measurement, but determining the achievable improvement 
+requires a controlled experiment.
+******
+We suspect that insufficient overlap between asynchronous memory copies (cp.async) and WGMMA computation is hurting 
+performance, but we need to test that hypothesis instead of assuming it is true.
+A controlled experiment means changing one thing at a time, measuring the performance, and comparing the results 
+under the same conditions.
+1. What exactly are we trying to prove?
+Consider the code:
+cp_async_wait<0>();
 
-That hypothesis agrees with your earlier low eligible-warps measurement, but determining the achievable improvement requires a controlled experiment.
+warpgroup_fence_operand(tCrC);
+warpgroup_arrive();
+
+cute::gemm(
+    mma,
+    tCrA(_,_,_,k_pipe_read),
+    tCrB(_,_,_,k_pipe_read),
+    tCrC
+);
+
+warpgroup_commit_batch();
+warpgroup_wait<0>();
+
+warpgroup_fence_operand(tCrC);
+
+We know that:
+1. cp_async_wait<0>() waits for the relevant asynchronous copies to complete.
+2. cute::gemm() issues the WGMMA operations.
+3. warpgroup_commit_batch() commits the WGMMA operations as a group.
+4. warpgroup_wait<0>() waits for all previously committed WGMMA groups to complete.
+Question is:
+Are we waiting for memory operations and matrix computations when we could have been executing useful 
+independent work?
+Our hypothesis is that the synchronization points might reduce overlap, resulting in lower performance.
+However, a synchronization instruction does not automatically mean there is a performance problem. If the 
+operation has already completed when the wait executes, the wait may introduce little or no delay.
+Thus, we need an experiment.
+2. A concrete example using wgmma_sm90.cu
+We checked NVIDIA's actual tutorial. With K_PIPE_MAX = 3, it prefetches two K-tiles before the main loop. 
+During the first iteration, it launches the copy for tile 2 and then executes cp_async_wait<0>(). 
+Conceptually:
+First mainloop iteration
+Already prefetched
+Tile 0 and Tile 1: asynchronous copies issued
+Issue next copy
+Tile 2: asynchronous copy issued
+cp_async_wait<0>()
+Wait for all three copy groups to finish, even though WGMMA is about to consume Tile 0.
+Compute
+Issue WGMMA for Tile 0, then warpgroup_wait<0>()
+  
+Here is the opportunity we want to investigate:
+Could the GPU compute Tile 0 while the copy for Tile 2 is still running?
+Potentially, yes. But we must preserve the necessary dependencies and ensure shared-memory buffers are not 
+overwritten prematurely.
+3. How would we conduct a controlled experiment?
+Suppose we have two versions of the kernel.
+- Version A: Original NVIDIA tutorial, unchanged.
+- Version B: Modified copy synchronization to permit more copy/compute overlap, with correctness and shared-memory 
+buffer lifetime verified.
+Run both with identical matrix sizes, precision, tile shape, pipeline storage, GPU, and build configuration.
+
+Measure them with Nsight Compute.
+Metric	Version A	Version B
+Kernel execution time	100 μs	80 μs
+Performance	300 TFLOP/s	375 TFLOP/s
+Eligible warps per scheduler	0.4	0.7
+Synchronization-related stalls	High	Lower
+
+Illustrative numbers only, not measurements from your kernel.If Version B runs faster and shows fewer relevant stalls, this supports our hypothesis that the original synchronization was limiting performance.
+
+If performance does not improve, the bottleneck might be elsewhere, such as shared-memory occupancy, memory bandwidth, or Tensor Core utilization.
+
+Even an improvement doesn't prove the mechanism by itself; we would inspect the profiler evidence and generated instructions.
+4. Why not simply remove warpgroup_wait<0>()?
+Because correctness matters.
+
+WGMMA consumes shared-memory operands asynchronously. Removing a wait without accounting for its dependencies may cause the program to overwrite data while the Tensor Cores are still using it.
+
+Instead, an optimized kernel can sometimes allow multiple WGMMA groups to remain outstanding and wait only when the results or shared-memory storage must be reused.
+
+That requires a properly designed pipeline.
+5. What I suggest for your study
+Before modifying synchronization instructions, I would first compare bP = 2, bP = 3, and bP = 4 in the tutorial, one configuration at a time, while keeping the matrix dimensions unchanged.
+
+This is a useful first experiment to investigate pipeline depth. However, increasing bP also increases shared-memory allocation and may change occupancy, so we must measure those factors too. It is not a pure test of synchronization overhead.
+
+Also, wgmma_sm90.cu must be tested on compatible SM90 Hopper hardware, such as an H100, rather than your RTX 5080.
+
+The essential lesson: A controlled experiment allows us to move from "I think synchronization is limiting performance" to "I measured the effect of a specific change and have evidence supporting or rejecting that hypothesis."
+
+That is exactly the kind of reasoning used in professional CUDA kernel performance engineering.
+******
+
 
 5. Your static SASS file confirms the correct kernel variant
 I also inspected wgmma_sm90_06c0.sass.
