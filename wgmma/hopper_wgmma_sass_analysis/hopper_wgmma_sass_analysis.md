@@ -380,6 +380,86 @@ to "I measured the effect of a specific change and have evidence supporting or r
 5. The static SASS file confirms the correct kernel variant
 inspecting wgmma_sm90_06c0.sass.
 It contains two matches at relative offset 0x06c0:
+***************
+Your SASS output reveals something important: these PRMT instructions are being used to produce zero values, not to rearrange nonzero data.
+
+Let's examine the instruction at address 0x06c0 in your wgmma_sm90.cu disassembly.
+1. Examine your actual PRMT instruction
+/*06c0*/ PRMT R32, RZ, 0x5410, RZ ;
+
+
+Operand	Meaning
+R32	Destination register
+RZ	First source: NVIDIA's zero register
+0x5410	Byte permutation selector
+RZ	Second source: NVIDIA's zero register
+
+RZ always reads as zero. It is a special hardware register, not an ordinary register that needs to be initialized.
+
+Since both source operands are RZ, every byte available for selection is zero.
+
+Therefore, the effective result is:
+R32 = 0x00000000;
+
+The same applies to your other instructions:
+PRMT R34, RZ, 0x5410, RZ ;  // R34 = 0
+PRMT R33, RZ, 0x5410, RZ ;  // R33 = 0
+PRMT R32, RZ, 0x5410, RZ ;  // R32 = 0
+PRMT R31, RZ, 0x5410, RZ ;  // R31 = 0
+PRMT R30, RZ, 0x5410, RZ ;  // R30 = 0
+
+Although PRMT is normally a byte-permutation instruction, these particular instances simply write zeros to 
+destination registers.
+2. What does 0x5410 mean?
+The selector 0x5410 combines the lower 16 bits of each source register into one 32-bit destination.
+The four hexadecimal digits represent four byte indices:
+RZ (source A)                  RZ (source B)
+00  00  00  00                 00  00  00  00
+3   2   1   0                  7   6   5   4
+
+Selector 0x5410
+00        00        00        00
+Byte 5    Byte 4    Byte 1    Byte 0
+Result: 0x00000000
+In this SASS form, the third operand is the selector. The equivalent PTX instruction has a different operand 
+order:
+prmt.b32 d, a, b, c;
+Here c is the selector.
+3. Why would the compiler generate PRMT to produce zero?
+This is particularly relevant to the wgmma_sm90.cu.
+The CUTLASS source contains:
+Tensor tCrC = thr_mma.make_fragment_C(tCgC);
+// Clear the accumulators
+clear(tCrC);
+And later:
+warpgroup_fence_operand(tCrC);
+warpgroup_arrive();
+
+cute::gemm(
+    mma,
+    tCrA(_,_,_,k_pipe_read),
+    tCrB(_,_,_,k_pipe_read),
+    tCrC
+);
+The clear(tCrC) operation initializes the accumulator fragment to zero before matrix multiplication. 
+The PRMT instructions are consistent with compiler-generated accumulator initialization. A plausible explanation 
+is that the compiler uses a byte-packing operation to construct zero-valued accumulator registers.
+
+The nearby instructions have different purposes:
+PRMT       // Rearrange or pack register bytes
+IMAD.WIDE  // Integer multiply-add producing a wide result
+LDGSTS     // Asynchronous global-memory to shared-memory copy
+
+These instructions are interleaved by the compiler's scheduler. Their proximity does not mean that PRMT 
+operates on the data transferred by LDGSTS.
+4. How to confirm the purpose
+Search farther down in each SASS kernel for the first subsequent reads of registers R30 through R34, 
+or R22 and R23 in the second excerpt.
+If those registers become accumulator operands in an HGMMA instruction, that would strongly support the 
+accumulator-initialization explanation.
+
+The conclusion: The PRMT R32, RZ, 0x5410, RZ instruction produces zero.
+***************
 /*06c0*/ PRMT R32, RZ, 0x5410, RZ ;
 and:
 /*06c0*/ PRMT R23, RZ, 0x5410, RZ ;
@@ -388,11 +468,11 @@ The second matches the profiled NT kernel:
 PRMT R23, RZ, 0x5410, RZ
 Therefore, the offset calculation was correct, but we must select the correct specialized GEMM kernel, 
 not merely the first occurrence of /*06c0*/.
-
-This is an important detail when analyzing templated CUDA programs that produce multiple specialized kernels in one executable.
+This is an important detail when analyzing templated CUDA programs that produce multiple specialized kernels 
+in one executable.
 
 6. One more result: shared-memory wavefronts
-I also analyzed the shared-memory wavefront columns in your complete profiling file.
+Analyzing the shared-memory wavefront columns in the complete profiling file.
 
 For the 48 LDGSTS instruction locations:
 </pre>
@@ -404,25 +484,15 @@ For the 48 LDGSTS instruction locations:
 |Excessive shared-memory wavefronts|	0|
 <pre>
 Therefore:
-\[
-\text{Actual}-\text{Ideal}
-\]
-
-\[
+Actual-Ideal
 =27,033,600-27,033,600
-\]
-
-\[
-\boxed{=0}
-\]
-
+=0
 This is stronger evidence than our earlier calculation based only on four wavefronts per request.
-
 It shows that the profiled LDGSTS instruction locations have no reported excessive shared-memory wavefronts.
-
-That does not prove all specialized WGMMA shared-memory accesses are conflict-free, but it argues against avoidable wavefront serialization in the ordinary global-to-shared copy path.
-
-So I would not change your CuTe swizzle based on the bank-conflict counter alone.
+That does not prove all specialized WGMMA shared-memory accesses are conflict-free, but it argues against 
+avoidable wavefront serialization in the ordinary global-to-shared copy path.
+So we would not change the CuTe swizzle based on the bank-conflict counter alone.
+  
 7. My updated diagnosis
 Based on the actual uploaded profiling report
 </pre>
@@ -436,8 +506,8 @@ Based on the actual uploaded profiling report
 |Inadequate copy/compute overlap|	Plausible, not yet proven|
 |HBM bandwidth saturation|	Not supported by earlier throughput measurements|
 <pre>
-What should we study next?
-I recommend focusing on the mainloop synchronization and pipeline schedule, particularly the relationship between:
+Study:
+Focusing on the mainloop synchronization and pipeline schedule, particularly the relationship between:
 cp_async_fence();
 cp_async_wait<0>();
 
@@ -447,16 +517,18 @@ cute::gemm(...);
 warpgroup_commit_batch();
 warpgroup_wait<0>();
 
-
 The key technical question is:
+Are the synchronization points forcing the warpgroup to wait when it could otherwise overlap more data 
+transfer with Tensor Core computation?
 
-Are the synchronization points forcing the warpgroup to wait when it could otherwise overlap more data transfer with Tensor Core computation?
-
-Your report gives us a concrete reason to study this.
+The report gives us a concrete reason to study this.
 Conclusion
-The command-line extraction was useful: it uncovered the dominant Long Scoreboard hotspot that we had not identified in the GUI.
+The command-line extraction was useful: it uncovered the dominant Long Scoreboard hotspot that we had not 
+identified in the GUI.
+The next optimization investigation is focusing on the asynchronous-copy/WGMMA synchronization pipeline, 
+not the PRMT instruction or shared-memory swizzle.
 
-The next optimization investigation should focus on the asynchronous-copy/WGMMA synchronization pipeline, not the PRMT instruction or shared-memory swizzle.
-
-I would keep the current kernel as the baseline, then compare a carefully modified pipeline against its existing 651.87 μs profiled duration and 0.5678 ms standalone benchmark duration, using the same measurement method for each comparison.
+Keeping the current kernel as the baseline, then compare a carefully modified pipeline against its existing 
+651.87 μs profiled duration and 0.5678 ms standalone benchmark duration, using the same measurement method 
+for each comparison.
 </pre>
