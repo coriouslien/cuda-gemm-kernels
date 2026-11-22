@@ -1158,116 +1158,121 @@ The second screenshot shows:
 9.1 Why are there so many sectors in the copy path?
 The global-to-shared copy path transfers:
 108,134,400 sectors
-
 A sector is 32 bytes.
-
 Therefore:
-\[
-108,134,400\times32
-=\boxed{3,460,300,800\text{ bytes}}
-\]
-
+108,134,400 x 32
+=3,460,300,800 bytes
 The average sectors per copy request are:
-\[
-\frac{108,134,400}{6,758,400}
-=\boxed{16}
-\]
-
+108,134,400 / 6,758,400
+16
 Therefore, average bytes per request:
-\[
-16\times32=\boxed{512\text{ bytes}}
-\]
+16 x 32 = 512 bytes
 
 That matches our earlier calculation:
-\[
-32\text{ threads}\times16\text{ bytes/thread}
-=512\text{ bytes}
-\]
-
+32 threads x 16 bytes/thread
+=512 bytes
 This is a strong consistency check.
-
-Your source uses a 16-byte asynchronous copy atom, and the observed global-to-shared requests average 512 bytes of sector traffic per warp-level request.
+The source uses a 16-byte asynchronous copy atom, and the observed global-to-shared requests average 512 
+bytes of sector traffic per warp-level request.
 9.2 Why is the global-copy traffic 3.46 GB?
-Your GEMM performs many K iterations.
-
+The GEMM performs many K iterations.
 Each CTA repeatedly loads A and B tiles into shared memory.
-
 Across all 1,600 CTAs, those copies generate substantial traffic through the L1/TEX path.
-
 But 3.46 GB of traffic at this level does not mean that the H100 fetched 3.46 GB from external HBM.
-
 Some data can be served by L2 or other cache behavior.
-
 That explains why we must distinguish traffic at each memory level.
 9.3 Analyze global stores
-Your table shows:
-\[
-819,200\text{ global-store requests}
-\]
-
+The table shows:
+819,200 global-store requests
 and:
-\[
-105,326,752\text{ sector bytes}
-\]
-
-Your output matrix contains:
-\[
-5120\times5120
-=26,214,400\text{ FP16 elements}
-\]
-
+105,326,752 sector bytes
+The output matrix contains:
+5120 x 5120
+=26,214,400 FP16 elements
 At two bytes per element:
-\[
-26,214,400\times2
-=\boxed{52,428,800\text{ useful output bytes}}
-\]
+26,214,400 x 2
+=52,428,800 useful output bytes
 
 Compare that with L1/TEX sector traffic attributed to global stores:
-\[
-\frac{105,326,752}{52,428,800}
-\approx\boxed{2.01}
-\]
-
-This is consistent with the earlier diagnostic warning that only about half of the transferred store-sector bytes are useful.
-
-Your output epilogue is a real candidate for improving global-store transaction efficiency.
-
-However, that does not establish that output stores are the dominant source of the kernel's execution time.
+105,326,752 / 52,428,800
+approximate 2.01
+This is consistent with the earlier diagnostic warning that only about half of the transferred store-sector 
+bytes are useful.
+The output epilogue is a real candidate for improving global-store transaction efficiency.
+However, that does not establish that output stores are the dominant source of the kernel's 
+execution time.
 
 10. Analyze the L2 Cache table
 Screenshots 3–5 — L2 Cache
 
-Your L2 table includes these values:
-Source of L2 traffic	Requests    Sectors     Hit rate
-L1/TEX Load	         21,231,782  85,888,800  82.15%
-L1/TEX Store         1,765,310   3,142,860   100%
-L1/TEX Total         22,997,092  ~89.03M     83.06%
-L2 Fabric Total      5,718,336   11,024,880  63.83%
-GPU Total            28,768,382  100,299,659 80.66%
-
+The L2 table includes these values:
+</pre>
+|Source of L2 traffic|	Requests|    Sectors|     Hit rate|
+|:----|:-----|:----|:-----|
+|L1/TEX Load|	         21,231,782|  85,888,800|  82.15%|
+|L1/TEX Store|         1,765,310|   3,142,860|   100%|
+|L1/TEX Total         |22,997,092  |~89.03M     |83.06%|
+|L2 Fabric Total|      5,718,336|   11,024,880 | 63.83%|
+|GPU Total            |28,768,382  |100,299,659 |80.66%|
+<pre>
 10.1 Why is the L2 hit rate high?
 For traffic reaching L2 from L1/TEX, the reported load hit rate is:
-\[
-\boxed{82.15\%}
-\]
-
-Your tiled GEMM reuses matrix data across many CTAs.
-
-For example, different output tiles in the same row of C need the same A rows, while different output tiles in the same column need the same B columns.
-
+82.15%
+The tiled GEMM reuses matrix data across many CTAs.
+For example, different output tiles in the same row of C need the same A rows, while different output 
+tiles in the same column need the same B columns.
 That creates opportunities for L2 reuse.
 
-The measured hit rate is consistent with substantial cache reuse, although it does not tell us exactly which tiles were reused or which earlier launches contributed to cache contents.
+The measured hit rate is consistent with substantial cache reuse, although it does not tell us exactly 
+which tiles were reused or which earlier launches contributed to cache contents.
+ 
 10.2 Why does L2 show a different total hit rate?
-Your earlier Memory Workload Analysis summary reported approximately 79.75% L2 hit rate.
-
+The earlier Memory Workload Analysis summary reported approximately 79.75% L2 hit rate.
 The detailed table contains several hit rates because it separates different L2 request sources.
-
 The 82.15% value applies specifically to the L1/TEX Load row.
-
 The 80.66% GPU Total value includes other traffic classes.
-
 Do not treat these numbers as conflicting measurements of one identical request population.
+*************
+The three L2 hit rates are different because they may have been calculated using different groups of memory 
+requests. Therefore, they are not necessarily contradictory.
+Let's use a simple example.
+1. What does "request population" mean?
+In Nsight Compute, a request population means the collection of memory requests included in a particular measurement.
+For example, imagine your Hopper GPU generates:
+- 100 L2 requests from the L1/TEX load path.
+- 100 L2 requests from other memory traffic.
+These are two different groups of requests.
+2. Why can the hit rates differ?
+Suppose Nsight Compute reports:
+Memory request group	Requests	L2 hits	Hit rate
+L1/TEX Load	100	82	82%
+Other memory traffic	100	78	78%
+GPU Total	200	160	80%
+The L1/TEX Load hit rate is 82%, but the GPU Total hit rate is 80%.
+Both measurements are correct because they measure different groups of memory requests.
+3. Apply this to the wgmma_sm90.cu profiling
+The report shows:
+- 79.75%: Memory Workload Analysis summary.
+- 82.15%: L1/TEX Load row.
+- 80.66%: GPU Total row.
+We can explain why 82.15% and 80.66% differ: the L1/TEX Load row represents a narrower traffic category 
+than GPU Total.
+However, we cannot confidently explain the difference between 79.75% and 80.66% without checking their exact 
+Nsight Compute metric definitions.
+4. What does "conflicting measurements" mean?
+Two measurements would conflict if they claimed to measure exactly the same requests, with the same definitions 
+and conditions, but reported different values without an explanation.
+For example:
+- Measurement A: L2 hit rate for the same 100 requests = 82%.
+- Measurement B: L2 hit rate for those exact same 100 requests = 75%.
+That would require investigation.
+But if Measurement A covers one group of memory requests and Measurement B covers another group, their different 
+values are not automatically a problem.
+
+The key takeaway: Before comparing two Nsight Compute percentages, check whether their numerators and denominators 
+represent the same set of requests or sectors. Different request populations can legitimately produce different hit rates.
+*************
+ 
 10.3 Does a high L2 hit rate mean no memory bottleneck?
 No.
 
