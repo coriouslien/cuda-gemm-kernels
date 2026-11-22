@@ -343,56 +343,51 @@ Suppose we have two versions of the kernel.
 - Version B: Modified copy synchronization to permit more copy/compute overlap, with correctness and shared-memory 
 buffer lifetime verified.
 Run both with identical matrix sizes, precision, tile shape, pipeline storage, GPU, and build configuration.
-
 Measure them with Nsight Compute.
-Metric	Version A	Version B
-Kernel execution time	100 μs	80 μs
-Performance	300 TFLOP/s	375 TFLOP/s
-Eligible warps per scheduler	0.4	0.7
-Synchronization-related stalls	High	Lower
-
-Illustrative numbers only, not measurements from your kernel.If Version B runs faster and shows fewer relevant stalls, this supports our hypothesis that the original synchronization was limiting performance.
-
-If performance does not improve, the bottleneck might be elsewhere, such as shared-memory occupancy, memory bandwidth, or Tensor Core utilization.
-
-Even an improvement doesn't prove the mechanism by itself; we would inspect the profiler evidence and generated instructions.
+</pre>
+|Metric|	Version A|	Version B|
+|:----|:-----|:----|
+|Kernel execution time|	100 μs|	80 μs|
+|Performance	|300 TFLOP/s|	375 TFLOP/s|
+|Eligible warps per scheduler|	0.4|	0.7|
+|Synchronization-related stalls|	High|	Lower|
+<pre>
+Illustrative numbers only, not measurements from the kernel. If Version B runs faster and shows fewer relevant 
+stalls, this supports our hypothesis that the original synchronization was limiting performance.
+If performance does not improve, the bottleneck might be elsewhere, such as shared-memory occupancy, memory 
+bandwidth, or Tensor Core utilization.
+Even an improvement doesn't prove the mechanism by itself; we would inspect the profiler evidence and 
+generated instructions.
 4. Why not simply remove warpgroup_wait<0>()?
 Because correctness matters.
-
-WGMMA consumes shared-memory operands asynchronously. Removing a wait without accounting for its dependencies may cause the program to overwrite data while the Tensor Cores are still using it.
-
-Instead, an optimized kernel can sometimes allow multiple WGMMA groups to remain outstanding and wait only when the results or shared-memory storage must be reused.
-
+WGMMA consumes shared-memory operands asynchronously. Removing a wait without accounting for its dependencies 
+may cause the program to overwrite data while the Tensor Cores are still using it.
+Instead, an optimized kernel can sometimes allow multiple WGMMA groups to remain outstanding and wait only when 
+the results or shared-memory storage must be reused.
 That requires a properly designed pipeline.
-5. What I suggest for your study
-Before modifying synchronization instructions, I would first compare bP = 2, bP = 3, and bP = 4 in the tutorial, one configuration at a time, while keeping the matrix dimensions unchanged.
+5. Study: 
+Before modifying synchronization instructions, comparing bP = 2, bP = 3, and bP = 4 in the tutorial, one 
+configuration at a time, while keeping the matrix dimensions unchanged.
+This is a useful first experiment to investigate pipeline depth. However, increasing bP also increases shared-memory
+allocation and may change occupancy, so we must measure those factors too. It is not a pure test of synchronization 
+overhead.
 
-This is a useful first experiment to investigate pipeline depth. However, increasing bP also increases shared-memory allocation and may change occupancy, so we must measure those factors too. It is not a pure test of synchronization overhead.
-
-Also, wgmma_sm90.cu must be tested on compatible SM90 Hopper hardware, such as an H100, rather than your RTX 5080.
-
-The essential lesson: A controlled experiment allows us to move from "I think synchronization is limiting performance" to "I measured the effect of a specific change and have evidence supporting or rejecting that hypothesis."
-
-That is exactly the kind of reasoning used in professional CUDA kernel performance engineering.
+The essential lesson: A controlled experiment allows us to move from "I think synchronization is limiting performance" 
+to "I measured the effect of a specific change and have evidence supporting or rejecting that hypothesis."
 ******
 
 
-5. Your static SASS file confirms the correct kernel variant
-I also inspected wgmma_sm90_06c0.sass.
-
+5. The static SASS file confirms the correct kernel variant
+inspecting wgmma_sm90_06c0.sass.
 It contains two matches at relative offset 0x06c0:
 /*06c0*/ PRMT R32, RZ, 0x5410, RZ ;
-
-
 and:
 /*06c0*/ PRMT R23, RZ, 0x5410, RZ ;
-
-
-The second matches your profiled NT kernel:
+  
+The second matches the profiled NT kernel:
 PRMT R23, RZ, 0x5410, RZ
-
-
-Therefore, the offset calculation was correct, but we must select the correct specialized GEMM kernel, not merely the first occurrence of /*06c0*/.
+Therefore, the offset calculation was correct, but we must select the correct specialized GEMM kernel, 
+not merely the first occurrence of /*06c0*/.
 
 This is an important detail when analyzing templated CUDA programs that produce multiple specialized kernels in one executable.
 
