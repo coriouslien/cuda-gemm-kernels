@@ -1091,101 +1091,73 @@ is still cp.async; we're simply emphasizing its 16-byte-per-thread transfer widt
 To remember: A wide cp.async transfers more bytes per participating thread per instruction. It does not
 mean that the GPU has wider memory bandwidth or that the instruction necessarily completes faster.
 
- 
-
-
-Nov 16
-6.4 An important NVIDIA profiler caveat
-NVIDIA engineers have documented that some shared-memory conflict counters also count arbitration or stalled-cycle events rather than exclusively counting genuine address-based bank conflicts.
-
-An NVIDIA developer-tools engineer recommends comparing actual shared-memory wavefronts with their ideal counterparts to distinguish genuine excess serialization from counter artifacts. 
-NVIDIA Developer Forums
-
-
-This distinction matters directly to your experiment.
-
-We have a nonzero reported conflict counter, but the copy-path wavefront count is exactly four per request—the expected baseline for this access width.
-
-That is not sufficient to prove the 4.81 million counter events represent 4.81 million performance-damaging bank conflicts.
-
-My present conclusion: There may be conflicts or arbitration pressure in the LDGSTS destination path, but we have not established that ordinary shared-memory bank conflicts are a major bottleneck.
+6.4 
+We have a nonzero reported conflict counter, but the copy-path wavefront count is exactly four per 
+request—the expected baseline for this access width.
+That is not sufficient to prove the 4.81 million counter events represent 4.81 million performance-damaging 
+bank conflicts.
+Conclusion: There may be conflicts or arbitration pressure in the LDGSTS destination path, but we have not established 
+that ordinary shared-memory bank conflicts are a major bottleneck.
 
 7. What is the mysterious “Other” row?
 Your Shared Memory table contains:
-Metric	                Other
-Instructions	           —
-Requests	               —
-Wavefronts	             85,524,949
-% Peak	                 68.99%
-Bank Conflicts	         0
+</pre>
+|Metric|	                Other|
+|:----|:-----|
+|Instructions	 |          —|
+|Requests|	               —|
+|Wavefronts	 |            85,524,949|
+|% Peak	   |              68.99%|
+|Bank Conflicts	  |       0|
+<pre>
 This row accounts for most of the measured shared-memory wavefront activity.
 
 Calculate its proportion:
-\[
-\frac{85,524,949}{112,558,549}\times100
-\approx\boxed{76.0\%}
-\]
+(,524,949 / 112,558,549) x 100
+approximate 76.0%
 
 So approximately 76% of the reported shared-memory wavefronts are classified as Other.
+The kernel uses WGMMA, which consumes substantial shared-memory operand data through specialized hardware paths.
+WGMMA-related activity is a plausible contributor to this category, but the table does not break down Other 
+sufficiently to attribute all 85.5 million wavefronts to HGMMA.
 
-That is important.
+Likewise, the zero in the Bank Conflicts column does not prove that every specialized access represented by 
+Other is conflict-free.
 
-Your kernel uses WGMMA, which consumes substantial shared-memory operand data through specialized hardware paths.
-
-WGMMA-related activity is a plausible contributor to this category, but the table does not break down Other sufficiently to attribute all 85.5 million wavefronts to HGMMA.
-
-Likewise, the zero in the Bank Conflicts column does not prove that every specialized access represented by Other is conflict-free.
-
-The useful conclusion is:
-
-Most of your reported shared-memory traffic is not represented by ordinary shared-load or shared-store instructions.
-
+The conclusion is:
+Most of the reported shared-memory traffic is not represented by ordinary shared-load or shared-store instructions.
 The Other row's 68.99% peak utilization also shows why internal shared-memory activity deserves attention.
 
 8. Interpret Total Wavefronts and % Peak
-Your table reports:
-\[
-\text{Total Wavefronts}=112,558,549
-\]
-
+The table reports:
+Total Wavefronts=112,558,549
 And:
-\[
-\text{Total Peak Utilization}=74.44\%
-\]
-
+Total Peak Utilization=74.44%
 The total wavefronts are the sum of:
-\[
-27,033,600+85,524,949
-=\boxed{112,558,549}
-\]
-
+27,033,600 + 85,524,949
+=112,558,549
 The 74.44% is a throughput utilization metric relative to the relevant shared-memory service capacity.
-
 It is not the percentage of shared memory capacity allocated.
-
-Your kernel's 96 KiB per CTA is a capacity measurement.
-
+The kernel's 96 KiB per CTA is a capacity measurement.
 The 74.44% in this table is a throughput measurement.
-
 Those are different concepts.
-
-Your shared-memory capacity restricts how many CTAs can reside on an SM, while your shared-memory throughput reflects how actively the memory subsystem services requests.
-
+The shared-memory capacity restricts how many CTAs can reside on an SM, while the shared-memory throughput 
+reflects how actively the memory subsystem services requests.
 Both can affect performance, but in different ways.
 
 9. Analyze the L1/TEX Cache table
 Screenshots 1–3 — L1/TEX Cache
-Your second screenshot shows:
-Access type                 Instructions Requests	 Wavefronts	 Sectors	    Bytes
-Global Load To Shared Store	6,758,400	   6,758,400	11,696,305	 108,134,400	3,460,300,800
-Global Store	               819,200	     819,200	  2,001,676	  3,291,461	  105,326,752
-Total	                      7,577,600	   7,577,600	13,697,981	 111,425,861	3,565,627,552
-
+The second screenshot shows:
+</pre>
+|Access type  |               Instructions| Requests|	 Wavefronts	| Sectors|	    Bytes|
+|:----|:-----|:----|:-----|:-----|:------|
+|Global Load To Shared Store|	6,758,400|	   6,758,400|	11,696,305|	 108,134,400|	3,460,300,800
+|Global Store	|               819,200|	     819,200|	  2,001,676|	  3,291,461	|  105,326,752|
+|Total	                      |7,577,600	   |7,577,600|	13,697,981	 |111,425,861	|3,565,627,552|
+<pre>
 9.1 Why are there so many sectors in the copy path?
-Your global-to-shared copy path transfers:
-\[
-108,134,400\text{ sectors}
-\]
+The global-to-shared copy path transfers:
+108,134,400 sectors
 
 A sector is 32 bytes.
 
