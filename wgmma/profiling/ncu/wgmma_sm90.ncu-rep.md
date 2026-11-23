@@ -1867,10 +1867,188 @@ The profiler shows:
 - Eligible warps: only 0.15 per scheduler.
 - Tensor pipeline: not saturated.
 The conservative waiting strategy is a plausible contributor to this combination.
-
 Investigation is to identify exactly where the waiting occurs and whether it can be hidden by 
 restructuring the pipeline.
+
+Step 13. Analyze Instruction Statistics
+Screenshots 16–20 — Instruction Statistics and Executed Instruction Mix
+The final screenshots show the low-level SASS instruction mix.
+The summary reports:
+</pre>
+|Metric|	Count|
+|:----|:-----|
+|Executed Instructions|	64,723,200|
+|Issued Instructions	|64,733,000|
+<pre>
+These totals are close, which is normal for this workload.
+
+13.1 What does the Executed Instruction Mix tell us?
+The most prominent SASS instruction groups include:
+</pre>
+|Opcode|	General function|	Connection to your kernel|
+|:----|:-----|:----|
+|UMOV	|Move a value to a uniform register|	Kernel bookkeeping and address-related values|
+|IADD3	|Integer addition|	Address and index calculations|
+|LDGSTS|	Asynchronous global-to-shared memory copy|	Loading A/B tiles with cp.async|
+|UIADD3|	Uniform integer addition|	Loop/index/address bookkeeping|
+|HGMMA|	Hopper warpgroup matrix multiplication	|Actual Tensor Core GEMM|
+|IMAD|	Integer multiply-add|	Index and address calculations|
+|PRMT	Byte permutation|	Data or value manipulation|
+|LDS	Shared-memory load	|Shared-memory-related operations|
+|STG|	Global-memory store	|Writing C|
+|WARP* instructions|	Warpgroup coordination|	WGMMA synchronization|
+<pre>
+These are broadly consistent with your source code.
+
+13.2 Why is there so much integer arithmetic?
+A GEMM kernel performs more than matrix multiplications.
+It must also:
+- Determine which tile each CTA owns.
+- Calculate addresses for A, B and C.
+- Advance K-tile loop counters.
+- Manage pipeline stage indices.
+- Generate addresses for asynchronous loads and stores.
+- Coordinate synchronization.
+IADD3, UIADD3, IMAD, and related instructions implement much of this work.
+
+Integer instructions are therefore not surprising in a highly optimized Tensor Core kernel.
+However, excessive address-generation overhead can reduce the rate at which useful work is issued.
+The issue-slot utilization is low, but we cannot conclude from opcode counts alone that address calculations are 
+the dominant problem.
  
+13.3 Why is HGMMA an important result?
+The instruction mix confirms that the kernel is actually executing Hopper's warpgroup Tensor Core instruction 
+family.
+This matters because we compiled the executable on the RTX 5080 but executed it on H100.
+The Nsight report provides hardware-level evidence that the intended Hopper matrix-multiplication instructions 
+executed.
+ 
+13.4 One HGMMA instruction does much more than one FLOP
+The source uses an MMA atom corresponding to a 64 x 64 x 16.
+Its mathematical work is:
+2 x 64 x 64 x 16
+131,072 FLOPs
+per logical MMA operation of that shape.
+That is why we must not interpret the HGMMA SASS instruction count as a conventional scalar FLOP count.
+Furthermore, Nsight's executed-instruction counters are generally measured at warp-level granularity, 
+while WGMMA is a coordinated warpgroup operation.
+The profiler's Tensor Core operations counter is the better source for determining total matrix arithmetic.
+ 
+13.5 What about LDGSTS?
+Your current kernel uses cp.async, reflected by LDGSTS.
+The wgmma_tma_sm90.cu tutorial uses TMA instead.
+One of the most valuable comparisons will be:
+Current WGMMA tutorial	Future WGMMA + TMA tutorial
+Thread-driven cp.async copies	TMA-driven tile copies
+LDGSTS activity	TMA activity
+cp.async completion waits	Transaction-barrier coordination
+Explicit copy layout	TMA descriptors and partitioning
+WGMMA computation	WGMMA computation
+
+This is not a claim that TMA will always be faster. It is a way to examine how changing the data movement 
+mechanism affects memory behavior, synchronization, and Tensor Core utilization.
+
+Step 14. Put all the evidence together
+We now have enough measurements to construct a useful working diagnosis.
+Observation	Measurement	Interpretation
+Dense FP16 Tensor Core throughput	42.29% of peak	Substantial compute headroom
+L1/TEX throughput	82.82%	High internal memory activity
+DRAM throughput	16.41%	HBM not saturated
+L2 hit rate	79.75%	Considerable on-chip caching
+Active warps per scheduler	1.99	Low resident-warp population
+Eligible warps per scheduler	0.15	Most warps often unable to issue
+No eligible warp	85.12%	Severe lack of ready work
+Long-scoreboard stall	~8.3 cycles/instruction	Significant memory dependency latency
+Global-store sector utilization	~50%	Potentially inefficient output writes
+TMA instructions	0	Expected for this tutorial
+
+Current performance diagnosis
+Confirmed: WGMMA is functioning correctly.
+The reported FP16 HGMMA operation count matches the expected GEMM FLOPs.
+Strong evidence: Memory-dependency latency is not being hidden sufficiently.
+High long-scoreboard stalls and very low scheduler eligibility support this conclusion.
+Likely contributor: Low CTA residency.
+The three-stage pipeline consumes approximately 96 KiB shared memory per CTA, consistent with two CTAs per SM.
+Possible optimization: Improve copy/computation overlap.
+The existing cp_async_wait<0>() and warpgroup_wait<0>() synchronization warrants investigation.
+Separate optimization candidate: Improve output-store transaction efficiency.
+The profiler reports that only about half of each global-store sector is useful.
+
+Step 15. What should you investigate next?
+Prioritize these experiments in this order.
+Experiment A — Identify the instructions responsible for Long Scoreboard stalls
+Open the existing report in Nsight Compute.
+Select the Source tab and examine SASS along with the warp-stall sampling columns.
+Look for instructions associated with LDGSTS, waits, and other memory dependencies.
+The stall samples can appear on the consumer instruction rather than the original load.
+ 
+Experiment B — Examine the Occupancy section
+We need to verify our shared-memory residency calculation.
+Look for:
+- Shared memory per CTA.
+- Registers per thread.
+- Theoretical occupancy.
+- Achieved occupancy.
+- Occupancy limiter.
+This will tell us whether shared memory is the controlling residency resource or whether register usage also 
+constrains it.
+ 
+Experiment C — Test pipeline stages
+We could compare a two-stage and three-stage version of wgmma_sm90.cu.
+The tradeoff is interesting:
+Pipeline configuration	A/B shared memory per CTA	Possible residency effect
+2 stages	Approximately 64 KiB	May allow more CTAs
+3 stages	Approximately 96 KiB	Consistent with 2 CTAs per SM
+4 stages	Approximately 128 KiB	May reduce residency further
+
+These are approximate A/B storage requirements, excluding any additional allocations or alignment overhead.
+More pipeline stages do not automatically mean better performance.
+Additional stages can improve latency hiding but increase shared-memory consumption. Reducing stages can allow 
+more resident CTAs but reduce copy/computation overlap.
+The profiler provides a concrete reason to study that tradeoff.
+ 
+Experiment D — Compare wgmma_sm90 with wgmma_tma_sm90
+When we next run the program on H100 data center, use the same problem dimensions, precision, output layout and 
+benchmarking method wherever possible.
+
+Then compare:
+- Dense Tensor Core throughput.
+- Long Scoreboard stalls.
+- Eligible warps per scheduler.
+- TMA and LDGSTS activity.
+- Kernel execution time.
+Because the tutorials differ in more than just one instruction, treat the comparison as a comparison of two 
+implementations, not proof of the isolated benefit of TMA.
+
+Step 16. What we have learned from this first report
+We have already uncovered a meaningful GPU performance story:
+1. The kernel performs approximately 214.75 billion arithmetic operations in 651.87 μs.
+2. It achieves 329.43 TFLOP/s during the captured launch.
+3. It reaches 42.29% of the dense FP16 HGMMA peak.
+4. External HBM bandwidth is not saturated.
+5. There are very few ready warps despite plenty of GEMM work remaining.
+6. Memory-dependency stalls consume a substantial fraction of warp cycles.
+7. Three-stage shared-memory buffering likely contributes to low warp residency.
+8. Global output stores provide an additional optimization opportunity.
+This is the sort of reasoning a GPU performance engineer should build from Nsight Compute evidence.
+
+It is much more useful than looking only at the achieved TFLOP/s number.
+What we want to examine in the remaining screenshots
+The most valuable remaining sections would be Occupancy, Launch Statistics, Source Counters, any shared-memory 
+bank-conflict metrics, and SASS-level stall attribution.
+
+Those can help us decide whether the kernel is primarily limited by the copy pipeline, synchronization, residency, 
+or another dependency.
+
+The most important lesson from this first batch: high Tensor Core performance requires more than fast matrix 
+instructions. It requires keeping the data, synchronization, and instruction schedules moving so the Tensor 
+Cores receive useful work consistently.
+ 
+
+ 
+Nsight Compute analysis — Part 2: Launch Statistics, Occupancy, Workload Distribution, and Source Counters
+These 11 additional screenshots answer an important question from our first analysis: 
+
 16. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28dfd2e-e9eb-4be7-94e1-367fe9322e68" />
 17. Instruction Statistics
@@ -1881,6 +2059,164 @@ restructuring the pipeline.
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/2a6a9258-6fb0-41c9-b31c-c630f075f834" />
 20. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/d91c052a-1f3d-435c-a126-4bd4cb6bd21c" />
+
+What is preventing the H100 WGMMA kernel from keeping more warps active?
+We previously suspected that shared-memory consumption was restricting occupancy. The new report confirms that 
+shared memory is the limiting resource, and it also reveals a separate tail effect and specific source-code locations 
+worth investigating.
+Step 17. Launch Statistics — Understand the kernel's hardware resource requirements
+Screenshot 1 — Launch Statistics
+
+The following values come directly from the screenshot.
+Metric	Measured value
+Grid Size	1,600 CTAs
+Block Size	128 threads
+Cluster Size	1 CTA
+Registers Per Thread	114
+Static Shared Memory Per Block	0
+Dynamic Shared Memory Per Block	98.30 KB
+Driver Shared Memory Per Block	1.02 KB
+Shared Memory Configuration Size	200.70 KB
+SMs	132
+TPCs	66
+Waves Per SM	3.03
+
+17.1 Grid Size: 1,600
+The execution grid is:
+dim3 dimGrid(40, 40, 1);
+Therefore:
+40 x 40= 1600 CTAs
+
+Each CTA calculates one output tile of size 128 x 128.
+Your total output matrix is \(5120\times5120\):
+(5120 / 128) x (5120 / 128) = x 40
+This confirms that the full GEMM output is covered exactly, without partially filled edge tiles.
+ 
+17.2 Block Size: 128 threads
+The kernel launches:
+dim3 dimBlock(128, 1, 1);
+Each CTA contains:
+128/32 = 4 warps
+
+On Hopper, four warps form one warpgroup.
+This matters because WGMMA instructions operate cooperatively across the entire warpgroup.
+Each CTA in your experiment consists of one warpgroup executing the WGMMA kernel.
+ 
+17.3 Cluster Size: 1
+The report says:
+Cluster Size = 1
+This means each thread-block cluster contains one CTA.
+It does not mean the GPU can run only one CTA per SM.
+These are separate concepts:
+- Cluster size: How many CTAs belong to one cluster.
+- CTA residency: How many CTAs can run simultaneously on one SM.
+The kernel uses cluster size 1, but its resource configuration permits two resident CTAs per SM.
+This is an important distinction for when we later study wgmma_tma_sm90.cu, where the cluster configuration 
+may differ.
+ 
+17.4 Registers Per Thread: 114
+Each thread requires 114 registers, according to the launch statistics.
+
+A simple register-count calculation gives:
+\[
+114\times128=14,592
+\]
+
+So each CTA requires at least approximately 14,592 32-bit register slots before accounting for allocation granularity.
+
+The H100 has 65,536 32-bit registers per SM.
+
+Ignoring register-allocation rounding:
+\[
+\left\lfloor\frac{65,536}{14,592}\right\rfloor=4
+\]
+
+That agrees with the Occupancy section's Register Block Limit = 4.
+
+This is not the limiting resource for your current kernel, because shared memory restricts residency to two CTAs.
+17.5 Dynamic Shared Memory: 98.30 KB
+This is the most important launch statistic.
+
+Your source defines:
+auto bM = Int<128>{};
+auto bN = Int<128>{};
+auto bK = Int<64>{};
+auto bP = Int<3>{};
+
+
+Here, bP = 3 specifies three pipeline stages.
+
+One A tile contains:
+\[
+128\times64=8192\text{ elements}
+\]
+
+Since FP16 uses 2 bytes:
+\[
+8192\times2=16,384\text{ bytes}
+\]
+
+One B tile has the same size.
+
+Thus, one stage needs:
+\[
+16,384+16,384=32,768\text{ bytes}
+\]
+
+Three stages need:
+\[
+3\times32,768
+=\boxed{98,304\text{ bytes}}
+\]
+
+That's exactly:
+\[
+98,304/1000=98.304\text{ decimal KB}
+\]
+
+or:
+\[
+98,304/1024=\boxed{96\text{ KiB}}
+\]
+
+Your profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
+17.6 What is Driver Shared Memory = 1.02 KB?
+Nsight Compute also reports approximately 1.02 KB reserved for the driver per CTA.
+
+This corresponds to roughly 1,024 bytes of additional shared-memory allocation.
+
+Therefore, the total resource consumption is approximately:
+\[
+98,304+1,024
+=\boxed{99,328\text{ bytes per CTA}}
+\]
+
+When calculating CTA residency, include this allocation rather than considering only the memory explicitly requested by the kernel.
+17.7 Shared Memory Configuration Size = 200.70 KB
+The report also shows:
+\[
+200.70\text{ KB}\approx200,704\text{ bytes}
+\]
+
+This is the configured shared-memory resource size that the occupancy calculation uses.
+
+Now compare one, two, and three CTAs:
+CTAs per SM	Shared memory required	Fits?
+1	99,328 bytes	Yes
+2	198,656 bytes	Yes
+3	297,984 bytes	No
+
+Mathematically:
+\[
+\left\lfloor\frac{200,704}{99,328}\right\rfloor
+=\boxed{2\text{ CTAs}}
+\]
+
+This directly explains the shared-memory occupancy limit.
+
+One useful detail: the configured shared-memory resource is not necessarily equal to the physical maximum shared-memory capacity advertised for the H100. Use the value reported for the actual kernel launch when analyzing its occupancy.
+
+ 
 Step 13. Analyze Instruction Statistics
 Screenshots 16–20 — Instruction Statistics and Executed Instruction Mix
 
