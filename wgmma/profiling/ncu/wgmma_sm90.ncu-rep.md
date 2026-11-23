@@ -2116,305 +2116,94 @@ may differ.
  
 17.4 Registers Per Thread: 114
 Each thread requires 114 registers, according to the launch statistics.
-
 A simple register-count calculation gives:
-\[
-114\times128=14,592
-\]
-
+114 x 128=14,592
 So each CTA requires at least approximately 14,592 32-bit register slots before accounting for allocation granularity.
-
 The H100 has 65,536 32-bit registers per SM.
-
 Ignoring register-allocation rounding:
-\[
-\left\lfloor\frac{65,536}{14,592}\right\rfloor=4
-\]
+flooring (65,536 / 14,592) = 4
 
 That agrees with the Occupancy section's Register Block Limit = 4.
-
-This is not the limiting resource for your current kernel, because shared memory restricts residency to two CTAs.
+This is not the limiting resource for the current kernel, because shared memory restricts residency to two CTAs.
+ 
 17.5 Dynamic Shared Memory: 98.30 KB
-This is the most important launch statistic.
-
-Your source defines:
+The source defines:
 auto bM = Int<128>{};
 auto bN = Int<128>{};
 auto bK = Int<64>{};
 auto bP = Int<3>{};
-
-
 Here, bP = 3 specifies three pipeline stages.
-
 One A tile contains:
-\[
-128\times64=8192\text{ elements}
-\]
+128 x 64=8192 elements
 
 Since FP16 uses 2 bytes:
-\[
-8192\times2=16,384\text{ bytes}
-\]
-
+8192 x 2=16,384 bytes
 One B tile has the same size.
-
 Thus, one stage needs:
-\[
-16,384+16,384=32,768\text{ bytes}
-\]
+16,384 + 16,384=32,768 bytes
 
 Three stages need:
-\[
-3\times32,768
-=\boxed{98,304\text{ bytes}}
-\]
+3  x 32,768
+=98,304 bytes
 
 That's exactly:
-\[
-98,304/1000=98.304\text{ decimal KB}
-\]
-
+98,304/1000=98.304 decimal KB
 or:
-\[
-98,304/1024=\boxed{96\text{ KiB}}
-\]
-
-Your profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
+98,304/1024=96 KiB
+The profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
+ 
 17.6 What is Driver Shared Memory = 1.02 KB?
 Nsight Compute also reports approximately 1.02 KB reserved for the driver per CTA.
-
 This corresponds to roughly 1,024 bytes of additional shared-memory allocation.
-
 Therefore, the total resource consumption is approximately:
-\[
-98,304+1,024
-=\boxed{99,328\text{ bytes per CTA}}
-\]
+98,304 + 1,024
+= 99,328 bytes per CTA
 
-When calculating CTA residency, include this allocation rather than considering only the memory explicitly requested by the kernel.
+When calculating CTA residency, include this allocation rather than considering only the memory explicitly requested 
+by the kernel.
+ 
 17.7 Shared Memory Configuration Size = 200.70 KB
 The report also shows:
-\[
-200.70\text{ KB}\approx200,704\text{ bytes}
-\]
+200.70 KB approximately 200,704 bytes
 
 This is the configured shared-memory resource size that the occupancy calculation uses.
-
 Now compare one, two, and three CTAs:
-CTAs per SM	Shared memory required	Fits?
-1	99,328 bytes	Yes
-2	198,656 bytes	Yes
-3	297,984 bytes	No
-
+</pre>
+|CTAs per SM|	Shared memory required|	Fits?|
+|:----|:-----|:----|
+|1|	99,328 bytes|	Yes|
+|2	|198,656 bytes	|Yes|
+|3|	297,984 bytes|	No|
+<pre>
 Mathematically:
-\[
-\left\lfloor\frac{200,704}{99,328}\right\rfloor
-=\boxed{2\text{ CTAs}}
-\]
+flooring (200,704 / 99,328)
+=2 CTAs
 
 This directly explains the shared-memory occupancy limit.
+One useful detail: the configured shared-memory resource is not necessarily equal to the physical maximum 
+shared-memory capacity advertised for the H100. Use the value reported for the actual kernel launch when 
+analyzing its occupancy.
 
-One useful detail: the configured shared-memory resource is not necessarily equal to the physical maximum shared-memory capacity advertised for the H100. Use the value reported for the actual kernel launch when analyzing its occupancy.
-
- 
 Step 13. Analyze Instruction Statistics
 Screenshots 16–20 — Instruction Statistics and Executed Instruction Mix
-
-Your final screenshots show the low-level SASS instruction mix.
-
+The final screenshots show the low-level SASS instruction mix.
 The summary reports:
-Metric	Count
-Executed Instructions	64,723,200
-Issued Instructions	64,733,000
-
+</pre>
+|Metric|	Count|
+|:----|:-----|
+|Executed Instructions|	64,723,200|
+|Issued Instructions	|64,733,000|
 These totals are close, which is normal for this workload.
-13.1 What does the Executed Instruction Mix tell us?
-The most prominent SASS instruction groups include:
-Opcode	General function	Connection to your kernel
-UMOV	Move a value to a uniform register	Kernel bookkeeping and address-related values
-IADD3	Integer addition	Address and index calculations
-LDGSTS	Asynchronous global-to-shared memory copy	Loading A/B tiles with cp.async
-UIADD3	Uniform integer addition	Loop/index/address bookkeeping
-HGMMA	Hopper warpgroup matrix multiplication	Actual Tensor Core GEMM
-IMAD	Integer multiply-add	Index and address calculations
-PRMT	Byte permutation	Data or value manipulation
-LDS	Shared-memory load	Shared-memory-related operations
-STG	Global-memory store	Writing C
-WARP* instructions	Warpgroup coordination	WGMMA synchronization
-
-These are broadly consistent with your source code.
-13.2 Why is there so much integer arithmetic?
-A GEMM kernel performs more than matrix multiplications.
-
-It must also:
-- Determine which tile each CTA owns.
-- Calculate addresses for A, B and C.
-- Advance K-tile loop counters.
-- Manage pipeline stage indices.
-- Generate addresses for asynchronous loads and stores.
-- Coordinate synchronization.
-IADD3, UIADD3, IMAD, and related instructions implement much of this work.
-
-Integer instructions are therefore not surprising in a highly optimized Tensor Core kernel.
-
-However, excessive address-generation overhead can reduce the rate at which useful work is issued.
-
-Your issue-slot utilization is low, but we cannot conclude from opcode counts alone that address calculations are the dominant problem.
-13.3 Why is HGMMA an important result?
-The instruction mix confirms that the kernel is actually executing Hopper's warpgroup Tensor Core instruction family.
-
-This matters because you compiled the executable on your RTX 5080 but executed it on H100.
-
-Your Nsight report provides hardware-level evidence that the intended Hopper matrix-multiplication instructions executed.
-13.4 One HGMMA instruction does much more than one FLOP
-Your source uses an MMA atom corresponding to a \(64\times64\times16\) operation.
-
-Its mathematical work is:
-\[
-2\times64\times64\times16
-\]
-
-\[
-=\boxed{131,072\text{ FLOPs}}
-\]
-
-per logical MMA operation of that shape.
-
-That is why we must not interpret the HGMMA SASS instruction count as a conventional scalar FLOP count.
-
-Furthermore, Nsight's executed-instruction counters are generally measured at warp-level granularity, while WGMMA is a coordinated warpgroup operation.
-
-The profiler's Tensor Core operations counter is the better source for determining total matrix arithmetic.
-13.5 What about LDGSTS?
-This is particularly important for your next project.
-
-Your current kernel uses cp.async, reflected by LDGSTS.
-
-The wgmma_tma_sm90.cu tutorial uses TMA instead.
-
-One of the most valuable comparisons will be:
-Current WGMMA tutorial	Future WGMMA + TMA tutorial
-Thread-driven cp.async copies	TMA-driven tile copies
-LDGSTS activity	TMA activity
-cp.async completion waits	Transaction-barrier coordination
-Explicit copy layout	TMA descriptors and partitioning
-WGMMA computation	WGMMA computation
-
-This is not a claim that TMA will always be faster. It is a way to examine how changing the data movement mechanism affects memory behavior, synchronization, and Tensor Core utilization.
-
-Step 14. Put all the evidence together
-We now have enough measurements to construct a useful working diagnosis.
-Observation	Measurement	Interpretation
-Dense FP16 Tensor Core throughput	42.29% of peak	Substantial compute headroom
-L1/TEX throughput	82.82%	High internal memory activity
-DRAM throughput	16.41%	HBM not saturated
-L2 hit rate	79.75%	Considerable on-chip caching
-Active warps per scheduler	1.99	Low resident-warp population
-Eligible warps per scheduler	0.15	Most warps often unable to issue
-No eligible warp	85.12%	Severe lack of ready work
-Long-scoreboard stall	~8.3 cycles/instruction	Significant memory dependency latency
-Global-store sector utilization	~50%	Potentially inefficient output writes
-TMA instructions	0	Expected for this tutorial
-
-My current performance diagnosis
-Confirmed: WGMMA is functioning correctly.
-
-The reported FP16 HGMMA operation count matches the expected GEMM FLOPs.
 
 
 
-Strong evidence: Memory-dependency latency is not being hidden sufficiently.
-
-High long-scoreboard stalls and very low scheduler eligibility support this conclusion.
 
 
 
-Likely contributor: Low CTA residency.
-
-The three-stage pipeline consumes approximately 96 KiB shared memory per CTA, consistent with two CTAs per SM.
 
 
 
-Possible optimization: Improve copy/computation overlap.
 
-The existing cp_async_wait<0>() and warpgroup_wait<0>() synchronization warrants investigation.
-
-
-
-Separate optimization candidate: Improve output-store transaction efficiency.
-
-The profiler reports that only about half of each global-store sector is useful.
-
-
-
-Step 15. What should you investigate next?
-I would prioritize these experiments in this order.
-Experiment A — Identify the instructions responsible for Long Scoreboard stalls
-Open your existing report in Nsight Compute.
-
-Select the Source tab and examine SASS along with the warp-stall sampling columns.
-
-Look for instructions associated with LDGSTS, waits, and other memory dependencies.
-
-Remember that stall samples can appear on the consumer instruction rather than the original load.
-Experiment B — Examine the Occupancy section
-We need to verify our shared-memory residency calculation.
-
-Look for:
-- Shared memory per CTA.
-- Registers per thread.
-- Theoretical occupancy.
-- Achieved occupancy.
-- Occupancy limiter.
-This will tell us whether shared memory is the controlling residency resource or whether register usage also constrains it.
-Experiment C — Test pipeline stages
-You could compare a two-stage and three-stage version of wgmma_sm90.cu.
-
-The tradeoff is interesting:
-Pipeline configuration	A/B shared memory per CTA	Possible residency effect
-2 stages	Approximately 64 KiB	May allow more CTAs
-3 stages	Approximately 96 KiB	Consistent with 2 CTAs per SM
-4 stages	Approximately 128 KiB	May reduce residency further
-
-These are approximate A/B storage requirements, excluding any additional allocations or alignment overhead.
-
-More pipeline stages do not automatically mean better performance.
-
-Additional stages can improve latency hiding but increase shared-memory consumption. Reducing stages can allow more resident CTAs but reduce copy/computation overlap.
-
-Your profiler provides a concrete reason to study that tradeoff.
-Experiment D — Compare wgmma_sm90 with wgmma_tma_sm90
-When you next rent an H100, use the same problem dimensions, precision, output layout and benchmarking method wherever possible.
-
-Then compare:
-- Dense Tensor Core throughput.
-- Long Scoreboard stalls.
-- Eligible warps per scheduler.
-- TMA and LDGSTS activity.
-- Kernel execution time.
-Because the tutorials differ in more than just one instruction, treat the comparison as a comparison of two implementations, not proof of the isolated benefit of TMA.
-
-Step 16. What you have learned from this first report
-You have already uncovered a meaningful GPU performance story:
-1. The kernel performs approximately 214.75 billion arithmetic operations in 651.87 μs.
-2. It achieves 329.43 TFLOP/s during the captured launch.
-3. It reaches 42.29% of the dense FP16 HGMMA peak.
-4. External HBM bandwidth is not saturated.
-5. There are very few ready warps despite plenty of GEMM work remaining.
-6. Memory-dependency stalls consume a substantial fraction of warp cycles.
-7. Three-stage shared-memory buffering likely contributes to low warp residency.
-8. Global output stores provide an additional optimization opportunity.
-This is the sort of reasoning a GPU performance engineer should build from Nsight Compute evidence.
-
-It is much more useful than looking only at the achieved TFLOP/s number.
-What I want to examine in your remaining screenshots
-The most valuable remaining sections would be Occupancy, Launch Statistics, Source Counters, any shared-memory bank-conflict metrics, and SASS-level stall attribution.
-
-Those can help us decide whether the kernel is primarily limited by the copy pipeline, synchronization, residency, or another dependency.
-
-Send your remaining screenshots in the next message. I'll continue the same detailed analysis, connect their measurements to the findings above, and revise any hypotheses that the new evidence contradicts.
-
-The most important lesson from this first batch: high Tensor Core performance requires more than fast matrix instructions. It requires keeping the data, synchronization, and instruction schedules moving so the Tensor Cores receive useful work consistently.
 
 **************************************************
 What is preventing your H100 WGMMA kernel from keeping more warps active?
@@ -2606,116 +2395,712 @@ One useful detail: the configured shared-memory resource is not necessarily equa
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
 
 Step 18. Occupancy — Your central performance limitation is confirmed
-Screenshot 2 — Occupancy
-
-Your report gives:
-Metric	Value
-Theoretical Occupancy	12.50%
-Achieved Occupancy	12.42%
-Theoretical Active Warps Per SM	8
-Achieved Active Warps Per SM	7.95
-Block Limit Registers	4
-Block Limit Shared Memory	2
-Block Limit Warps	16
-Block Limit SM	32
-Block Limit Barriers	32
+The report gives:
+|Metric	|Value|
+|:----|:-----|
+|Theoretical Occupancy|	12.50%|
+|Achieved Occupancy|	12.42%|
+|Theoretical Active Warps Per SM|	8|
+|Achieved Active Warps Per SM|	7.95|
+|Block Limit Registers|	4|
+|Block Limit Shared Memory	|2|
+|Block Limit Warps|	16|
+|Block Limit SM|	32|
+|Block Limit Barriers|	32|
 
 18.1 Derive theoretical occupancy
 The H100 supports a maximum of 64 resident warps per SM.
-
-Your kernel can have:
-\[
-2\text{ CTAs per SM}\times4\text{ warps per CTA}
-=8\text{ warps per SM}
-\]
-
+tHE kernel can have:
+2 CTAs per SM X 4 warps per CTA
+=8 warps per SM
 Therefore:
-\[
-\text{Theoretical occupancy}
-=\frac{8}{64}\times100
-\]
-
-\[
-\boxed{12.50\%}
-\]
+Theoretical occupancy
+= (8 / 64) X 100
+12.50%
 
 This is exactly the value Nsight Compute reports.
 18.2 Derive achieved occupancy
 The measured average is 7.95 active warps per SM.
-
 Therefore:
-\[
-\text{Achieved occupancy}
-=\frac{7.95}{64}\times100
-\]
-
-\[
-\boxed{\approx12.42\%}
-\]
-
+Achieved occupancy
+= (7.95 / 64) X 100
+approximately 12.42%
 Again, this matches the profiler.
+
 18.3 Why are theoretical and achieved occupancy almost identical?
 Compare:
-\[
-12.50\%\quad\text{versus}\quad12.42\%
-\]
-
+12.50% versus 12.42%
 The difference is only 0.08 percentage points.
-
 This means the kernel generally achieves the residency permitted by its resource allocation.
-
-You do not have a large gap between theoretical and achieved occupancy. You have a low theoretical occupancy ceiling.
-
+We do not have a large gap between theoretical and achieved occupancy. We have a low theoretical occupancy 
+ceiling.
 That is a very different diagnosis.
-
-If theoretical occupancy were 50% but achieved occupancy were 12%, we would investigate why the hardware failed to sustain the possible residency.
-
-In your case, the hardware is maintaining almost all the available residency.
-
+If theoretical occupancy were 50% but achieved occupancy were 12%, we would investigate why the hardware
+failed to sustain the possible residency.
+In the case, the hardware is maintaining almost all the available residency.
 The limitation is primarily imposed by the kernel's required resources.
+
 18.4 Identify which resource actually limits occupancy
 Your profiler provides several block limits:
-<img width="1243" height="236" alt="image" src="https://github.com/user-attachments/assets/a5347776-3eda-4e41-a97f-1a5c90712654" />
+Registers             --------                                                          4 CTAs
+Shared memory         ----                                                              2 CTAs
+Warps                 --------------------------------                                  16 CTAs
+SM block slots        ----------------------------------------------------------------  32 CTAs
+Barriers              ----------------------------------------------------------------  32 CTAs
+
 The smallest block limit determines the maximum number of resident CTAs. Scale is relative to 32 CTA slots.
 The calculation is:
-\[
-\text{Resident CTAs per SM}
-=\min(4,2,16,32,32)
-\]
-
-\[
-=\boxed{2}
-\]
-
+Resident CTAs per SM
+=min(4,2,16,32,32)
+= 2
 Shared memory is definitively the occupancy-limiting resource.
-
-NVIDIA's occupancy documentation explains that registers, warps, shared memory, barriers and hardware block limits jointly determine residency. 
-NsightCompute
+NVIDIA's occupancy documentation explains that registers, warps, shared memory, barriers and hardware block limits 
+jointly determine residency. 
 
 18.5 How this changes our interpretation of your earlier Scheduler Statistics
 In the first batch, we observed:
 Active Warps Per Scheduler = 1.99
 Eligible Warps Per Scheduler = 0.15
 No Eligible = 85.12%
-
-
 Now we understand why the active-warp count is close to two.
-
-Your H100 has four warp schedulers per SM.
-
+The H100 has four warp schedulers per SM.
 With eight resident warps:
-\[
-8/4=2\text{ warps per scheduler}
-\]
-
+8/4 = 2  warps per scheduler
 So the reported 1.99 active warps per scheduler is exactly what we would expect.
-
 The kernel's problem is not that blocks failed to launch.
-
-It is that each scheduler has very few resident warps available to hide dependencies, and most of those warps frequently cannot issue.
-
+It is that each scheduler has very few resident warps available to hide dependencies, and most of those warps 
+frequently cannot issue.
 Low available residency plus memory-related stalls is a more precise explanation of the observed underutilization.
+
+Detailed analysis of the wgmma_sm90.cu compilation output
+The compilation output confirms that we successfully built Hopper-specific CUDA machine code (sm_90a) on the 
+RTX 5080 desktop.
+The most interesting discovery is that the compiler generated two specialized GEMM kernels, using 112 and 
+114 registers per thread. The earlier Nsight Compute report from the H100 showed 114 registers per thread, 
+so we can connect the compilation output directly to the kernel we profiled.
+
+Explaining the build process first, then the compiler flags, the two GEMM specializations, register usage, 
+and finally their relationship to the H100 performance results.
+1. Understand the compilation process
+The build follows this sequence:
+CMake + GNU Make
+Check dependencies and determine which files require rebuilding
+    |
+    V
+NVIDIA CUDA compiler — nvcc
+Compile CUDA C++ templates for compute_90a and sm_90a
+    |
+    V
+PTX assembler — ptxas
+Generate Hopper machine code; allocate registers and barrier resources
+    |
+    V
+Host linker — g++
+Link objects and required libraries into one executable
+    |
+    V
+build/wgmma_sm90
+Executable containing the host application and Hopper device code
+
+The stages are conceptually separate, although nvcc orchestrates several of them internally.
+The RTX 5080 does not have to execute the Hopper instructions during compilation. The compiler only needs to 
+support their instruction set and architecture target.
+This is why the approach of compiling locally and executing on Lambda H100 works.
+
+2. The first part: CMake and GNU Make
+Your log begins with commands such as:
+/usr/bin/cmake -S... -B... --check-build-system ...
+This tells CMake to check whether the generated build system is still valid.
+Next:
+/usr/bin/gmake -f CMakeFiles/Makefile2 all
+This invokes GNU Make to build the default target.
+The nested gmake[1] and gmake[2] messages reflect recursively invoked Make processes. They do not indicate
+two different GPUs or two compiler executions.
+
+The build then reaches:
+[ 50%] Building CUDA object CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+This means CMake is compiling the source file into an object file:
+wgmma_sm90.cu
+       |
+       V
+wgmma_sm90.cu.o
+The object file is not yet the final executable. It contains compiled code and information needed by the linker.
+The percentage is CMake's build progress, not an indication that half of the CUDA kernel is executing.
+
+3. Understand the exact nvcc command
+The central command is:
+/usr/local/cuda/bin/nvcc \
+    -forward-unknown-to-host-compiler \
+    --options-file CMakeFiles/wgmma_sm90.dir/includes_CUDA.rsp \
+    -O3 -DNDEBUG -std=c++17 \
+    "--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]" \
+    --expt-relaxed-constexpr \
+    --generate-line-info \
+    -Xptxas=-v \
+    -Xptxas=-warn-spills \
+    --resource-usage \
+    -UCUTLASS_ENABLE_SYNCLOG \
+    -MD \S
+    -MT CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o \
+    -MF CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o.d \
+    -x cu -c wgmma_sm90.cu \
+    -o CMakeFiles/wgmma_sm90.dir/wgmma_sm90.cu.o
+
+
+hortened the absolute source path for readability. The following explanation covers each group of options.
+3.1 Optimization and language options
+Option	Meaning	Why it matters
+-O3	Enable aggressive host compiler optimization	Appropriate for performance experiments
+-DNDEBUG	Define the NDEBUG macro	Disables standard C/C++ assert() checks
+-std=c++17	Compile using C++17	Required by this CUTLASS/CuTe build
+--expt-relaxed-constexpr	Relax certain host/device constexpr restrictions	Useful for template-heavy CUDA C++
+-forward-unknown-to-host-compiler	Forward qualifying unknown options to the host compiler	Helps CMake manage 
+mixed host/CUDA flags
+-UCUTLASS_ENABLE_SYNCLOG	Undefine the macro	Controls conditional compilation of CUTLASS synchronization logging
+
+A distinction worth understanding is that the host compiler and GPU assembler have their own optimization 
+processes. -O3 does not expose a single optimization setting for every CUDA compilation stage.
+Also, -DNDEBUG affects assert() behavior. It should not be confused with removing all CUDA runtime error checking.
+
+3.2 The most important flag: compute_90a and sm_90a
+The command includes:
+--generate-code=arch=compute_90a,code=[compute_90a,sm_90a]
+This tells nvcc to generate both:
+Target	Output	Purpose
+compute_90a	Architecture-specific PTX	Intermediate virtual GPU instruction representation
+sm_90a	Compiled GPU machine code	Native Hopper instructions executable on H100
+The important distinction is:
+compute_90a describes the virtual instruction target; sm_90a describes the actual GPU code generation target.
+The compiler first lowers CUDA C++ to lower-level device instructions, then ptxas assembles and optimizes 
+code for Hopper.
+
+NVIDIA documents the distinction between virtual and real GPU architectures and the use of both PTX and 
+machine-code images in the executable. 
+
+3.3 Why is 90a different from 90?
+The a suffix identifies architecture-specific features that are not guaranteed to work on later 
+GPU architectures.
+The WGMMA instruction family is one of the reasons for targeting sm_90a.
+We should not think of it as just a newer spelling of sm_90.
+H100 — Hopper
+sm_90a compatible
+RTX 5080 — Blackwell
+Cannot execute SM90a WGMMA
+This is precisely why the desktop can compile the executable but cannot run that Hopper WGMMA kernel.
+The compiled machine code is for the target architecture, not the GPU doing the compilation.
+
+3.4 Why include both PTX and machine code?
+The build retains the architecture-specific PTX in addition to generating the sm_90a machine code.
+This can be useful for inspecting the intermediate representation and for compatible driver JIT scenarios.
+However, the compute_90a PTX is not a general forward-compatible fallback for the Blackwell RTX 5080. 
+Architecture-specific PTX features are restricted to compatible targets.
+For the H100, the driver can use the native sm_90a machine code embedded in the executable.
+
+3.5 --generate-line-info: Essential for your Nsight studies
+The compiler command contains:
+--generate-line-info
+This generates device-code source-line information.
+That is especially useful because we want to connect:
+CUDA C++ source
+       |
+       V
+PTX
+       |
+       V
+SASS
+       |
+       V
+Profiler metrics
+
+The earlier Nsight Compute screenshots displayed source references such as wgmma_sm90.cu:235 and axpby.hpp:90.
+That is consistent with having useful line-number information in the binary.
+One distinction: line information does not necessarily embed the full source text. For source-level browsing 
+on a different computer, the source files may still need to be accessible or embedded during profiling.
+NVIDIA recommends line information rather than disabling device optimization with -G for performance profiling. 
+
+3.6 -Xptxas=-v and --resource-usage
+These two options explain why your build prints detailed resource information.
+-Xptxas=-v
+--resource-usage
+-Xptxas forwards the specified option to the PTX assembler.
+-v requests verbose assembler output.
+--resource-usage asks nvcc to show information such as register and memory usage. For a 
+non-relocatable-device-code build, this also enables verbose assembler reporting, so there is some redundancy. 
+
+That is how we obtained:
+Used 114 registers, used 1 barriers
+Without verbose resource reporting, you might still compile successfully but not see these valuable details.
+
+3.7 -Xptxas=-warn-spills
+This enables warnings about register spilling.
+It does not prevent spilling.
+Register spilling occurs when the compiler needs to place values in memory because they cannot all remain 
+in physical registers.
+For GPU optimization, this matters because spilled values can introduce additional loads and stores, often 
+involving local memory.
+We will examine the actual spill counts shortly.
+
+3.8 --options-file, -MD, -MT, and -MF
+These are primarily build-system options.
+--options-file reads additional compilation options from the response file generated by CMake, often including 
+a long list of header search paths.
+-MD, -MT, and -MF are used to generate and manage dependency information so the build system knows when 
+changing a header requires recompilation.
+For example, if we edit an included CUTLASS header, CMake and Make need to know that wgmma_sm90.cu.o may be out of date.
+These options do not themselves change the CUDA kernel's tile shape or pipeline behavior.
+
+3.9 -x cu, -c, and -o
+-x cu -c wgmma_sm90.cu -o wgmma_sm90.cu.o
+These specify:
+- -x cu: Treat the input as CUDA source.
+- -c: Compile without producing the final linked executable.
+- -o: Write the resulting object file to the given location.
+This completes the object-compilation stage.
+
+4. Understand ptxas info: 47 bytes gmem
+Your output contains:
+ptxas info : 47 bytes gmem
+
+This is not the amount of global memory your GEMM uses to store A, B and C.
+It describes statically allocated global-memory storage associated with the compiled device module.
+
+The actual GEMM matrices are dynamically allocated at runtime.
+For a 5120 x 5120 x 4096 FP16 GEMM, the matrix data alone is vastly larger than 47 bytes.
+Therefore, this line tells us little about the GEMM's memory bandwidth or memory footprint.
+
+5. Why does the compiler build cub::EmptyKernel?
+The log shows:
+Compiling entry function
+'_ZN3cub17CUB_200802_SM_90011EmptyKernelIvEEvv'
+for 'sm_90a'
+
+This is a CUB library-generated CUDA kernel.
+CUB is part of NVIDIA's CUDA ecosystem and provides reusable GPU primitives.
+
+The application includes CUDA-related template libraries, and some of their generated code can produce 
+additional kernel entry points.
+
+Its resource usage is:
+0 bytes stack frame
+0 bytes spill stores
+0 bytes spill loads
+Used 4 registers, used 0 barriers
+
+This is not your WGMMA matrix multiplication kernel.
+You should not compare its four registers with the 114 registers reported for your GEMM.
+It is simply another device entry function that the compiler generated.
+
+6. Why does ptxas compile gemm_device twice?
+This is the most interesting part of your compilation output.
+
+The assembler reports two device kernels:
+</pre>
+|Specialization|	Registers/thread	|Barriers|	Assembler time|
+|:----|:-----|:----|:----|
+|TN GEMM — K-major layout|	112|	1|	57.885 ms|
+|NT GEMM — MN-major layout	|114|	1|	51.020 ms|
+<pre>
+Both target sm_90a.
  
+6.1 The source uses C++ templates
+The kernel is declared approximately as:
+template <
+    class ProblemShape,
+    class CtaTiler,
+    class TA,
+    class AStride,
+    class ASmemLayout,
+    class TiledCopyA,
+    class TB,
+    class BStride,
+    class BSmemLayout,
+    class TiledCopyB,
+    class TC,
+    class CStride,
+    class TiledMma,
+    class Alpha,
+    class Beta
+>
+__global__ void gemm_device(...);
+This is a template, not a single fixed kernel implementation.
+When different template arguments are supplied, the compiler can generate different machine-code specializations.
+The source contains two host-side configurations:
+1). NT GEMM:
+auto dA = make_stride(Int<1>{}, ldA);
+auto dB = make_stride(Int<1>{}, ldB);
+
+auto sA = tile_to_shape(
+    GMMA::Layout_MN_SW128_Atom<TA>{},
+    make_shape(bM, bK, bP));
+
+TiledMMA tiled_mma = make_tiled_mma(
+    SM90_64x64x16_F16F16F16_SS<
+        GMMA::Major::MN,
+        GMMA::Major::MN>{});
+
+
+2). TN GEMM:
+auto dA = make_stride(ldA, Int<1>{});
+auto dB = make_stride(ldB, Int<1>{});
+
+auto sA = tile_to_shape(
+    GMMA::Layout_K_SW128_Atom<TA>{},
+    make_shape(bM, bK, bP));
+
+TiledMMA tiled_mma = make_tiled_mma(
+    SM90_64x64x16_F16F16F16_SS<
+        GMMA::Major::K,
+        GMMA::Major::K>{});
+
+
+These are distinct compile-time configurations.
+Although both compute GEMM, they use different memory layouts and WGMMA operand major modes. That can change 
+address-generation instructions, copy partitioning, register lifetimes, and other generated code.
+That explains why one specialization requires 112 registers while the other requires 114.
+
+6.2 How can we identify the specializations in the mangled names?
+The first specialization contains a stride type corresponding to:
+make_stride(ldA, Int<1>{})
+That is the TN path, where K is the contiguous dimension.
+
+The second specialization contains a stride type corresponding to:
+make_stride(Int<1>{}, ldA)
+That is the NT path, where M is the contiguous dimension.
+
+The long mangled symbols also encode CuTe layouts, swizzle types, and MMA atoms.
+For example:
+SwizzleILi3ELi4ELi3E
+corresponds to the compile-time swizzle type:
+Swizzle<3,4,3>
+And:
+MMA_64x64x16_F16F16F16_SS
+represents the selected Hopper WGMMA atom.
+The enormous kernel names result from C++ template instantiation and name mangling. They are not errors.
+ 
+6.3 Why compile both if we normally execute NT?
+The host program supports both configurations through runtime arguments:
+if (transA == 'N' && transB == 'T') {
+    return gemm_nt(...);
+}
+else if (transA == 'T' && transB == 'N') {
+    return gemm_tn(...);
+}
+Both call paths exist in the compiled application.
+Consequently, both template specializations are instantiated and compiled, even if we normally run with the 
+default N T configuration.
+At runtime, the application chooses the appropriate specialization.
+This distinction is important:
+- Tile shape and CuTe layouts are compile-time specializations.
+- GEMM dimensions m, n, and k are runtime values.
+- The NT versus TN execution path is selected using the runtime arguments.
+Changing the matrix dimensions does not necessarily require recompiling the program.
+
+7. Understand the resource usage of the actual GEMM kernel
+Now focus on these two outputs:
+Function properties for gemm_device ... TN
+0 bytes stack frame
+0 bytes spill stores
+0 bytes spill loads
+Used 112 registers, used 1 barriers
+
+Function properties for gemm_device ... NT
+0 bytes stack frame
+0 bytes spill stores
+0 bytes spill loads
+Used 114 registers, used 1 barriers
+
+7.1 Used 114 registers — What does that mean?
+A CUDA thread has access to a set of physical registers.
+
+The compiler uses them to hold temporary values, including:
+- Address calculations.
+- Loop counters.
+- Tensor coordinate information.
+- Accumulator values.
+- Intermediate computation results.
+- Synchronization and pipeline bookkeeping.
+The default NT specialization requires:
+114 registers per thread
+With 128 threads per CTA:
+114 x 128
+= 14,592 registers
+That is the unrounded logical register demand per CTA.
+The hardware allocates registers at a defined granularity, so the actual allocation can be slightly larger.
+ 
+7.2 Connect this to your Nsight Compute report
+The previous Launch Statistics screenshot reported:
+Registers Per Thread: 114
+The assembler reports:
+Used 114 registers
+Local compiler — ptxas114                             H100 — Nsight Compute114
+registers/thread                                      registers/thread
+
+The profiler's register count matches the NT kernel compiled on the desktop.
+This is a particularly useful verification.
+It supports the conclusion that the H100 executed the expected specialization with the resource usage reported 
+by the local compiler.
+ 
+7.3 Is 114 registers per thread too high?
+Not necessarily.
+An advanced Tensor Core GEMM can deliberately use many registers to keep its accumulators and intermediate 
+values close to the compute units.
+High register usage is not inherently bad.
+It becomes a problem when it restricts occupancy enough to prevent the GPU from hiding important latencies.
+But the Nsight Compute Occupancy section reported:
+</pre>
+|Resource|	Maximum resident CTAs|
+|Registers	|4|
+|Shared memory	|2|
+<pre>
+This is important.
+Even though the kernel uses 114 registers per thread, register usage is not the resource limiting 
+the current kernel to two CTAs per SM.
+Shared memory is.
+Therefore, reducing register usage alone is unlikely to improve the current theoretical occupancy unless 
+another resource requirement also changes.
+
+8. Your zero register spills are a positive result
+Your compiler reports:
+0 bytes stack frame
+0 bytes spill stores
+0 bytes spill loads
+ 
+8.1 Stack frame: 0 bytes
+The compiler reports no per-thread stack-frame allocation for these kernel specializations.
+This means it does not require a stack frame for the compiled kernel in the way reported by ptxas.
+It does not prove that every possible memory access uses registers or shared memory.
+ 
+8.2 Spill stores: 0 bytes
+The compiler did not generate register spill stores for these specializations.
+ 
+8.3 Spill loads: 0 bytes
+The compiler did not generate register spill loads.
+
+Taken together:
+The GEMM successfully keeps its compiler-managed register values in registers without register spilling.
+That is useful because spills could add substantial local-memory traffic.
+ 
+8.4 Connect this to the Long Scoreboard stalls
+Earlier, the Nsight Compute report showed approximately:
+Long Scoreboard: 8.3 cycles per issued instruction
+One possible explanation for memory-dependency stalls in some kernels is register spilling.
+But the compiler reports zero spills.
+Therefore, we can rule out compiler-generated register spilling as the direct explanation for your kernel's 
+high Long Scoreboard stall count.
+We should instead investigate the kernel's actual memory instructions and their consumers.
+This does not prove that every long-scoreboard stall is caused by cp.async; the dependency attribution 
+still needs source-level analysis.
+
+9. What does used 1 barriers mean?
+The compiler reports:
+Used 1 barriers
+This is a per-kernel resource-usage statistic.
+It means the compiled kernel reserves one hardware barrier resource of the type counted by ptxas.
+
+It does not mean:
+- The kernel performs only one synchronization operation.
+- The kernel has only one pipeline stage.
+- The kernel executes __syncthreads() exactly once.
+- WGMMA executes only once.
+A kernel can reuse a barrier many times during execution.
+
+For example:
+for (int k = 0; k < K; ++k) {
+    // Work performed by several warps
+    __syncthreads();
+}
+
+The barrier instruction can execute repeatedly even if only one barrier resource is allocated.
+Likewise, Hopper's WGMMA synchronization mechanisms should not be treated as identical to the resource count 
+displayed in this particular assembler statistic.
+The source uses asynchronous copies and WGMMA coordination. The compiler's resource number does not describe 
+the total dynamic synchronization activity.
+
+10. Why is shared-memory usage missing from the compiler output?
+The assembler output reports registers and barriers, but does not print the 96 KiB of shared memory we saw in 
+Nsight Compute.
+That is expected because the source allocates its A/B pipeline storage dynamically.
+
+The kernel uses a declaration like:
+extern __shared__ char shared_memory[];
+
+Then the host-side launch supplies a shared-memory size:
+int smemBytes =
+    sizeof(SharedStorage<
+        TA, TB,
+        decltype(sA),
+        decltype(sB)>);
+
+The compiler knows the shared-memory layout types, but the allocation is requested as dynamic shared memory at 
+launch time.
+The assembler's static shared-memory resource report is therefore not a complete representation of the actual 
+shared-memory allocation used by the launch.
+
+The Nsight Compute screenshot gives that value:
+Dynamic Shared Memory Per Block: 98.30 KB
+
+We already derived it:
+3 x (128 x 64 + 128 x 64) x 2
+= 98,304 bytes
+
+This is one of the reasons you should use both compiler resource reports and runtime profiler information.
+
+11. The optimization insight from the compiler output
+Combine the compilation results with your H100 measurements.
+</pre>
+|Property|	Source of information|	Value|
+|:----|:-----|:----|
+|Registers/thread|	ptxas|	114|
+|Register spills	|ptxas	|0|
+|Threads/CTA|	Nsight Compute|	128|
+|Dynamic shared memory/CTA|	Nsight Compute|	96 KiB|
+|Theoretical occupancy|	Nsight Compute|	12.50%|
+|Achieved occupancy|	Nsight Compute|	12.42%|
+|Eligible warps/scheduler|	Nsight Compute|	0.15|
+|Long-scoreboard stalls|	Nsight Compute|	~8.3 cycles/instruction|
+
+Here is the combined reasoning:
+First, the compiler produces an optimized Hopper kernel using 114 registers per thread with no register spills.
+Second, the launch uses three shared-memory stages, consuming approximately 96 KiB per CTA.
+Third, shared-memory resource limits restrict the H100 to two resident CTAs per SM.
+Fourth, those two CTAs provide eight resident warps, corresponding to 12.5% theoretical occupancy.
+Fifth, the schedulers frequently cannot issue new instructions, and memory dependencies account for a large 
+portion of the observed stalls.
+
+This creates a research question:
+Would reducing the shared-memory pipeline from three stages to two increase resident CTAs sufficiently to improve 
+latency hiding, or would losing a stage reduce copy/computation overlap enough to make performance worse?
+We can estimate the resource tradeoff before changing the code.
+
+Assuming the same tile dimensions and roughly the same other resources:
+</pre>
+|Stages|	A/B shared memory	|Potential resident CTAs/SM|	Theoretical occupancy|
+|:----|:-----|:----|:-----|
+|2|	64 KiB|	Up to 3	|Up to 18.75%|
+|3|	96 KiB|	2|	12.50%|
+|4	128 KiB|	1|	6.25%|
+<pre>
+These are resource-model estimates, not measured performance results.
+The actual compiler register count and synchronization implementation can change when we modify the number 
+of stages.
+Also, higher occupancy does not guarantee higher GEMM throughput. More stages may enable better prefetching and
+memory/computation overlap, while fewer stages may increase residency.
+This is a good candidate for a controlled experiment later.
+
+12. Understand the compilation-time numbers
+The output contains:
+Compile time = 7.958 ms    // CUB EmptyKernel
+Compile time = 57.885 ms   // TN GEMM
+Compile time = 51.020 ms   // NT GEMM
+
+These are ptxas compilation times for the individual functions.
+They are not the total time required to build the entire CUDA program.
+
+The whole build includes:
+- CMake dependency checks.
+- CUDA C++ parsing.
+- Template instantiation.
+- Host compilation.
+- Device-code generation.
+- PTX assembly.
+- Host linking.
+CUTLASS and CuTe use substantial template metaprogramming, so the total build time can be much greater than 
+the short assembler times shown here.
+For reference, 57.885 ms is approximately 0.058 seconds.
+It is a compilation measurement, not a kernel execution measurement.
+
+13. Understand the final linking step
+The log finishes with:
+[100%] Linking CUDA executable wgmma_sm90
+Then:
+/usr/bin/g++ \
+    @CMakeFiles/wgmma_sm90.dir/objects1.rsp \
+    -o wgmma_sm90 \
+    @CMakeFiles/wgmma_sm90.dir/linkLibs.rsp \
+    -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" \
+    -L"/usr/local/cuda/targets/x86_64-linux/lib"
+
+The linker combines the object files and required libraries.
+The response files supply lists of objects and link options without putting everything directly on one 
+enormous command line.
+The CUDA library paths tell the linker where to find the required CUDA-related libraries.
+
+The final result is:
+[100%] Built target wgmma_sm90
+ 
+The executable is located at:
+/xxx/build/wgmma_sm90
+
+This executable includes the host-side application along with device-code images for the requested GPU architecture.
+
+That is the file you successfully transferred to Lambda and executed on the H100.
+
+14. Inspect the actual Hopper PTX and SASS on your desktop
+You can go one step deeper without renting another H100.
+
+Your CUDA Toolkit includes cuobjdump, which can inspect device code embedded in a compiled executable.
+
+On your desktop, execute:
+cd ~/cuda-learning/cute_hopper/lambda_sm90
+
+
+Inspect PTX
+cuobjdump --dump-ptx build/wgmma_sm90 > wgmma_sm90.ptx.txt
+
+
+Search for WGMMA and asynchronous copies:
+grep -nE 'wgmma|cp\.async' wgmma_sm90.ptx.txt | head -n 40
+
+
+This helps you identify the virtual assembly instructions that your CuTe code generated.
+Inspect SASS
+cuobjdump --dump-sass build/wgmma_sm90 > wgmma_sm90.sass.txt
+
+
+Then:
+grep -nE 'HGMMA|LDGSTS|WARPGROUP|BAR' \
+    wgmma_sm90.sass.txt | head -n 40
+
+
+These instructions correspond to important parts of your source code:
+CUDA/CuTe operation	Lower-level instruction family
+cp.async copy	LDGSTS
+cute::gemm(mma, ...)	HGMMA
+Warpgroup synchronization	WARPGROUP-related SASS
+CTA synchronization	Barrier-related SASS
+
+Exact instruction spellings and counts depend on the compiler version and generated code.
+
+This is particularly valuable: You can inspect both the Hopper PTX and its compiled SASS entirely on your RTX 5080 desktop. You only need an H100 to execute and profile the code.
+15. Final conclusions from your build
+Finding	Significance
+sm_90a machine code generated	Correct native target for your H100 WGMMA experiment
+PTX also retained	You can inspect the intermediate code
+Two GEMM specializations generated	NT and TN have different compiled implementations
+114 registers for NT	Matches your actual H100 profiler result
+No register spills	No compiler-generated spill traffic in these kernels
+One barrier resource	Synchronization-related resource allocation
+96 KiB dynamic shared memory	Explains the shared-memory occupancy restriction
+Line information enabled	Supports source-to-SASS investigation in Nsight Compute
+Linking successful	Executable is ready for SCP and execution
+
+What I recommend you study next
+Your most valuable next step is to connect three pieces of evidence:
+
+CUDA source line → generated SASS instruction → Nsight Compute stall metric.
+
+For example, find the LDGSTS instructions generated by the CuTe asynchronous copies and examine which dependent instructions are associated with your Long Scoreboard stalls.
+
+That investigation can help determine whether the current three-stage design provides enough copy/computation overlap.
+
+The key takeaway from this compilation output: Your kernel is not obviously wasting performance through register spilling. Its measured performance limitation is more closely connected to the combination of shared-memory residency, synchronization, and memory-dependency latency. The compiler report tells us what resources the kernel requires; Nsight Compute tells us how effectively the H100 uses those resources.
+
+This completes the compilation-output analysis and connects it to the Launch Statistics and Occupancy screenshots we have been studying.
+
+
+
+
+
 28. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
  
@@ -2728,7 +3113,7 @@ Low available residency plus memory-related stalls is a more precise explanation
 31. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f86b1250-5fcd-483c-aa4a-631855410f62" />
 
- Step 19. Understand GPU and Memory Workload Distribution
+Step 19. Understand GPU and Memory Workload Distribution
 Your first screenshot reports the following measurements.
 Metric	Value
 Average SM Active Cycles	825,167.17
