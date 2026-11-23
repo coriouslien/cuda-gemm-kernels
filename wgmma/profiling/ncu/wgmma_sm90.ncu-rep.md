@@ -141,7 +141,7 @@ Above 80%           Very high utilization
 These ranges aren't universal. A memory-bound kernel can be extremely well optimized while having low SM throughput.
 For the compute-intensive WGMMA GEMM, however, higher Tensor Core throughput is desirable.
  
-3). Why is your throughput not higher?
+3). Why is the throughput not higher?
 The earlier Nsight Compute measurements provide useful evidence.
 Metric                      the result	    What it tells us
 Compute (SM) Throughput	    42.29%	        Considerable compute headroom
@@ -157,7 +157,7 @@ The two questions are different:
 - How close are the compute pipelines to their maximum throughput?
 The reported value concerns throughput, not the percentage of SMs assigned work.
 
-42.29% Compute (SM) Throughput is a reasonable result for your first Hopper WGMMA experiment, but it is not 
+42.29% Compute (SM) Throughput is a reasonable result for the first Hopper WGMMA experiment, but it is not 
 particularly high for a highly optimized Tensor Core GEMM. There is substantial room for improvement.
 The important relationship is:
 96 KiB shared memory per CTA
@@ -174,7 +174,7 @@ Limited ability to hide memory latency
 Tensor Cores may not receive work continuously
 This is a plausible explanation supported by the occupancy and stall metrics, although the exact limiting instruction 
 still needs source-level investigation.
-4). What throughput should you aim for?
+4). What throughput should we aim for?
 The captured kernel achieved:
 Current performance 329.4           Dense HGMMA peak utilization 42.29%
  TFLOP/s                            of measured reference peak
@@ -311,7 +311,7 @@ in operations per clock cycle?
 4. Peak percentage: What fraction of that theoretical maximum did the kernel achieve?
  
 2). FP16 operations = 214,748,364,800
-Your GEMM computes:
+The GEMM computes:
 C=A x B
 Its matrix dimensions are:
 M=5120, N=5120, K=4096
@@ -331,7 +331,7 @@ Core operation class. It does not mean that the GPU executed 214.75 billion indi
 WGMMA instructions.
 One WGMMA instruction represents many arithmetic operations.
 3). Achieved operations/cycle = 228,673.44
-This measures the average rate at which your H100 performs the counted operations, expressed
+This measures the average rate at which the H100 performs the counted operations, expressed
 per clock cycle across the GPU.
 The result is:
 228,673.44 operations/cycle
@@ -350,7 +350,7 @@ The result measures the output of the whole factory, normalized by clock cycles.
 
 4). Peak operations/cycle = 540,672
 This is the reference maximum throughput for the dense FP16 HGMMA operation type on the H100.
-Your report shows:
+The report shows:
 540,672 operations/cycle
 
 The H100 has 132 SMs. Dividing the GPU-wide peak by the number of SMs gives:
@@ -416,7 +416,7 @@ Operations/second
 = (Operations/cycle) x (Cycles/second)
 The profiler accounts for measured clock behavior and counter normalization when producing its per-second metrics.
  
-8). Check your understanding
+8). Check the understanding
 Imagine another GPU kernel has:
 - Achieved operations/cycle = 300,000
 - Peak operations/cycle = 600,000
@@ -454,66 +454,83 @@ Maximum buffer size	48 MB
 Pass groups	2
 Dropped samples	0
 
-PM Sampling lets you examine how performance metrics change during the kernel's lifetime, rather than using only a whole-kernel average.
-
-Your timeline is particularly interesting.
+PM Sampling lets us examine how performance metrics change during the kernel's lifetime, rather than using only a
+whole-kernel average.
+The timeline is particularly interesting.
+ 
 5.1 The kernel has a sustained computation phase
 The SM Active Cycles and Tensor Pipe traces remain elevated through most of the kernel.
-
 This indicates that the kernel is not spending most of its duration waiting for GPU work to begin.
-
 There is sustained execution.
 5.2 There are periodic decreases in Tensor Pipe activity
 The Tensor Pipe trace shows several dips.
-
 A possible explanation is that the mainloop periodically waits for a data-transfer or synchronization dependency.
-
 However, a dip alone does not identify the cause.
-
-We would need to correlate the location of these dips with source-level stall samples or additional pipeline measurements.
-
-The profiler collected two pass groups, so counters from different passes should not automatically be treated as perfectly synchronized to individual instructions.
+We would need to correlate the location of these dips with source-level stall samples or additional pipeline 
+measurements.
+The profiler collected two pass groups, so counters from different passes should not automatically be treated as
+perfectly synchronized to individual instructions.
 5.3 Why is DRAM activity comparatively small?
 The DRAM throughput trace is much lower than the Tensor Pipe trace.
-
-This agrees with your earlier finding that DRAM throughput reaches only 16.41% of its peak.
-
+This agrees with the earlier finding that DRAM throughput reaches only 16.41% of its peak.
 It is further evidence that external HBM bandwidth is unlikely to be the primary limiting resource for this kernel.
+ 
 5.4 What I would investigate
 Rather than optimizing from the dips alone, I would first identify the top stalled SASS instructions in the Source tab.
-
-That will give us much stronger evidence about whether the delays come from copying A/B tiles, waiting for WGMMA, or executing the epilogue.
+That will give us much stronger evidence about whether the delays come from copying A/B tiles, waiting for WGMMA, 
+or executing the epilogue.
 
 Step 6. Analyze Compute Workload Analysis
 Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
-
 This section measures the scheduling and execution resources inside the streaming multiprocessors.
 
-Your important numbers are:
-Metric	Measured value
-Executed IPC Elapsed	0.52
-Executed IPC Active	0.59
-Issued IPC Active	0.59
-SM Busy	48.13%
-Issue Slots Busy	14.86%
-Tensor (All), active cycles	Approximately 48.1%
-
-
+The important numbers are:
+</pre>
+|Metric|	Measured value|
+|:----|:-----|
+|Executed IPC |Elapsed	0.52|
+|Executed IPC| Active	0.59|
+|Issued IPC |Active	0.59|
+|SM Busy	|48.13%|
+|Issue Slots Busy|	14.86%|
+|Tensor (All), active cycles|	Approximately 48.1%|
+<pre>
+6.1 Understand IPC
+IPC means instructions per cycle.
+The reported executed IPC values summarize instruction execution at the relevant profiler aggregation level.
+They do not represent GEMM FLOPs per cycle.
+This distinction matters because one WGMMA instruction performs many arithmetic operations.
+A relatively small instruction count can still generate hundreds of TFLOP/s.
+6.2 Understand SM Busy = 48.13%
+SM Busy describes how busy the SM execution machinery is during the sampled period.
+It does not mean that only 48.13% of the H100's SMs participate in the kernel.
+It is a utilization measure, not a count of participating SMs.
+6.3 Understand Issue Slots Busy = 14.86%
+This is one of the most significant findings in the report.
+A warp scheduler has opportunities to issue instructions. If no resident warp is eligible, the corresponding 
+opportunity goes unused.
+The issue-slot utilization is:
+14.86%
+This suggests substantial periods in which schedulers cannot issue an instruction.
+The Scheduler Statistics section gives direct confirmation.
+6.4 Why is Tensor Pipe utilization only approximately 48%?
+The charts identify the Tensor FP pipeline as the dominant compute pipeline.
+That is correct for a WGMMA GEMM.
+But it is not near saturation.
+The report says the Tensor pipeline is well utilized but should not be the bottleneck.
+This suggests that something other than pure Tensor Core execution capacity is preventing higher throughput.
+A likely contributor is the rate at which data and dependencies become ready for the next WGMMA work.
+6.5 Why does the Tensor (Warp Group) instruction-issue bar look small?
+The left chart measures pipeline active-cycle utilization; the right chart measures executed instruction 
+throughput relative to peak instruction-issue rates.
+These are different quantities.
+WGMMA is an asynchronous, warpgroup-level operation. One issued instruction can initiate a large amount of 
+Tensor Core arithmetic.
+Therefore, the Tensor Warp Group instruction-issue bar should not be equated directly with Tensor Core arithmetic 
+utilization.
+Do not conclude that the Tensor Core is unused simply because the WGMMA instruction-issue bar is short.
  
-Step 6. Analyze Compute Workload Analysis
-Screenshots 6–7 — Compute Workload Analysis and pipeline utilization
-
-This section measures the scheduling and execution resources inside the streaming multiprocessors.
-
-Your important numbers are:
-Metric	Measured value
-Executed IPC Elapsed	0.52
-Executed IPC Active	0.59
-Issued IPC Active	0.59
-SM Busy	48.13%
-Issue Slots Busy	14.86%
-Tensor (All), active cycles	Approximately 48.1%
-
+ 
 6. Compute Workload Analysis
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/001ab819-58ad-4e76-b451-a5cbf1d03ef8" />
 7. Compute Workload Analysis
@@ -576,18 +593,18 @@ Do not conclude that the Tensor Core is unused simply because the WGMMA instruct
  
 Step 7. Analyze Memory Workload Analysis
 Screenshot 8 — Memory Workload Analysis summary
-
-This is one of the most useful sections of the report.
 The measurements are:
-Metric	Value
-Memory Throughput	550.17 GB/s
-Mem Busy	72.77%
-Max Bandwidth	47.74%
-Mem Pipes Busy	26.44%
-L1/TEX Hit Rate	9.18%
-L2 Hit Rate	79.75%
-L2 Compression Success Rate	0%
-
+</pre>
+|Metric|	Value|
+|:----|:-----|
+|Memory Throughput	|550.17 GB/s|
+|Mem Busy|	72.77%|
+|Max Bandwidth|	47.74%|
+|Mem Pipes Busy|	26.44%|
+|L1/TEX Hit Rate	|9.18%|
+|L2 Hit Rate|	79.75%|
+|L2 Compression Success Rate|	0%|
+<pre>
 Nsight Compute distinguishes utilization of memory units, communication bandwidth, and memory-instruction 
 pipelines. All three can limit memory performance. 
 
@@ -609,7 +626,7 @@ The values show that memory-system hardware can be busy even when the highest po
 rate is not being reached.
 For example, inefficient transactions or latency dependencies can occupy resources without transferring 
 data at maximum efficiency.
- 
+ Nov 22
 7.3 L1/TEX Hit Rate = 9.18%
 A conventional interpretation is that most relevant L1/TEX requests do not produce L1 cache hits.
 However, the kernel uses asynchronous global-to-shared-memory copies.
@@ -663,7 +680,15 @@ For example, if neighboring threads write locations that are not adjacent in mem
 more sectors than necessary.
 
 A simplified example:
-<img width="1206" height="321" alt="image" src="https://github.com/user-attachments/assets/4b099d0e-a43a-48c4-aa24-4be34b794c2a" />
+a) Contiguous  Stores
+0  1  2  3  4  5  6  7
+Compact address range
+
+b) Strided Stroes
+---   ---   ---   ---   
+    |     |     |     |
+    V     V     V     V
+    Gaps in addresses
 These diagrams illustrate the principle, not the exact pattern of the kernel.
  
 8.3 Does the 36.38% estimated speedup mean the kernel can become 36.38% faster?
@@ -987,11 +1012,13 @@ ideal number.
  
 4. Now examine the real H100 measurements
 The Nsight Compute Shared Memory table reports:
-Metric                           Value
-Requests                         6,758,400
-Actual wavefronts                27,033,600
-Reported bank-conflict events    4,810,514
-
+</pre>
+|Metric        |                   Value|
+|:----|:-----|
+|Requests  |                       6,758,400|
+|Actual wavefronts  |              27,033,600|
+|Reported bank-conflict events |   4,810,514|
+<pre>
 Assuming four ideal wavefronts per request:
 6,758,400 x 4 wavefronts =
 27,033,600
@@ -1275,97 +1302,83 @@ represent the same set of requests or sectors. Different request populations can
  
 10.3 Does a high L2 hit rate mean no memory bottleneck?
 No.
-
 An L2 hit avoids an external-memory access, but it still has a latency.
-
 A warp may have to wait for data even when that data comes from L2.
-
 Thus, high L2 reuse can coexist with significant memory-dependency stalls.
-
-This is relevant because your earlier Warp State Statistics showed high Long Scoreboard stalls.
+This is relevant because the earlier Warp State Statistics showed high Long Scoreboard stalls.
 
 11. Understand L2 Cache Eviction Policies
-Your screenshot shows that most traffic uses the Normal eviction policy.
-
+The screenshot shows that most traffic uses the Normal eviction policy.
 In particular, the L1/TEX Load row reports approximately:
 Normal:   84,413,468 sectors
 Hit rate: 82.15%
-
-
 The policy categories describe cache-retention priorities associated with L2 accesses.
-
 These are not separate physical L2 caches.
-
 The First, Last, Normal, and related columns describe policy classifications.
+For the workload, the important observation is that most L2 traffic follows the normal policy.
 
-For your workload, the important observation is that most L2 traffic follows the normal policy.
-
-I would not spend time changing cache-eviction policy yet. Your current report points more strongly toward latency hiding, shared-memory resource allocation, and the copy/synchronization pipeline.
+The current report points more strongly toward latency hiding, shared-memory resource allocation, and the
+copy/synchronization pipeline.
 
 12. Analyze Device Memory — Actual HBM traffic
 Screenshot 5 — Device Memory
-
-Your screenshot provides:
-Operation	Sectors      Bytes         Throughput
-Load      9,756,896    312,220,672   478.96 GB/s
-Store     1,450,648    46,420,736    71.21 GB/s
-Total     11,207,544   358,641,408   550.17 GB/s
+The screenshot provides:
+</pre>
+|Operation	|Sectors|      Bytes|         Throughput|
+|:----|:-----|:----|:-----|
+|Load  |    9,756,896|    312,220,672|   478.96 GB/s|
+|Store     |1,450,648    |46,420,736   | 71.21 GB/s|
+|Total|     11,207,544|   358,641,408|   550.17 GB/s|
+<pre>
 Let's verify the total:
-\[
 312,220,672+46,420,736
-=358,641,408\text{ bytes}
-\]
+=358,641,408 bytes
 
-Your profiled kernel duration was 651.87 μs.
-
+The profiled kernel duration was 651.87 μs.
 Therefore:
-\[
-B=\frac{358,641,408}{0.00065187}
-\]
-
-\[
-\boxed{B\approx550.17\text{ GB/s}}
-\]
-
+B=358,641,408 / 0.00065187
+approximate 550.17 GB/s
 This agrees with the profiler's reported memory throughput.
-
-Your report also shows:
-\[
-\text{DRAM Throughput}=16.41\%
-\]
-
+The report also shows:
+DRAM Throughput = 16.41%
 That is further evidence that the kernel is not saturating the H100's external-memory bandwidth.
 Compare memory traffic at different levels
 Global-to-shared L1/TEX sector traffic    3.46 GB
 Total HBM traffic                         0.359 GB
 
-Different measurement points and traffic classes; the bars illustrate scale, not a directly calculated cache-hit rate.
-This is a valuable illustration of why tiled GEMM can perform enormous amounts of arithmetic without continuously fetching all of its operand data from HBM.
+Different measurement points and traffic classes; the bars illustrate scale, not a directly calculated 
+cache-hit rate.
+This is a valuable illustration of why tiled GEMM can perform enormous amounts of arithmetic without 
+continuously fetching all of its operand data from HBM.
 
-13. Are shared-memory bank conflicts your primary bottleneck?
-Here is how I would combine your new measurements with the earlier report.
-Evidence                              Observation    Interpretation
-Shared-memory bank-conflict counter   4.81 million   Requires investigation
-Copy-path wavefronts/request	         Exactly 4      Consistent with 16-byte/lane accesses
-Shared Memory Other utilization       68.99%         Significant specialized shared-memory activity
-Total shared-memory utilization       74.44%         Substantial pressure on the shared-memory subsystem
-L1/TEX throughput                     82.82%         High internal memory-system utilization
-Long Scoreboard stalls               ~8.3 cycles/instruction	 Important memory-related dependency waits
-Eligible warps/scheduler             0.15            Insufficient ready work
-DRAM throughput                      16.41%          External bandwidth not saturated
-One crucial point from NVIDIA's profiling guidance: shared-memory serialization is more closely associated with Short Scoreboard and MIO Throttle stalls, whereas Long Scoreboard concerns L1/TEX memory dependencies. NVIDIA recommends examining those specific stall metrics and memory bank throughput before treating reported conflicts as a significant limiter. 
-NVIDIA Developer Forums
+13. Are shared-memory bank conflicts the primary bottleneck?
+Combine the new measurements with the earlier report.
+</pre>
+|Evidence|                              Observation |   Interpretation|
+|:----|:-----|:----|
+|Shared-memory bank-conflict counter|   4.81 million|Requires investigation|
+|Copy-path wavefronts/request	 |        Exactly 4    |  Consistent with 16-byte/lane accesses|
+|Shared Memory Other utilization  |     68.99%   |      Significant specialized shared-memory activity|
+|Total shared-memory utilization |      74.44%  |       Substantial pressure on the shared-memory subsystem|
+|L1/TEX throughput|                     82.82%  |       High internal memory-system utilization|
+|Long Scoreboard stalls |              ~8.3 cycles/instruction|	 Important memory-related dependency waits|
+|Eligible warps/scheduler |            0.15|            Insufficient ready work|
+|DRAM throughput   |                   16.41%|          External bandwidth not |
+<pre>
+One crucial point from NVIDIA's profiling guidance: shared-memory serialization is more closely associated with Short
+Scoreboard and MIO Throttle stalls, whereas Long Scoreboard concerns L1/TEX memory dependencies. 
 
+The earlier report showed Long Scoreboard as the dominant stall reason. This does not directly establish that 
+shared-memory bank conflicts cause it.
 
-Your earlier report showed Long Scoreboard as the dominant stall reason. This does not directly establish that shared-memory bank conflicts cause it.
+So the current diagnosis is:
+The kernel has substantial shared-memory activity and a nonzero bank-conflict counter, but the evidence does not 
+yet establish that actual bank conflicts are its main performance problem.
 
-So my current diagnosis is:
+Don't change Swizzle<3,4,3> simply because the counter is nonzero. That swizzle is part of a carefully constructed
+CuTe layout compatible with the chosen WGMMA operations.
 
-The kernel has substantial shared-memory activity and a nonzero bank-conflict counter, but the evidence does not yet establish that actual bank conflicts are its main performance problem.
-
-I would not change Swizzle<3,4,3> simply because the counter is nonzero. That swizzle is part of a carefully constructed CuTe layout compatible with the chosen WGMMA operations.
-
-14. The next step: Verify actual versus ideal shared-memory wavefronts
+14. Verify actual versus ideal shared-memory wavefronts
 This is the most useful next investigation, and it can be attempted using your existing report.
 
 In Nsight Compute:
@@ -1460,15 +1473,6 @@ These two options explain why your build prints detailed resource information.
 --resource-usage
 For the H100, the driver can use the native sm_90a machine code embedded in your executable.
  
-
- 
-
-
- 
-
- 
-
-Nov 16
 11. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
  12. Scheduler Statistics
@@ -1697,9 +1701,6 @@ One distinction to remember:
 - Memory bandwidth: How much data can the GPU transfer per second?
 The current measurements point more strongly toward the first problem.
 
-
-
- 
 11.1 Understand Warp Cycles Per Issued Instruction = 13.36
 This is an average warp-state metric.
 It is not a literal latency measurement for each SASS instruction.
@@ -1738,7 +1739,6 @@ the memory access.
 We must identify the dependency chain.
 The asynchronous A/B copies are plausible contributors, but the screenshot does not prove which particular 
 instruction causes the most waiting.
-Nov 16
  
 Use Source Counters and the SASS dependency information to locate the relevant instructions.
 11.5 What does Stall Barrier mean?
@@ -1748,7 +1748,6 @@ A Barrier stall means a warp is waiting for synchronization involving other warp
 
 Your tutorial includes:
 __syncthreads();
-
 
 and asynchronous synchronization constructs.
 
@@ -1813,38 +1812,39 @@ warpgroup_fence_operand(tCrC);
 There are two particularly interesting points.
 12.1 cp_async_wait<0>()
 This waits for all prior asynchronous copy groups issued by the calling thread to complete.
-
 That is a conservative synchronization point.
-
-Even though the code uses three shared-memory stages, waiting for all outstanding copy groups can reduce the ability to overlap copying with computation.
-
+Even though the code uses three shared-memory stages, waiting for all outstanding copy groups can reduce 
+the ability to overlap copying with computation.
 For example:
-<img width="1072" height="321" alt="image" src="https://github.com/user-attachments/assets/e048d63a-7986-47e0-8488-b52c14491268" />
 
- A more deeply overlapped implementation may allow the next copy stage to proceed while the current MMA batch executes, using synchronization only where the needed operands or memory buffers require it.
+ Time ----------------------------------->
+ Copy      wait                      WGMMA
+ Limit overlap between copying and computation
+
+ A more deeply overlapped implementation may allow the next copy stage to proceed while the current MMA batch 
+ executes, using synchronization only where the needed operands or memory buffers require it.
 
 This is a hypothesis worth testing against the source and SASS, not a suggestion to remove waits indiscriminately.
-
 Removing necessary synchronization would make the kernel incorrect.
 12.2 warpgroup_wait<0>()
-This waits until no committed WGMMA batches remain outstanding.
-
-It ensures that the asynchronous MMA work has completed before the code proceeds to operations that depend on completion.
-
+This waits until no committed WGMMA batches r8.2 Why might the output stores be inefficient?emain outstanding.
+It ensures that the asynchronous MMA work has completed before the code proceeds to operations that depend 
+on completion.
 But waiting after each K-tile can limit the opportunity to have multiple MMA batches in flight.
-
-A more aggressive design may overlap MMA work across iterations if accumulator dependencies and shared-memory lifetime rules permit it.
-
-You cannot safely remove or move this wait without reconsidering those dependencies.
-12.3 Why this matters for your report
-Your profiler shows:
+A more aggressive design may overlap MMA work across iterations if accumulator dependencies and shared-memory 
+lifetime rules permit it.
+We cannot safely remove or move this wait without reconsidering those dependencies.
+ 
+12.3 Why this matters for the report
+The profiler shows:
 - Long scoreboard: high.
 - Barrier stalls: noticeable.
 - Eligible warps: only 0.15 per scheduler.
 - Tensor pipeline: not saturated.
 The conservative waiting strategy is a plausible contributor to this combination.
 
-The next investigation is to identify exactly where the waiting occurs and whether it can be hidden by restructuring the pipeline.
+Investigation is to identify exactly where the waiting occurs and whether it can be hidden by 
+restructuring the pipeline.
  
 16. Instruction Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f28dfd2e-e9eb-4be7-94e1-367fe9322e68" />
