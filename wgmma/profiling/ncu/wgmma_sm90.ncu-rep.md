@@ -626,7 +626,7 @@ The values show that memory-system hardware can be busy even when the highest po
 rate is not being reached.
 For example, inefficient transactions or latency dependencies can occupy resources without transferring 
 data at maximum efficiency.
- Nov 22
+ 
 7.3 L1/TEX Hit Rate = 9.18%
 A conventional interpretation is that most relevant L1/TEX requests do not produce L1 cache hits.
 However, the kernel uses asynchronous global-to-shared-memory copies.
@@ -681,16 +681,19 @@ more sectors than necessary.
 
 A simplified example:
 a) Contiguous  Stores
-0  1  2  3  4  5  6  7
-Compact address range
+0   1    2    3    4    5    6    7
+     Compact address range
 
 b) Strided Stroes
----   ---   ---   ---   
-    |     |     |     |
-    V     V     V     V
-    Gaps in addresses
-These diagrams illustrate the principle, not the exact pattern of the kernel.
+---     ---     ---     ---   
+ |   |   |   |   |   |   |    |
+ |   V   |   V   |   V   |    V
+ |  Gaps |  ln   |       |   addresses
+ |       |       |       |
+ V       V       V       V
+           addresses    
  
+These diagrams illustrate the principle, not the exact pattern of the kernel.
 8.3 Does the 36.38% estimated speedup mean the kernel can become 36.38% faster?
 No.
 It is an estimated local optimization opportunity produced by Nsight Compute's diagnostic rules.
@@ -854,7 +857,6 @@ Asynchronous matrix operand consumption
 Accumulator registers (tCrC)
 
 Thus, zero ordinary Shared Load instructions does not mean the Tensor Cores never read shared memory.
-
 For an SS-mode WGMMA, operand data is consumed from shared memory through descriptors.
 
 3. Understand Instructions = 6,758,400
@@ -1047,6 +1049,7 @@ However, there is one important qualification: we have calculated a four-wavefro
 expected request width. We have not measured the profiler's own ideal-wavefront counter for every 
 instruction. Aggregate averages alone cannot definitively establish that all accesses are 
 conflict-free.
+ 
 6. How do we determine whether actual bank conflicts are slowing the kernel?
 The best approach is to examine these three measurements in Nsight Compute:
 </pre>
@@ -1260,6 +1263,7 @@ The 82.15% value applies specifically to the L1/TEX Load row.
 The 80.66% GPU Total value includes other traffic classes.
 Do not treat these numbers as conflicting measurements of one identical request population.
 *************
+search the bottom of write up Nov 23.
 The three L2 hit rates are different because they may have been calculated using different groups of memory 
 requests. Therefore, they are not necessarily contradictory.
 Let's use a simple example.
@@ -1477,7 +1481,8 @@ For the H100, the driver can use the native sm_90a machine code embedded in your
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
  12. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/07bbe929-ac2a-4b86-8e00-443fa1be0ea5" />
- 
+
+Nov 23
 Step 10. Analyze Scheduler Statistics
 Screenshots 11–12 — Scheduler Statistics and Warps Per Scheduler
 This is probably the most revealing part of the current report.
@@ -1541,12 +1546,12 @@ Three pipeline stages require:
 B requires the same amount.
 Therefore:
 Shared memory per CTA
-approximate 49,152+ 49,152
+approximate 49,152 + 49,152
 98,304 bytes = 96 KiB
 This calculation assumes the expected layout storage footprint; the precise allocation should be 
 confirmed in Launch Statistics.
 
-An H100 has 228 KiB of shared memory per SM. 
+An H100 has 228 KiB(kibibytes) of shared memory per SM. 
 Therefore, considering shared memory alone:
 2 x 96=192 KiB
 Two CTAs can fit.
@@ -1555,7 +1560,7 @@ But:
 Three cannot fit.
 This strongly suggests that the three-stage shared-memory allocation limits residency to two CTAs per SM.
 Each CTA has four warps:
-2 x 4=8 resident warps per SM
+2 x 4 = 8 resident warps per SM
 H100 SMs have four warp schedulers, giving:
 8/4 = 2 warps per scheduler
 That agrees remarkably well with the measured value of 1.99.
@@ -1593,10 +1598,11 @@ The screenshot reports:
 |Dominant stall	|Long Scoreboard|
 |Long Scoreboard wait	Approximately| 8.3 cycles per issued instruction|
 <pre>
-When Long Scoreboard is the dominant stall reason, it strongly suggests your kernel is limited by 
+************
+When Long Scoreboard is the dominant stall reason, it strongly suggests the kernel is limited by 
 memory-access latency. However, it does not necessarily mean the kernel is limited by memory bandwidth.
 This distinction is very important for the H100 wgmma_sm90.cu performance analysis.
-1. What exactly is Long Scoreboard?
+1). What exactly is Long Scoreboard?
 NVIDIA defines Long Scoreboard as a warp waiting for a dependency on an L1TEX operation involving 
 global, local, texture, or surface memory. 
 Consider:
@@ -1615,7 +1621,7 @@ The GPU's scoreboard tracks whether the data dependencies of instructions have b
 The word Long identifies the class of dependency being tracked. It does not mean that every such 
 stall necessarily involves accessing HBM.
  
-2. Memory-latency-bound versus memory-bandwidth-bound
+2). Memory-latency-bound versus memory-bandwidth-bound
 These are two different performance limitations.
 </pre>
 |  |Memory-latency-bound|	Memory-bandwidth-bound|
@@ -1636,7 +1642,7 @@ Suppose a kernel continuously requests huge amounts of data.
 The memory subsystem may already be transferring as much data per second as possible.
 Adding more concurrent memory requests might not help because bandwidth is saturated.
 
-3. Apply this to the H100 WGMMA kernel
+3). Apply this to the H100 WGMMA kernel
 The earlier Nsight Compute measurements were:
 </pre>
 |Metric|	The result|
@@ -1659,7 +1665,7 @@ HBM-bandwidth limitation.
 However, the high L1/TEX throughput deserves separate investigation. Low DRAM utilization does not rule 
 out pressure on an internal memory pipeline.
  
-4. Does Long Scoreboard mean your shared memory is slow?
+4). Does Long Scoreboard mean the shared memory is slow?
 No. Not directly.
 In Nsight Compute, the stall categories differ:
 Stall reason	Common dependency
@@ -1674,7 +1680,7 @@ Also, the kernel uses asynchronous cp.async and WGMMA operations. Their synchron
 may be represented by other stall categories. We must inspect the corresponding SASS instructions rather 
 than assuming every Long Scoreboard stall comes directly from cp.async.
  
-5. What should we optimize first?
+5). What should we optimize first?
 For the kernel, we would investigate:
 1. The source of Long Scoreboard stalls: In the Nsight Compute Source/SASS view, identify the instructions 
 waiting for L1TEX data and the earlier instructions producing those dependencies.
@@ -1685,7 +1691,7 @@ early enough for computation.
 Investigating data dependencies, pipelining, instruction-level parallelism, and cache locality when 
 Long Scoreboard dominates. 
 
-6. Final conclusion for the profiling notes
+6). Final conclusion for the profiling notes
 We can record the following:
 Long Scoreboard indicates that warps are stalled waiting for dependencies on L1TEX memory operations. 
 When it dominates, the kernel may be memory-latency-bound, but this does not necessarily mean memory 
@@ -1700,7 +1706,8 @@ One distinction to remember:
 - Memory latency: How long does a warp wait for its data?
 - Memory bandwidth: How much data can the GPU transfer per second?
 The current measurements point more strongly toward the first problem.
-
+*****************
+ 
 11.1 Understand Warp Cycles Per Issued Instruction = 13.36
 This is an average warp-state metric.
 It is not a literal latency measurement for each SASS instruction.
@@ -1709,7 +1716,42 @@ average number of cycles spent in different states.
 The result is:
 13.36 warp cycles per issued instruction
 That is consistent with a kernel experiencing significant stalls.
+ 
 11.2 Long Scoreboard = 8.3 cycles
+The report says approximately 8.3 cycles are spent waiting for long-scoreboard dependencies per issued 
+instruction.
+
+Calculate the fraction:
+(8.3 / 13.36) x 100
+62.1%
+
+That is a substantial fraction of the total average warp cycles per issued instruction.
+This is our strongest evidence of an important latency-related bottleneck.
+ 
+11.3 What exactly is a Long Scoreboard Stall?
+A long scoreboard tracks dependencies involving the L1/TEX memory subsystem.
+Consider:
+float value = A[index];
+float result = value * 2.0f;
+The multiplication cannot use value until the load has produced the data.
+The warp may be waiting because the dependency has not resolved.
+Nsight Compute records a long-scoreboard stall when a warp is waiting for such a memory dependency.
+
+NVIDIA's documentation explicitly distinguishes memory latency from memory bandwidth saturation. 
+NsightCompute
+
+
+For your kernel:
+- DRAM utilization is low.
+- Long-scoreboard stalls are high.
+- Eligible warp count is very low.
+That combination points strongly toward insufficient memory-latency hiding.
+ 
+
+ 
+11.2 Long Scoreboard = 8.3 cycles
+That is consistent with a kernel experiencing significant stalls.
+ 
 The report says approximately 8.3 cycles are spent waiting for long-scoreboard dependencies per issued instruction.
 Calculate the fraction:
 (8.3 / 13.36) x 100
@@ -1725,7 +1767,6 @@ float result = value * 2.0f;
 The multiplication cannot use value until the load has produced the data.
 The warp may be waiting because the dependency has not resolved.
 Nsight Compute records a long-scoreboard stall when a warp is waiting for such a memory dependency.
-
 For the kernel:
 - DRAM utilization is low.
 - Long-scoreboard stalls are high.
@@ -1739,48 +1780,35 @@ the memory access.
 We must identify the dependency chain.
 The asynchronous A/B copies are plausible contributors, but the screenshot does not prove which particular 
 instruction causes the most waiting.
- 
 Use Source Counters and the SASS dependency information to locate the relevant instructions.
+ 
 11.5 What does Stall Barrier mean?
-Your chart also shows a substantial Barrier stall category.
-
+The chart also shows a substantial Barrier stall category.
 A Barrier stall means a warp is waiting for synchronization involving other warps in its CTA.
 
-Your tutorial includes:
+The tutorial includes:
 __syncthreads();
-
 and asynchronous synchronization constructs.
-
 We need to inspect exactly which SASS instructions account for these stalls.
-
 A significant barrier stall does not automatically mean warp divergence or an incorrect synchronization design.
+ 
 11.6 What does Stall GMMA mean?
 This category relates specifically to GMMA/WGMMA-related waiting conditions.
-
-Your chart shows a comparatively small GMMA stall contribution.
-
+The chart shows a comparatively small GMMA stall contribution.
 That suggests GMMA-specific issue stalls are not the dominant sampled wait condition.
-
 However, it does not mean WGMMA completion latency is irrelevant to the overall pipeline.
+ 
 11.7 Why are average active threads per warp approximately 32?
-Your report shows:
+The report shows:
 Avg. Active Threads Per Warp: 32
 Avg. Not Predicated Off Threads Per Warp: 31.37
-
-
 That is encouraging.
-
 Most warp instructions execute with nearly all their threads participating.
-
 This makes severe thread divergence unlikely to be the dominant performance problem.
-
-It also reinforces that your main issue is probably not ordinary branch divergence.
-
-Step 12. Connect the stalls to your actual CUDA C++ mainloop
-This is where the Nsight analysis becomes particularly useful.
-
-Your wgmma_sm90.cu mainloop contains the following sequence, simplified from NVIDIA's source: 
-GitHub
+It also reinforces that the main issue is probably not ordinary branch divergence.
+ 
+Step 12. Connect the stalls to the actual CUDA C++ mainloop
+The wgmma_sm90.cu mainloop contains the following sequence, simplified from NVIDIA's source: 
 
 // Stage the next A/B tiles
 copy(copy_a, ...);
@@ -1793,7 +1821,6 @@ cp_async_wait<0>();
 // Prepare and issue WGMMA
 warpgroup_fence_operand(tCrC);
 warpgroup_arrive();
-
 cute::gemm(
     mma,
     tCrA(_,_,_,k_pipe_read),
@@ -1802,12 +1829,9 @@ cute::gemm(
 );
 
 warpgroup_commit_batch();
-
 // Wait for WGMMA completion
 warpgroup_wait<0>();
-
 warpgroup_fence_operand(tCrC);
-
 
 There are two particularly interesting points.
 12.1 cp_async_wait<0>()
@@ -1821,20 +1845,21 @@ For example:
  Copy      wait                      WGMMA
  Limit overlap between copying and computation
 
- A more deeply overlapped implementation may allow the next copy stage to proceed while the current MMA batch 
- executes, using synchronization only where the needed operands or memory buffers require it.
-
-This is a hypothesis worth testing against the source and SASS, not a suggestion to remove waits indiscriminately.
+A more deeply overlapped implementation may allow the next copy stage to proceed while the current MMA batch 
+executes, using synchronization only where the needed operands or memory buffers require it.
+This is a hypothesis worth testing against the source and SASS, not a suggestion to remove waits 
+indiscriminately.
 Removing necessary synchronization would make the kernel incorrect.
+
 12.2 warpgroup_wait<0>()
-This waits until no committed WGMMA batches r8.2 Why might the output stores be inefficient?emain outstanding.
-It ensures that the asynchronous MMA work has completed before the code proceeds to operations that depend 
-on completion.
+This waits until no committed WGMMA batches remain outstanding.
+It ensures that the asynchronous MMA work has completed before the code proceeds to operations that depend on 
+completion.
 But waiting after each K-tile can limit the opportunity to have multiple MMA batches in flight.
 A more aggressive design may overlap MMA work across iterations if accumulator dependencies and shared-memory 
 lifetime rules permit it.
 We cannot safely remove or move this wait without reconsidering those dependencies.
- 
+
 12.3 Why this matters for the report
 The profiler shows:
 - Long scoreboard: high.
