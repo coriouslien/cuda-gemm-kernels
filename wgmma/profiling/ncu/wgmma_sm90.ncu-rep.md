@@ -3030,15 +3030,13 @@ The final result is:
  
 The executable is located at:
 /xxx/build/wgmma_sm90
+This executable includes the host-side application along with device-code images for the requested GPU 
+architecture.
+That is the file we successfully transferred to Lambda and executed on the H100.
 
-This executable includes the host-side application along with device-code images for the requested GPU architecture.
-
-That is the file you successfully transferred to Lambda and executed on the H100.
-
-14. Inspect the actual Hopper PTX and SASS on your desktop
-You can go one step deeper without renting another H100.
-
-Your CUDA Toolkit includes cuobjdump, which can inspect device code embedded in a compiled executable.
+14. Inspect the actual Hopper PTX and SASS on the desktop
+We can go one step deeper without renting another H100 data center.
+The CUDA Toolkit includes cuobjdump, which can inspect device code embedded in a compiled executable.
 
 On your desktop, execute:
 cd ~/cuda-learning/cute_hopper/lambda_sm90
