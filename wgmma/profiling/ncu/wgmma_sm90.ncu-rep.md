@@ -3235,7 +3235,7 @@ That conclusion would not be justified.
 SMs, L2 caches, and DRAM interfaces have different clock domains, resource organizations, and definitions of 
 activity.
 
-For example:\[
+For example:
 1,065,944 L2 cycles
 
 and:
@@ -3446,69 +3446,55 @@ instructions.
 25.1 Branch Efficiency = 100%
 The report shows:
 </pre>
-Metric	Value
-Branch Instructions	428,800
-Branch Efficiency	100%
-Average Divergent Branches	0
-
+|Metric|	Value|
+|:----|:-----|
+|Branch Instructions|	428,800|
+|Branch Efficiency	|100%|
+|Average Divergent Branches|	0|
+<pre>
 This is encouraging.
-
 It means the measured branch behavior does not show divergent branch targets as a significant problem.
-
-Your kernel contains loops and conditional code, but its control flow can still be uniform among participating warp lanes.
-
+The kernel contains loops and conditional code, but its control flow can still be uniform among participating 
+warp lanes.
 Conclusion: Ordinary warp branch divergence is not a leading optimization target for this kernel.
+ 
 25.2 Uncoalesced Global Accesses
-Your screenshot reports:
+ screenTheshot reports:
 Uncoalesced Global Accesses
-
 1,638,400 excessive sectors
 111,411,200 total sectors
-
 Est. Speedup: 1.41%
 
-
 The excessive-sector ratio is:
-\[
-\frac{1,638,400}{111,411,200}\times100
-\]
-
-\[
-\boxed{\approx1.47\%}
-\]
+(1,638,400 / 111,411,200) x 100
+approximate 1.47%
 
 The displayed whole-number percentage is rounded in the profiler's warning.
-
-This means the model attributes a relatively small fraction of total sectors to excessive global-memory transactions.
-
+This means the model attributes a relatively small fraction of total sectors to excessive global-memory 
+transactions.
 Here is the distinction:
-
-An excessive sector is a transaction the hardware could potentially avoid with a more efficient memory access pattern.
-
+An excessive sector is a transaction the hardware could potentially avoid with a more efficient memory 
+access pattern.
 A memory operation may request more 32-byte sectors than are ideally necessary for the useful data.
-
 That can happen due to scattered addresses, poor alignment, or another inefficient access pattern.
+ 
 25.3 Where do the excessive sectors come from?
-Your screenshots identify repeated entries at:
+The screenshots identify repeated entries at:
 axpby.hpp:90
-
-
-This is extremely useful.
-
-The axpby routine is associated with the GEMM's output epilogue, where the accumulator is combined with the existing output according to:
-\[
-C=\alpha AB+\beta C
-\]
+The axpby routine is associated with the GEMM's output epilogue, where the accumulator is combined with the 
+existing output according to:
+C=alpha AB+ beta C
 
 Consequently, the results suggest that some of the excessive global transactions arise in the output-update path.
-
-The repeated entries at the same source line can correspond to different compiled SASS instructions associated with that line.
-
+The repeated entries at the same source line can correspond to different compiled SASS instructions associated 
+with that line.
 Each visible entry shows 12,800 excessive sectors.
-
 This supports our earlier observation that the epilogue's global memory access pattern deserves investigation.
 
-However, we must be careful: the 1.41% estimated speedup in Source Counters and the earlier 36.38% estimated speedup associated with the L1TEX store-access warning come from different local diagnostic models. They are not directly comparable whole-kernel speedup measurements.
+However, we must be careful: the 1.41% estimated speedup in Source Counters and the earlier 36.38% estimated 
+speedup associated with the L1TEX store-access warning come from different local diagnostic models. They are not 
+directly comparable whole-kernel speedup measurements.
+ 
 25.4 Warp Stall Sampling — This is particularly important
 Your screenshot shows the following hot locations:
 Source location	Samples	Share shown
@@ -3519,28 +3505,24 @@ copy_sm80.hpp:64...	807	2%
 copy_sm80.hpp:64...	800	2%
 
 The first two entries are responsible for approximately 70% of the displayed warp-stall samples.
-
 This is a more focused clue than the overall imbalance percentage.
-
 But 50% of stall samples does not mean that the corresponding source line consumes 50% of the kernel's execution time.
+Warp Stall Sampling is statistical sampling of instruction locations and their scheduler states. The percentage is 
+a share of samples, not an elapsed-time percentage. 
 
-Warp Stall Sampling is statistical sampling of instruction locations and their scheduler states. The percentage is a share of samples, not an elapsed-time percentage. 
-NsightCompute
-
-
-Another important detail: the first and third entries can map to different SASS instructions that share the same CUDA source line.
+Another important detail: the first and third entries can map to different SASS instructions that share the same 
+CUDA source line.
+ 
 25.5 What should we investigate at lines 235 and 240?
 We need the actual instructions associated with those lines.
-
 The screenshot truncates the locations, so it does not conclusively identify the operations.
-
-For example, if the relevant instruction is waiting for a memory result, we would investigate its data dependencies.
-
-If it is a synchronization wait, we would investigate the synchronization schedule and whether independent work could overlap it.
-
-If it is an instruction repeatedly executed in the inner loop, we would examine its issue frequency and dependence chain.
-
-Do not change the code until you know which instructions are responsible for the stall samples.
+For example, if the relevant instruction is waiting for a memory result, we would investigate its data 
+dependencies.
+If it is a synchronization wait, we would investigate the synchronization schedule and whether independent work 
+could overlap it.
+If it is an instruction repeatedly executed in the inner loop, we would examine its issue frequency and 
+dependence chain.
+Do not change the code until we know which instructions are responsible for the stall samples.
 
 Step 26. Connect all four screenshots to the earlier profiling results
 We can now create a more complete performance diagnosis.
@@ -3553,18 +3535,19 @@ Uneven SM active durations	804,757–936,301 cycles	Secondary
 Excessive global transactions	1,638,400 sectors	Secondary
 Branch divergence	100% branch efficiency	Low concern
 
-How I would interpret the complete report
+How we would interpret the complete report
 Your kernel is not simply suffering because some SMs finish earlier than others.
+The more fundamental observation is that many resident warps cannot issue instructions while the kernel is 
+executing.
+The shared-memory configuration limits the number of resident warps. The scheduler metrics indicate a 
+shortage of eligible instructions. Your warp-state metrics point to memory dependencies and synchronization 
+as important sources of waiting.
 
-The more fundamental observation is that many resident warps cannot issue instructions while the kernel is executing.
-
-Your shared-memory configuration limits the number of resident warps. Your scheduler metrics indicate a shortage of eligible instructions. Your warp-state metrics point to memory dependencies and synchronization as important sources of waiting.
-
-The workload-distribution section adds another effect: not all SMs remain active for the same duration, potentially creating a tail in which some GPU resources become idle before the kernel finishes.
-
+The workload-distribution section adds another effect: not all SMs remain active for the same duration, 
+potentially creating a tail in which some GPU resources become idle before the kernel finishes.
 These effects can coexist.
 
-Step 27. What should you study next?
+Step 27. What should we study next?
 I recommend the following order:
 1. Source tab — inspect wgmma_sm90.cu around lines 235 and 240. Find the SASS instructions and stall reasons associated with the two largest sample counts.
 2. Analyze the copy and synchronization pipeline. Correlate the high-stall instructions with cp.async copying, barrier operations, and WGMMA waits.
