@@ -3582,4 +3582,80 @@ instructions.
 The next most useful screenshot would be the Source tab with the SASS instructions associated
 with wgmma_sm90.cu:235 and wgmma_sm90.cu:240. That would let us move from general profiling
 analysis to investigating the actual cause of the stalls in your Hopper code.
+======================================================================================
+In NVIDIA GPUs, data transferred from global memory to shared memory generally passes through
+the L2 cache hierarchy, but it does not necessarily pass through L1 cache.
+
+The exact path depends on the CUDA memory-transfer instruction.
+1. Global memory to shared memory using cp.async
+For Hopper's cp.async operations, there are two possible caching behaviors:
+             Global Memory (DRAM)
+                      |
+                      v
+                  L2 Cache
+                      |
+             +--------+--------+
+             |                 |
+             v                 |
+         L1 Cache              |  (bypass L1)
+             |                 |
+             +--------+--------+
+                      |
+                      v
+                Shared Memory
+
+- cp.async.ca: Permits caching at both L1 and L2.
+- cp.async.cg: Uses L2 caching and bypasses L1 caching.
+In both cases, data can be transferred directly into shared memory without first being placed
+in thread registers.
+2. Global memory to shared memory using Hopper TMA
+For TMA, the simplified data path is:
+Global Memory (HBM)
+        |
+        v
+     L2 Cache
+        |
+        v
+   Shared Memory
+
+TMA transfers data through L2 directly into shared memory, bypassing the conventional L1 load 
+path. 
+
+If the requested data is already in L2, the GPU may obtain it without accessing HBM. Otherwise,
+L2 must fetch it from HBM.
+3. Traditional CUDA load and store
+For an ordinary CUDA copy implemented using global loads and shared-memory stores:
+Global Memory
+      |
+      v
+   L2 Cache
+      |
+      v
+ L1 Cache (if used)
+      |
+      v
+   Registers
+      |
+      v
+ Shared Memory
+
+Unlike cp.async and TMA, this approach uses thread registers as intermediate storage.
+ 
+4. What we should remember for wgmma_sm90.cu
+</pre>
+|Operation|	Uses L1?|	Uses registers to stage copied data?|
+|:----|:-----|:----|
+|Ordinary global load + shared store|	Usually, depending on caching policy|	Yes|
+|cp.async.ca	|L1 caching permitted|	No|
+|cp.async.cg|	Bypasses L1|	No|
+|TMA global-to-shared copy|	Bypasses conventional L1 path|	No|
+<pre>
+The key distinction is that L1 and L2 are hardware-managed caches, while shared memory is
+explicitly managed by your CUDA program or a copying mechanism such as TMA.
+
+Data does not automatically move into shared memory merely because it has reached L1 or L2. 
+A specific transfer operation is required. 
+
+In the general sense that data travels through the GPU memory hierarchy, but it is incorrect to
+assume that every global-to-shared-memory transfer must go through both L2 and L1.
 </pre>
