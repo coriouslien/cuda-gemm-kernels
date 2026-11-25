@@ -3350,11 +3350,11 @@ That is the motivation behind the workload imbalance warning.
  
 23.2 Apply this to the H100
 The actual measurements show:
-Minimum  --------------------------------------------------------- 804,757
+Minimum  ----------------------------------------------------- 804,757
 
-Average  ----------------------------------------------------------------825,167
+Average  ------------------------------------------------------------825,167
 
-Maximum  -----------------------------------------------------------------------------------936,301
+Maximum  -------------------------------------------------------------------------------936,301
 
 The most-active SM accumulated substantially more active cycles than the least-active SM.
 That's evidence of unequal work duration across SMs.
@@ -3495,74 +3495,91 @@ However, we must be careful: the 1.41% estimated speedup in Source Counters and 
 speedup associated with the L1TEX store-access warning come from different local diagnostic models. They are not 
 directly comparable whole-kernel speedup measurements.
  
-25.4 Warp Stall Sampling — This is particularly important
+25.4 Warp Stall Sampling — 
 Your screenshot shows the following hot locations:
-Source location	Samples	Share shown
-wgmma_sm90.cu:235...	26,368	50%
-wgmma_sm90.cu:240...	10,392	20%
-wgmma_sm90.cu:235...	1,087	2%
-copy_sm80.hpp:64...	807	2%
-copy_sm80.hpp:64...	800	2%
-
+</pre>
+|Source location	|Samples	|Share shown|
+|:----|:-----|:----|
+|wgmma_sm90.cu:235...|	26,368|	50%|
+|wgmma_sm90.cu:240...	|10,392	|20%|
+|wgmma_sm90.cu:235...|	1,087|	2%|
+|copy_sm80.hpp:64...	|807	|2%|
+|copy_sm80.hpp:64...|	800|	2%|
+<pre>
 The first two entries are responsible for approximately 70% of the displayed warp-stall samples.
 This is a more focused clue than the overall imbalance percentage.
-But 50% of stall samples does not mean that the corresponding source line consumes 50% of the kernel's execution time.
-Warp Stall Sampling is statistical sampling of instruction locations and their scheduler states. The percentage is 
-a share of samples, not an elapsed-time percentage. 
+But 50% of stall samples does not mean that the corresponding source line consumes 50% of the
+kernel's execution time.
+Warp Stall Sampling is statistical sampling of instruction locations and their scheduler 
+states. The percentage is a share of samples, not an elapsed-time percentage. 
 
-Another important detail: the first and third entries can map to different SASS instructions that share the same 
-CUDA source line.
+Another important detail: the first and third entries can map to different SASS instructions
+that share the same 
  
 25.5 What should we investigate at lines 235 and 240?
 We need the actual instructions associated with those lines.
 The screenshot truncates the locations, so it does not conclusively identify the operations.
-For example, if the relevant instruction is waiting for a memory result, we would investigate its data 
-dependencies.
-If it is a synchronization wait, we would investigate the synchronization schedule and whether independent work 
-could overlap it.
-If it is an instruction repeatedly executed in the inner loop, we would examine its issue frequency and 
-dependence chain.
+For example, if the relevant instruction is waiting for a memory result, we would investigate
+its data  dependencies.
+If it is a synchronization wait, we would investigate the synchronization schedule and 
+whether independent work  could overlap it.
+If it is an instruction repeatedly executed in the inner loop, we would examine its issue
+frequency and dependence chain.
 Do not change the code until we know which instructions are responsible for the stall samples.
 
 Step 26. Connect all four screenshots to the earlier profiling results
 We can now create a more complete performance diagnosis.
-Observation	Evidence	Priority
-Tensor Core throughput below peak	Dense HGMMA at 42.29%	Important
-Low theoretical occupancy	12.5%, limited by shared memory	Important
-Limited eligible warps	0.15 per scheduler	High
-Long-scoreboard stalls	~8.3 cycles per issued instruction	High
-Uneven SM active durations	804,757–936,301 cycles	Secondary
-Excessive global transactions	1,638,400 sectors	Secondary
-Branch divergence	100% branch efficiency	Low concern
-
+</pre>
+|Observation|	Evidence|	Priority|
+|:----|:-----|:----|
+|Tensor Core throughput below peak	|Dense HGMMA at 42.29%	|Important|
+|Low theoretical occupancy	|12.5%, limited by shared memory|	Important|
+|Limited eligible warps|	0.15 per scheduler|	High|
+|Long-scoreboard stalls|	~8.3 cycles per issued instruction	|High|
+|Uneven SM active durations|	804,757–936,301 cycles|	Secondary|
+|Excessive global transactions	|1,638,400 sectors|	Secondary|
+|Branch divergence	|100% branch efficiency|	Low concern|
+<pre>
 How we would interpret the complete report
-Your kernel is not simply suffering because some SMs finish earlier than others.
-The more fundamental observation is that many resident warps cannot issue instructions while the kernel is 
-executing.
-The shared-memory configuration limits the number of resident warps. The scheduler metrics indicate a 
-shortage of eligible instructions. Your warp-state metrics point to memory dependencies and synchronization 
-as important sources of waiting.
+The kernel is not simply suffering because some SMs finish earlier than others.
+The more fundamental observation is that many resident warps cannot issue instructions
+while the kernel is executing.
+The shared-memory configuration limits the number of resident warps. The scheduler metrics 
+indicate a shortage of eligible instructions. The arp-state metrics point to memory
+dependencies and synchronization as important sources of waiting.
 
-The workload-distribution section adds another effect: not all SMs remain active for the same duration, 
-potentially creating a tail in which some GPU resources become idle before the kernel finishes.
+The workload-distribution section adds another effect: not all SMs remain active for the 
+same duration, potentially creating a tail in which some GPU resources become idle before 
+the kernel finishes.
 These effects can coexist.
 
 Step 27. What should we study next?
-I recommend the following order:
-1. Source tab — inspect wgmma_sm90.cu around lines 235 and 240. Find the SASS instructions and stall reasons associated with the two largest sample counts.
-2. Analyze the copy and synchronization pipeline. Correlate the high-stall instructions with cp.async copying, barrier operations, and WGMMA waits.
-3. Investigate the epilogue at axpby.hpp:90. Determine why some global-memory accesses create excessive sectors.
-4. Compare kernel timing after targeted changes. Evaluate whether reducing shared-memory stages or changing the copy schedule improves execution time without introducing correctness problems.
-I would not optimize the SM workload imbalance first. It is worth understanding, but the Source Counters and warp-stall information offer more actionable starting points.
+Recommend the following order:
+1. Source tab — inspect wgmma_sm90.cu around lines 235 and 240. Find the SASS instructions 
+and stall reasons associated with the two largest sample counts.
+2. Analyze the copy and synchronization pipeline. Correlate the high-stall instructions with
+cp.async copying, barrier operations, and WGMMA waits.
+3. Investigate the epilogue at axpby.hpp:90. Determine why some global-memory accesses create
+excessive sectors.
+4. Compare kernel timing after targeted changes. Evaluate whether reducing shared-memory 
+stages or changing the copy schedule improves execution time without introducing correctness
+problems.
+Not to optimize the SM workload imbalance first. It is worth understanding, but the Source
+Counters and warp-stall information offer more actionable starting points.
 Final assessment of these screenshots
-You should keep both “GPU and Memory Workload Distribution” and “Source Counters” in your study notes.
+We should keep both “GPU and Memory Workload Distribution” and “Source Counters” in the 
+study notes.
 
 The important lessons are:
 - Active cycles are not compute cycles. An SM with stalled resident warps is still active.
-- Average, Min, and Max reveal differences between hardware instances. They do not directly measure instruction throughput.
-- Workload imbalance can produce an execution tail. The slowest outstanding work determines when the kernel finishes.
+- Average, Min, and Max reveal differences between hardware instances. They do not directly 
+ measure instruction throughput.
+- Workload imbalance can produce an execution tail. The slowest outstanding work determines 
+when the kernel finishes.
 - Nsight speedup estimates are hypotheses, not promises.
-- Source Counters helps turn a general bottleneck diagnosis into an investigation of particular instructions.
-Your next most useful screenshot would be the Source tab with the SASS instructions associated with wgmma_sm90.cu:235 and wgmma_sm90.cu:240. That would let us move from general profiling analysis to investigating the actual cause of the stalls in your Hopper code.
-
+- Source Counters helps turn a general bottleneck diagnosis into an investigation of particular
+instructions.
+The next most useful screenshot would be the Source tab with the SASS instructions associated
+with wgmma_sm90.cu:235 and wgmma_sm90.cu:240. That would let us move from general profiling
+analysis to investigating the actual cause of the stalls in your Hopper code.
 </pre>
