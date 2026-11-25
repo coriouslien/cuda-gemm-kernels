@@ -2479,6 +2479,9 @@ The most interesting discovery is that the compiler generated two specialized GE
 114 registers per thread. The earlier Nsight Compute report from the H100 showed 114 registers per thread, 
 so we can connect the compilation output directly to the kernel we profiled.
 
+
+
+Nov 25 begin delete here
 Explaining the build process first, then the compiler flags, the two GEMM specializations, register usage, 
 and finally their relationship to the H100 performance results.
 1. Understand the compilation process
@@ -2891,6 +2894,7 @@ We should instead investigate the kernel's actual memory instructions and their 
 This does not prove that every long-scoreboard stall is caused by cp.async; the dependency attribution 
 still needs source-level analysis.
 
+ 
 9. What does used 1 barriers mean?
 The compiler reports:
 Used 1 barriers
@@ -3090,6 +3094,8 @@ requires; Nsight Compute tells us how effectively the H100 uses those resources.
 
 This completes the compilation-output analysis and connects it to the Launch Statistics and Occupancy screenshots 
 we have been studying.
+
+Nov 25 end.
 
 28. GPU and Memory Workload Distribution
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/bbe15388-dcc8-459f-abea-eed2fe704c8c" />
