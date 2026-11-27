@@ -64,13 +64,13 @@ C=A x B
 Using the standard convention of two FLOPs per multiply-add:
 FLOPs=2MNK
 
-Substituting your dimensions:
+Substituting the dimensions:
 =2(5120)(5120)(4096)
 =214,748,364,800 FLOPs
 
 That is approximately 214.75 GFLOPs for one GEMM execution.
-Step 2. Calculate your measured performance
-Your first screenshot reports:
+Step 2. Calculate the measured performance
+the first screenshot reports:
 t=651.87 mu s
 
 Converting to seconds:
@@ -833,7 +833,7 @@ wavefronts, throughput utilization, and reported bank-conflict events.
 
 2. Why are ordinary Shared Load(read, reads that value from shared memory. This is a Shared Load.) 
 and Shared Store(write, writes a value into shared memory. This is a Shared Store.) both zero?
-You might initially think:
+we might initially think:
 The kernel uses shared memory extensively. Why does Nsight Compute say zero shared loads and stores?
 The answer is that the kernel primarily uses two specialized mechanisms:
 - cp.async to move input data from global memory directly into shared memory.
@@ -934,7 +934,7 @@ The bank may be unable to satisfy both simultaneously, requiring serialization.
 That is a bank conflict.
 
 6.2 Calculate reported conflicts per request
-Your measurements are:
+the measurements are:
 Bank Conflicts = 4,810,514
 Requests = 6,758,400
 Therefore:
@@ -946,7 +946,7 @@ one-conflict-or-no-conflict count per request.
 It also does not directly measure a 71.2% performance penalty.
 A memory request is something a warp asks the memory subsystem to perform. A counter event is something the GPU 
 hardware records as occurring while servicing work. They are not necessarily related one-to-one.
-For your H100 experiment, 4,810,514 counter events does not mean 4,810,514 memory requests experienced bank 
+For the H100 experiment, 4,810,514 counter events does not mean 4,810,514 memory requests experienced bank 
  
 6.3 Why the result deserves closer investigation
 Here is the interesting combination:
@@ -1130,7 +1130,7 @@ Conclusion: There may be conflicts or arbitration pressure in the LDGSTS destina
 that ordinary shared-memory bank conflicts are a major bottleneck.
 
 7. What is the mysterious “Other” row?
-Your Shared Memory table contains:
+the Shared Memory table contains:
 </pre>
 |Metric|	                Other|
 |:----|:-----|
@@ -1269,7 +1269,7 @@ requests. Therefore, they are not necessarily contradictory.
 Let's use a simple example.
 1. What does "request population" mean?
 In Nsight Compute, a request population means the collection of memory requests included in a particular measurement.
-For example, imagine your Hopper GPU generates:
+For example, imagine the Hopper GPU generates:
 - 100 L2 requests from the L1/TEX load path.
 - 100 L2 requests from other memory traffic.
 These are two different groups of requests.
@@ -1300,7 +1300,7 @@ That would require investigation.
 But if Measurement A covers one group of memory requests and Measurement B covers another group, their different 
 values are not automatically a problem.
 
-The key takeaway: Before comparing two Nsight Compute percentages, check whether their numerators and denominators 
+Before comparing two Nsight Compute percentages, check whether their numerators and denominators 
 represent the same set of requests or sectors. Different request populations can legitimately produce different hit rates.
 *************
  
@@ -1383,34 +1383,29 @@ Don't change Swizzle<3,4,3> simply because the counter is nonzero. That swizzle 
 CuTe layout compatible with the chosen WGMMA operations.
 
 14. Verify actual versus ideal shared-memory wavefronts
-This is the most useful next investigation, and it can be attempted using your existing report.
+This is the most useful next investigation, and it can be attempted using the existing report.
 
 In Nsight Compute:
 1. Select the Source tab.
 2. Switch to the SASS view.
 3. Look for the source-counter columns L1 Wavefronts Shared, L1 Wavefronts Shared Ideal, and L1 Wavefronts Shared Excessive, if available.
-4. Examine the LDGSTS instructions associated with your cp.async copies.
+4. Examine the LDGSTS instructions associated with the cp.async copies.
 5. Compare actual and ideal wavefronts for those instructions.
 These metrics are useful because a wide memory instruction may legitimately require multiple wavefronts without conflicts. We want to identify excessive wavefronts beyond the ideal access pattern, not simply count every wavefront beyond the first. 
 NVIDIA Developer Forums+1
 
+For the wide copy, the simplified baseline is:
+Ideal Wavefronts/Request approximate 4
 
-For your wide copy, the simplified baseline is:
-\[
-\text{Ideal Wavefronts/Request}\approx4
-\]
-
-And your aggregate measurement is:
-\[
-\text{Actual Wavefronts/Request}=4
-\]
+And the aggregate measurement is:
+Actual Wavefronts/Request=4
 
 That agreement is encouraging, but a source-level comparison would be stronger evidence. It would also help resolve whether the aggregate bank-conflict counter is reflecting true serialization or additional hardware arbitration events.
 
 If the needed source metrics were not collected, the existing report may not be able to show that comparison; it would then require a future capture.
 Final conclusion
-You have now collected and examined the three measurements we originally needed:
-Original question                     What your screenshots establish
+we have now collected and examined the three measurements we originally needed:
+Original question                     What the screenshots establish
 How many shared-memory requests?      6,758,400 in the copy path
 How many wavefronts?                  27,033,600 copy-path wavefronts, exactly four per request
 Are bank conflicts reported?          Yes — 4,810,514 events, but their actual performance 
@@ -1419,7 +1414,7 @@ The biggest lesson is:
 
 Wavefronts per request must be interpreted relative to the width and access pattern of the memory instruction. A 16-byte-per-thread copy can require four wavefronts even when the memory layout is conflict-free.
 
-Your report now gives us a much more concrete performance question than before: Are the reported bank-conflict events causing extra shared-memory serialization, or are they partly reflecting other arbitration activity?
+the report now gives us a much more concrete performance question than before: Are the reported bank-conflict events causing extra shared-memory serialization, or are they partly reflecting other arbitration activity?
 
 That is the distinction I would investigate before attempting to optimize shared-memory layout.
 
@@ -1444,10 +1439,10 @@ The compiled machine code is for the target architecture, not the GPU doing the 
 3.4 Why include both PTX and machine code?
 The build retains the architecture-specific PTX in addition to generating the sm_90a machine code.
 This can be useful for inspecting the intermediate representation and for compatible driver JIT scenarios.
-However, the compute_90a PTX is not a general forward-compatible fallback for your Blackwell RTX 5080. 
+However, the compute_90a PTX is not a general forward-compatible fallback for the Blackwell RTX 5080. 
 Architecture-specific PTX features are restricted to compatible targets.
 
- 3.5 --generate-line-info: Essential for your Nsight studies
+ 3.5 --generate-line-info: Essential for the Nsight studies
 The compiler command contains:
 --generate-line-info
 This generates device-code source-line information.
@@ -1472,10 +1467,10 @@ browsing on a different computer, the source files may still need to be accessib
 NVIDIA recommends line information rather than disabling device optimization with -G for performance profiling. 
  
 3.6 -Xptxas=-v and --resource-usage
-These two options explain why your build prints detailed resource information.
+These two options explain why the build prints detailed resource information.
 -Xptxas=-v
 --resource-usage
-For the H100, the driver can use the native sm_90a machine code embedded in your executable.
+For the H100, the driver can use the native sm_90a machine code embedded in the executable.
  
 11. Scheduler Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/fc442123-9e32-414d-ad24-78221f809cf7" />
@@ -1741,7 +1736,7 @@ NVIDIA's documentation explicitly distinguishes memory latency from memory bandw
 NsightCompute
 
 
-For your kernel:
+For the kernel:
 - DRAM utilization is low.
 - Long-scoreboard stalls are high.
 - Eligible warp count is very low.
@@ -1885,7 +1880,7 @@ These totals are close, which is normal for this workload.
 13.1 What does the Executed Instruction Mix tell us?
 The most prominent SASS instruction groups include:
 </pre>
-|Opcode|	General function|	Connection to your kernel|
+|Opcode|	General function|	Connection to the kernel|
 |:----|:-----|:----|
 |UMOV	|Move a value to a uniform register|	Kernel bookkeeping and address-related values|
 |IADD3	|Integer addition|	Address and index calculations|
@@ -1898,7 +1893,7 @@ The most prominent SASS instruction groups include:
 |STG|	Global-memory store	|Writing C|
 |WARP* instructions|	Warpgroup coordination|	WGMMA synchronization|
 <pre>
-These are broadly consistent with your source code.
+These are broadly consistent with the source code.
 
 13.2 Why is there so much integer arithmetic?
 A GEMM kernel performs more than matrix multiplications.
@@ -1935,7 +1930,7 @@ while WGMMA is a coordinated warpgroup operation.
 The profiler's Tensor Core operations counter is the better source for determining total matrix arithmetic.
  
 13.5 What about LDGSTS?
-Your current kernel uses cp.async, reflected by LDGSTS.
+the current kernel uses cp.async, reflected by LDGSTS.
 The wgmma_tma_sm90.cu tutorial uses TMA instead.
 One of the most valuable comparisons will be:
 Current WGMMA tutorial	Future WGMMA + TMA tutorial
@@ -1974,7 +1969,7 @@ The existing cp_async_wait<0>() and warpgroup_wait<0>() synchronization warrants
 Separate optimization candidate: Improve output-store transaction efficiency.
 The profiler reports that only about half of each global-store sector is useful.
 
-Step 15. What should you investigate next?
+Step 15. What should we investigate next?
 Prioritize these experiments in this order.
 Experiment A — Identify the instructions responsible for Long Scoreboard stalls
 Open the existing report in Nsight Compute.
@@ -2088,7 +2083,7 @@ Therefore:
 40 x 40= 1600 CTAs
 
 Each CTA calculates one output tile of size 128 x 128.
-Your total output matrix is \(5120\times5120\):
+the total output matrix is \(5120\times5120\):
 (5120 / 128) x (5120 / 128) = x 40
 This confirms that the full GEMM output is covered exactly, without partially filled edge tiles.
  
@@ -2100,7 +2095,7 @@ Each CTA contains:
 
 On Hopper, four warps form one warpgroup.
 This matters because WGMMA instructions operate cooperatively across the entire warpgroup.
-Each CTA in your experiment consists of one warpgroup executing the WGMMA kernel.
+Each CTA in the experiment consists of one warpgroup executing the WGMMA kernel.
  
 17.3 Cluster Size: 1
 The report says:
@@ -2206,16 +2201,16 @@ These totals are close, which is normal for this workload.
 
 
 **************************************************
-What is preventing your H100 WGMMA kernel from keeping more warps active?
+What is preventing the H100 WGMMA kernel from keeping more warps active?
 
-We previously suspected that shared-memory consumption was restricting occupancy. Your new report confirms that shared memory is the limiting resource, and it also reveals a separate tail effect and specific source-code locations worth investigating.
+We previously suspected that shared-memory consumption was restricting occupancy. the new report confirms that shared memory is the limiting resource, and it also reveals a separate tail effect and specific source-code locations worth investigating.
 **************************************************
 21. Launch Statistics
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/c2ac58b1-a228-4a10-a770-1968661bfec0" />
-Step 17. Launch Statistics — Understand your kernel's hardware resource requirements
+Step 17. Launch Statistics — Understand the kernel's hardware resource requirements
 Screenshot 1 — Launch Statistics
 
-The following values come directly from your screenshot.
+The following values come directly from the screenshot.
 Metric	Measured value
 Grid Size	1,600 CTAs
 Block Size	128 threads
@@ -2230,40 +2225,33 @@ TPCs	66
 Waves Per SM	3.03
 
 17.1 Grid Size: 1,600
-Your execution grid is:
+the execution grid is:
 dim3 dimGrid(40, 40, 1);
 
-
 Therefore:
-\[
-40\times40=\boxed{1600\text{ CTAs}}
-\]
+40 x 40=1600 CTAs
 
 Each CTA calculates one output tile of size \(128\times128\).
 
-Your total output matrix is \(5120\times5120\):
-\[
-\frac{5120}{128}\times\frac{5120}{128}=40\times40
-\]
+the total output matrix is 5120 x 5120:
+5120 / 128 x 5120 / 128 = 40 x 40
 
 This confirms that the full GEMM output is covered exactly, without partially filled edge tiles.
 17.2 Block Size: 128 threads
-Your kernel launches:
+the kernel launches:
 dim3 dimBlock(128, 1, 1);
 
 
 Each CTA contains:
-\[
-128/32=4\text{ warps}
-\]
+128/32=4 warps
 
 On Hopper, four warps form one warpgroup.
 
 This matters because WGMMA instructions operate cooperatively across the entire warpgroup.
 
-Each CTA in your experiment consists of one warpgroup executing the WGMMA kernel.
+Each CTA in the experiment consists of one warpgroup executing the WGMMA kernel.
 17.3 Cluster Size: 1
-Your report says:
+the report says:
 Cluster Size = 1
 
 
@@ -2274,9 +2262,9 @@ It does not mean the GPU can run only one CTA per SM.
 These are separate concepts:
 - Cluster size: How many CTAs belong to one cluster.
 - CTA residency: How many CTAs can run simultaneously on one SM.
-Your kernel uses cluster size 1, but its resource configuration permits two resident CTAs per SM.
+the kernel uses cluster size 1, but its resource configuration permits two resident CTAs per SM.
 
-This is an important distinction for when you later study wgmma_tma_sm90.cu, where the cluster configuration may differ.
+This is an important distinction for when we later study wgmma_tma_sm90.cu, where the cluster configuration may differ.
 17.4 Registers Per Thread: 114
 Each thread requires 114 registers, according to the launch statistics.
 
@@ -2290,17 +2278,15 @@ So each CTA requires at least approximately 14,592 32-bit register slots before 
 The H100 has 65,536 32-bit registers per SM.
 
 Ignoring register-allocation rounding:
-\[
-\left\lfloor\frac{65,536}{14,592}\right\rfloor=4
-\]
+flooring (65,536 / 14,592) =4
 
 That agrees with the Occupancy section's Register Block Limit = 4.
 
-This is not the limiting resource for your current kernel, because shared memory restricts residency to two CTAs.
+This is not the limiting resource for the current kernel, because shared memory restricts residency to two CTAs.
 17.5 Dynamic Shared Memory: 98.30 KB
 This is the most important launch statistic.
 
-Your source defines:
+the source defines:
 auto bM = Int<128>{};
 auto bN = Int<128>{};
 auto bK = Int<64>{};
@@ -2310,56 +2296,40 @@ auto bP = Int<3>{};
 Here, bP = 3 specifies three pipeline stages.
 
 One A tile contains:
-\[
-128\times64=8192\text{ elements}
-\]
+128 x 64=8192 elements
 
 Since FP16 uses 2 bytes:
-\[
-8192\times2=16,384\text{ bytes}
-\]
+8192 x 2=16,384 bytes
 
 One B tile has the same size.
 
 Thus, one stage needs:
-\[
-16,384+16,384=32,768\text{ bytes}
-\]
+16,384+16,384=32,768 bytes
 
 Three stages need:
-\[
-3\times32,768
-=\boxed{98,304\text{ bytes}}
-\]
+3 x 32,768
+=98,304 bytes
 
 That's exactly:
-\[
-98,304/1000=98.304\text{ decimal KB}
-\]
+98,304/1000=98.304 decimal KB
 
 or:
-\[
-98,304/1024=\boxed{96\text{ KiB}}
-\]
+98,304/1024=96 KiB
 
-Your profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
+the profiler's 98.30 KB confirms the expected shared-memory allocation for the three-stage A/B pipeline.
 17.6 What is Driver Shared Memory = 1.02 KB?
 Nsight Compute also reports approximately 1.02 KB reserved for the driver per CTA.
 
 This corresponds to roughly 1,024 bytes of additional shared-memory allocation.
 
 Therefore, the total resource consumption is approximately:
-\[
 98,304+1,024
-=\boxed{99,328\text{ bytes per CTA}}
-\]
+=99,328 bytes per CTA
 
 When calculating CTA residency, include this allocation rather than considering only the memory explicitly requested by the kernel.
 17.7 Shared Memory Configuration Size = 200.70 KB
 The report also shows:
-\[
-200.70\text{ KB}\approx200,704\text{ bytes}
-\]
+200.70 KB approximate 200,704 bytes
 
 This is the configured shared-memory resource size that the occupancy calculation uses.
 
@@ -2370,10 +2340,8 @@ CTAs per SM	Shared memory required	Fits?
 3	297,984 bytes	No
 
 Mathematically:
-\[
-\left\lfloor\frac{200,704}{99,328}\right\rfloor
-=\boxed{2\text{ CTAs}}
-\]
+flooring (200,704 / 99,328)
+= 2 CTAs
 
 This directly explains the shared-memory occupancy limit.
 
@@ -2394,7 +2362,7 @@ One useful detail: the configured shared-memory resource is not necessarily equa
 27. Occupancy
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/e4bb0513-bdfe-4501-a1e2-3611714fec67" />
 
-Step 18. Occupancy — Your central performance limitation is confirmed
+Step 18. Occupancy — the central performance limitation is confirmed
 The report gives:
 |Metric	|Value|
 |:----|:-----|
@@ -2441,7 +2409,7 @@ In the case, the hardware is maintaining almost all the available residency.
 The limitation is primarily imposed by the kernel's required resources.
 
 18.4 Identify which resource actually limits occupancy
-Your profiler provides several block limits:
+the profiler provides several block limits:
 Registers             --------                                                          4 CTAs
 Shared memory         ----                                                              2 CTAs
 Warps                 --------------------------------                                  16 CTAs
@@ -2457,7 +2425,7 @@ Shared memory is definitively the occupancy-limiting resource.
 NVIDIA's occupancy documentation explains that registers, warps, shared memory, barriers and hardware block limits 
 jointly determine residency. 
 
-18.5 How this changes our interpretation of your earlier Scheduler Statistics
+18.5 How this changes our interpretation of the earlier Scheduler Statistics
 In the first batch, we observed:
 Active Warps Per Scheduler = 1.99
 Eligible Warps Per Scheduler = 0.15
@@ -2493,7 +2461,7 @@ so we can connect the compilation output directly to the kernel we profiled.
 <img width="1858" height="1134" alt="image" src="https://github.com/user-attachments/assets/f86b1250-5fcd-483c-aa4a-631855410f62" />
 
 Step 19. Understand GPU and Memory Workload Distribution
-Your first screenshot reports the following measurements.
+the first screenshot reports the following measurements.
 </pre>
 |Metric|	Value|
 |:----|:-----|
@@ -2546,7 +2514,7 @@ It does not mean every SM was active for exactly that duration.
 Some SMs were active longer; others finished their assigned work sooner.
  
 19.3 What does Total SM Elapsed Cycles mean?
-Your screenshot reports:
+the screenshot reports:
 123,961,854 cycles
 
 This is aggregated across the GPU's SM counter instances.
@@ -2579,7 +2547,7 @@ Step 20. What is an SMSP?
 The screenshot includes:
 Average SMSP Active Cycles = 823,939.69
 An SMSP is an SM subpartition.
-For your Hopper H100, each SM contains four subpartitions associated with warp scheduling and execution resources.
+For the Hopper H100, each SM contains four subpartitions associated with warp scheduling and execution resources.
 Conceptually:
 One H100 Streaming Multiprocessor (SM)
 SMSP 0                                          SMSP 1                                                 
@@ -2885,7 +2853,7 @@ speedup associated with the L1TEX store-access warning come from different local
 directly comparable whole-kernel speedup measurements.
  
 25.4 Warp Stall Sampling — 
-Your screenshot shows the following hot locations:
+the screenshot shows the following hot locations:
 </pre>
 |Source location	|Samples	|Share shown|
 |:----|:-----|:----|
@@ -2970,7 +2938,7 @@ when the kernel finishes.
 instructions.
 The next most useful screenshot would be the Source tab with the SASS instructions associated
 with wgmma_sm90.cu:235 and wgmma_sm90.cu:240. That would let us move from general profiling
-analysis to investigating the actual cause of the stalls in your Hopper code.
+analysis to investigating the actual cause of the stalls in the Hopper code.
 ======================================================================================
 In NVIDIA GPUs, data transferred from global memory to shared memory generally passes through
 the L2 cache hierarchy, but it does not necessarily pass through L1 cache.
@@ -3040,7 +3008,7 @@ Unlike cp.async and TMA, this approach uses thread registers as intermediate sto
 |TMA global-to-shared copy|	Bypasses conventional L1 path|	No|
 <pre>
 The key distinction is that L1 and L2 are hardware-managed caches, while shared memory is
-explicitly managed by your CUDA program or a copying mechanism such as TMA.
+explicitly managed by the CUDA program or a copying mechanism such as TMA.
 
 Data does not automatically move into shared memory merely because it has reached L1 or L2. 
 A specific transfer operation is required. 
