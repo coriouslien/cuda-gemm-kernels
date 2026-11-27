@@ -119,14 +119,14 @@ ncu --import wgmma_sm90.ncu-rep \
     --csv > profiled_sass.csv
 
 The CSV output makes it easier to write a script to find and rank instruction-level performance measurements. 
-The available columns depend on what the saved report collected and what your installed Nsight Compute version prints.
+The available columns depend on what the saved report collected and what the installed Nsight Compute version prints.
 
 5. Optional: Use nvdisasm for deeper instruction analysis
 NVIDIA also provides nvdisasm, which can display source-line information and perform control-flow analysis 
 for standalone cubin files.
 For example:
 nvdisasm -gi kernel.cubin > kernel_annotated.sass
-The -gi option includes source-line and inlining information when available. The input must be a cubin, not your 
+The -gi option includes source-line and inlining information when available. The input must be a cubin, not the 
 ordinary host executable, tracing the CuTe template functions.
 
 Which approach should we use?
@@ -144,7 +144,7 @@ grep -n -F -B 15 -A 15 \
   '/*06c0*/' wgmma_sm90.sass
 
 
-And, from the directory containing your profiling report:
+And, from the directory containing the profiling report:
 ncu --import wgmma_sm90.ncu-rep \
     --page source \
     --print-source sass \
@@ -161,7 +161,7 @@ at a WARPGROUP.ARRIVE instruction.
 
 That changes where we should focus the investigation.
 1. Actual Long Scoreboard hotspots
-I parsed the instruction-level measurements in your profiled_sass.txt and ranked the SASS instructions
+I parsed the instruction-level measurements in the profiled_sass.txt and ranked the SASS instructions
 by stall_long_sb.
 </pre>
 |Rank|	SASS instruction|	Long Scoreboard samples|	All samples|
@@ -174,7 +174,7 @@ by stall_long_sb.
 <pre>
 The first instruction is at:
 0x7edba77ad5f0
-Your earlier PRMT instruction at 0x7edba77ac8c0 has 30 Long Scoreboard samples, as we observed, 
+The earlier PRMT instruction at 0x7edba77ac8c0 has 30 Long Scoreboard samples, as we observed, 
 but it is not the largest hotspot.
 Across the instructions in the report, we counted 32,819 Long Scoreboard samples.
 The WARPGROUP.ARRIVE instruction accounts for:
@@ -253,7 +253,7 @@ There are two especially important instruction locations:
 |WARPGROUP.DEPBAR.LE|	Barrier|	10,376|
 <pre>
 These are two different types of waiting. We should not combine them into one Long Scoreboard count.
-4. Connect these instructions to your CuTe source code
+4. Connect these instructions to the CuTe source code
 NVIDIA's wgmma_sm90.cu tutorial contains the following sequence in the pipelined mainloop:
 // Wait for asynchronous copies
 cp_async_wait<0>();
@@ -281,7 +281,7 @@ The kernel may not be overlapping asynchronous A/B copies and WGMMA computation 
 Specifically, cp_async_wait<0>() requires completion of the relevant asynchronous-copy groups before proceeding,
 and warpgroup_wait<0>() waits for completion of outstanding WGMMA groups before proceeding.
 These completion points can limit how much useful independent work remains available.
-That hypothesis agrees with your earlier low eligible-warps measurement, but determining the achievable improvement 
+That hypothesis agrees with the earlier low eligible-warps measurement, but determining the achievable improvement 
 requires a controlled experiment.
 ******
 We suspect that insufficient overlap between asynchronous memory copies (cp.async) and WGMMA computation is hurting 
@@ -381,10 +381,11 @@ to "I measured the effect of a specific change and have evidence supporting or r
 inspecting wgmma_sm90_06c0.sass.
 It contains two matches at relative offset 0x06c0:
 ***************
-Your SASS output reveals something important: these PRMT instructions are being used to produce zero values, not to rearrange nonzero data.
+The SASS output reveals something important: these PRMT instructions are being used to produce zero values, 
+not to rearrange nonzero data.
 
-Let's examine the instruction at address 0x06c0 in your wgmma_sm90.cu disassembly.
-1. Examine your actual PRMT instruction
+Let's examine the instruction at address 0x06c0 in the wgmma_sm90.cu disassembly.
+1. Examine the actual PRMT instruction
 /*06c0*/ PRMT R32, RZ, 0x5410, RZ ;
 
 
@@ -401,7 +402,7 @@ Since both source operands are RZ, every byte available for selection is zero.
 Therefore, the effective result is:
 R32 = 0x00000000;
 
-The same applies to your other instructions:
+The same applies to the other instructions:
 PRMT R34, RZ, 0x5410, RZ ;  // R34 = 0
 PRMT R33, RZ, 0x5410, RZ ;  // R33 = 0
 PRMT R32, RZ, 0x5410, RZ ;  // R32 = 0
